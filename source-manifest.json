@@ -9,7 +9,7 @@
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "e52f34afd633ed848d9680212c44921527517bbf65692dc464f56e805170539d"
+    "sha256": "703bd6641158bcd3fbd6fe87ac876b4ff57ca42c1b9979d21f3077271e85c7c7"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -140,8 +140,16 @@
     "sha256": "8ccd55a0e27fbb88d1e1d83869e26dda61fd786daa001c6567c9bc8b5f39b04a"
   },
   {
+    "file": "native/build-frame-generation.ps1",
+    "sha256": "fe68ec273c0446e0156dd073d48b1a576fd541bb097bf5ac8c662cb212d230db"
+  },
+  {
     "file": "native/build-input.ps1",
     "sha256": "b63b43e36c9ae300dbd4125fae3bee3da182adf534ab709ba9a728e94c99fbd2"
+  },
+  {
+    "file": "native/build-neural.ps1",
+    "sha256": "deee727716ae30aa452341cdcbbb3cf01fc1d4bfa2cd5649040c4fd6a6fa71eb"
   },
   {
     "file": "native/build-race-bridge.ps1",
@@ -149,7 +157,7 @@
   },
   {
     "file": "native/build-render.ps1",
-    "sha256": "dbddbc09892455198961f652b5b3731c37bc80a6f98477d3d3b991f5ee0a13fb"
+    "sha256": "a37109d497dc80e12116380905cabd15f3b1488195e66843836af41f6b3d7f1a"
   },
   {
     "file": "native/build-xinput.ps1",
@@ -161,7 +169,7 @@
   },
   {
     "file": "native/ClientBuildGuard.h",
-    "sha256": "232b71391f76d58232be559537d1c6ea9b4238f7688a78afceeb95e40fe9ffb4"
+    "sha256": "ff253291ffd7f28277be377705baf3ba9838100f1bbe9d9960ae1e776903b474"
   },
   {
     "file": "native/DlssD3D11.cpp",
@@ -192,6 +200,14 @@
     "sha256": "d1f7b4f6528f176f887660407c68ed35af44dcf2a6e42c7136dc1cfa49df9e0a"
   },
   {
+    "file": "native/FrameGenerationD3D12.cpp",
+    "sha256": "aa5b4236bd17660578c74cb515f8e53dc681614b1083fc07e2b0d9783bf4c0d6"
+  },
+  {
+    "file": "native/FrameGenerationD3D12.h",
+    "sha256": "90a93f38fc849c05dfe28e454fe0e49fa9db013c3b3e00da95fd825156e75ed7"
+  },
+  {
     "file": "native/GameThreadQueue.cpp",
     "sha256": "dd1bbfc84842ccff55f662e72c5fa1d9bb7fcaf7385e51d03d2a3e976b80b4cd"
   },
@@ -204,16 +220,32 @@
     "sha256": "1cc98c8f910937cb55416df0f99143497dc549827ea86cbd64f8513a22f85402"
   },
   {
+    "file": "native/NeuralD3D12.cpp",
+    "sha256": "fd7af571bdb8c917d2ebb59c4fa6a9605fa69e7a6c2608f9accb0883912a0541"
+  },
+  {
+    "file": "native/NeuralD3D12.h",
+    "sha256": "7407f240af2ffe9dc01e29d43a7c8a50c8826724b0275385ba7ea726f1f34adb"
+  },
+  {
     "file": "native/RaceControl.h",
     "sha256": "0ec20ff43a8328b58e0b7d7bc33206275b3e5352109491b9bf72f3bf6ca6001f"
   },
   {
     "file": "native/RenderPassTrace.cpp",
-    "sha256": "093c961f1a6e6668df76c0e2ec878c0cff3caf1d763298607c35a78c9c7f8cf2"
+    "sha256": "1710cf2ec49d8f1294519ece4d0b423553705dcb9c2d5b61bb8992cb635b5d95"
   },
   {
     "file": "native/RenderPassTrace.h",
     "sha256": "c431e7697c987709b00920fc32affe316fa362ccc20bffd271128e91aae620a0"
+  },
+  {
+    "file": "native/SharedTextureBridge.cpp",
+    "sha256": "47906bddeb2c3067ff4321fdd095a7fd07b7731145c11f6d1a7862fbdb99b672"
+  },
+  {
+    "file": "native/SharedTextureBridge.h",
+    "sha256": "70c5a3e2d55bfa430eb6e902f2c6c5c458605cddb43538b0737fdbb14259aba0"
   },
   {
     "file": "native/VirtualXInput.cpp",
@@ -225,15 +257,15 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "8ece438a96f3370d79cb867b67ba5e9c2c2731d4e183ef8020ace16d7db1ebf3"
+    "sha256": "3da7018376b8e2b7b7a8f12bf230fb2a50f612e3fa5b86dcb5e352094e1feff4"
   },
   {
     "file": "README.md",
-    "sha256": "76bda203154d391dc3a809c375e60c57689b8106e45e7f7574d70c42c1c07f0f"
+    "sha256": "a944bda15197c6e523c9340de0fd75ed1d800847e0b6cba87f982f22828b520c"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
-    "sha256": "d50021907eae088925269c53da207fb1d8d795cced266624e8c9e7f374f216f5"
+    "sha256": "5a4e88330764ade42302789acabf47d1d813f5312eeae6a1cae5af58c6fa6687"
   },
   {
     "file": "src/ClientDiscovery.cs",
@@ -341,7 +373,7 @@
   },
   {
     "file": "tests/RenderPassTraceTests.cpp",
-    "sha256": "aaf99e15b82c60f6b08d6139cf008e72d8a497256f2a5b9b726d38b912b190c5"
+    "sha256": "d124bcc2085f02a461a7f38af0973f881d185e1f44675ed3fe5a6937f991eefa"
   },
   {
     "file": "tests/RoomStateTests.cs",
@@ -378,6 +410,18 @@
   {
     "file": "tools/PrepareSdkCopy.cs",
     "sha256": "683ffa3146a39a02079aa85d78bc21e997020458fad235aac685d59a2deb219f"
+  },
+  {
+    "file": "tools/ProbeFrameGeneration.cpp",
+    "sha256": "d140e1821a749ea44f3aa91c9e7e5d11e544aa445867d7374ce62d02a25ab676"
+  },
+  {
+    "file": "tools/ProbeNeuralRuntime.cpp",
+    "sha256": "5687d16b21e1316c2b6bf25cb085d87d96bcd1559b479dadb31bad445cdbe033"
+  },
+  {
+    "file": "tools/ProbeSharedTexture.cpp",
+    "sha256": "c3540dfa051a22518821fbe34e67b6a917c78f6d00143951d4d165d21177d5e1"
   },
   {
     "file": "tools/RunSession.cs",

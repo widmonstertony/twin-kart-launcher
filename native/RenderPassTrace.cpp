@@ -4,11 +4,15 @@
 #include <cstdio>
 #include <cstdarg>
 #include <cstring>
+#include <d3dcompiler.h>
+#include <d3d11shader.h>
+#include <string>
 #include "RenderPassTrace.h"
 
 namespace TwinKartRender {
 namespace {
 const GUID ShaderDigest = {0x95df261a,0x7bbc,0x4197,{0xa2,0x20,0x42,0x44,0x71,0x96,0x52,0xac}};
+const GUID ShaderInterface = {0x813a4b4d,0xaae6,0x46c3,{0xa6,0x62,0x99,0xfa,0xe1,0xc8,0x55,0x4d}};
 struct Digest { unsigned version; unsigned long long bytes; BYTE hash[32]; };
 struct Writer {
     char* output; size_t capacity, used; bool failed;
@@ -21,6 +25,63 @@ struct Writer {
         used += static_cast<size_t>(count);
     }
 };
+bool Identifier(const char* name) {
+    if(!name || !name[0] || strlen(name)>128) return false;
+    for(const char* ch=name;*ch;++ch) if(!((*ch>='A' && *ch<='Z') || (*ch>='a' && *ch<='z') || (*ch>='0' && *ch<='9') || *ch=='_' || *ch=='.' || *ch=='[' || *ch==']')) return false;
+    return true;
+}
+bool CameraField(const char* name) {
+    if(!Identifier(name)) return false;
+    const char* fields[]={"ViewSizeAndInvSize","BufferSizeAndInvSize","ViewRectMin","TemporalAAJitter","ClipToPrevClip","ViewToClip","ClipToView","TranslatedWorldToClip","PrevViewProj","ViewForward","ViewRight","ViewUp","WorldCameraOrigin","PreExposure"};
+    for(const char* field:fields) if(strstr(name,field)) return true;
+    return false;
+}
+void DescribeMembers(Writer& writer,ID3D11ShaderReflectionType* type,const std::string& prefix,UINT base,unsigned depth,bool& comma,unsigned& fields) {
+    if(!type || depth>3 || fields>=48) return;
+    D3D11_SHADER_TYPE_DESC desc{}; if(FAILED(type->GetDesc(&desc))) return;
+    for(UINT member=0;member<desc.Members && member<512 && fields<48;++member) {
+        const char* name=type->GetMemberTypeName(member); if(!Identifier(name)) continue;
+        auto child=type->GetMemberTypeByIndex(member); D3D11_SHADER_TYPE_DESC item{}; if(!child || FAILED(child->GetDesc(&item))) continue;
+        std::string full=prefix+"."+name;
+        if(CameraField(name)) {
+            writer.Add("%s{\"name\":\"%s\",\"offset\":%u,\"rows\":%u,\"columns\":%u,\"class\":%u}",comma?",":"",full.c_str(),base+item.Offset,item.Rows,item.Columns,item.Class);
+            comma=true; ++fields;
+        }
+        if(item.Members) DescribeMembers(writer,child,full,base+item.Offset,depth+1,comma,fields);
+    }
+}
+bool TagInterface(ID3D11DeviceChild* shader,const void* bytecode,size_t length) {
+    ID3D11ShaderReflection* reflection=nullptr;
+    if(FAILED(D3DReflect(bytecode,length,__uuidof(ID3D11ShaderReflection),reinterpret_cast<void**>(&reflection)))) return false;
+    D3D11_SHADER_DESC desc{}; bool success=SUCCEEDED(reflection->GetDesc(&desc));
+    char text[16384]{}; Writer writer{text,sizeof(text),0,false};
+    if(success) {
+        writer.Add("{\"bindings\":["); bool comma=false;
+        for(UINT index=0;index<desc.BoundResources && index<64;++index) {
+            D3D11_SHADER_INPUT_BIND_DESC binding{};
+            if(FAILED(reflection->GetResourceBindingDesc(index,&binding)) || !Identifier(binding.Name)) continue;
+            writer.Add("%s{\"name\":\"%s\",\"slot\":%u,\"count\":%u,\"type\":%u,\"dimension\":%u}",comma?",":"",binding.Name,binding.BindPoint,binding.BindCount,binding.Type,binding.Dimension); comma=true;
+        }
+        writer.Add("],\"camera_layout\":["); comma=false; unsigned fields=0;
+        for(UINT index=0;index<desc.ConstantBuffers && index<32;++index) {
+            auto buffer=reflection->GetConstantBufferByIndex(index); D3D11_SHADER_BUFFER_DESC info{};
+            if(!buffer || FAILED(buffer->GetDesc(&info)) || !Identifier(info.Name)) continue;
+            for(UINT variable=0;variable<info.Variables && variable<512 && fields<48;++variable) {
+                auto field=buffer->GetVariableByIndex(variable); D3D11_SHADER_VARIABLE_DESC value{};
+                if(!field || FAILED(field->GetDesc(&value)) || !Identifier(value.Name)) continue;
+                auto type=field->GetType(); D3D11_SHADER_TYPE_DESC shape{}; if(!type || FAILED(type->GetDesc(&shape))) continue;
+                std::string full=std::string(info.Name)+"."+value.Name;
+                if(CameraField(value.Name)) {
+                    writer.Add("%s{\"name\":\"%s\",\"offset\":%u,\"size\":%u,\"rows\":%u,\"columns\":%u,\"class\":%u}",comma?",":"",full.c_str(),value.StartOffset,value.Size,shape.Rows,shape.Columns,shape.Class); comma=true; ++fields;
+                }
+                if(shape.Members) DescribeMembers(writer,type,full,value.StartOffset,0,comma,fields);
+            }
+        }
+        writer.Add("],\"guides_validated\":false}");
+    }
+    reflection->Release();
+    return success && !writer.failed && SUCCEEDED(shader->SetPrivateData(ShaderInterface,static_cast<UINT>(writer.used+1),text));
+}
 template<class T> void Drop(T*& value) { if (value) { value->Release(); value = nullptr; } }
 struct Binding {
     ID3D11Resource* resource = nullptr;
@@ -116,7 +177,11 @@ bool TagShader(ID3D11DeviceChild* shader, const void* bytecode, size_t length) {
         BCryptFinishHash(hash, digest.hash, sizeof(digest.hash), 0) >= 0;
     if (hash) BCryptDestroyHash(hash);
     if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
-    return ok && SUCCEEDED(shader->SetPrivateData(ShaderDigest, sizeof(digest), &digest));
+    bool stored=ok && SUCCEEDED(shader->SetPrivateData(ShaderDigest, sizeof(digest), &digest));
+    // Reflection metadata only: shader instructions and vendor bytecode are
+    // never retained or written to a file. Stripped reflection is optional.
+    if(stored) TagInterface(shader,bytecode,length);
+    return stored;
 }
 size_t DescribePass(ID3D11DeviceContext* context, bool compute, unsigned frame,
     uintptr_t callerRva, char* output, size_t capacity) {
@@ -153,6 +218,10 @@ size_t DescribePass(ID3D11DeviceContext* context, bool compute, unsigned frame,
         if (selected && SUCCEEDED(selected->GetPrivateData(ShaderDigest, &length, &digest)) && length == sizeof(digest) && digest.version == 1) {
             writer.Add("\""); for (BYTE byte : digest.hash) writer.Add("%02x", byte); writer.Add("\"");
         } else writer.Add("null");
+        char interfaceText[16384]{}; UINT interfaceLength=sizeof(interfaceText);
+        if(selected && SUCCEEDED(selected->GetPrivateData(ShaderInterface,&interfaceLength,interfaceText)) && interfaceLength>1 && interfaceLength<=sizeof(interfaceText) && interfaceText[interfaceLength-1]==0)
+            writer.Add(",\"shader_interface\":%s",interfaceText);
+        else writer.Add(",\"shader_interface\":null");
         WriteViews(writer, "srv", resources, inputs);
         WriteViews(writer, "rtv", targets, outputs);
         WriteViews(writer, "uav", unordered, writes);

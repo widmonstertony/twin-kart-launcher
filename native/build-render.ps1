@@ -18,7 +18,7 @@ try {
     $env:INCLUDE = $includeDirs -join ';'; $env:LIB = $libraryDirs -join ';'; $env:PATH = (Split-Path -Parent $compiler) + ';' + $oldPath
     Push-Location $build
     try {
-        & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /LD /Fo./ /FeTwinKartDriftRenderProbe.dll (Join-Path $PSScriptRoot 'DriftRenderProbe.cpp') (Join-Path $PSScriptRoot 'RenderPassTrace.cpp') /link bcrypt.lib user32.lib d3d11.lib dxgi.lib
+        & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /LD /Fo./ /FeTwinKartDriftRenderProbe.dll (Join-Path $PSScriptRoot 'DriftRenderProbe.cpp') (Join-Path $PSScriptRoot 'RenderPassTrace.cpp') /link bcrypt.lib user32.lib d3d11.lib dxgi.lib d3dcompiler.lib
         if ($LASTEXITCODE -ne 0) { throw 'Render observer build failed' }
         if ($Test) {
             & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeRenderPassTraceTests.exe (Join-Path $projectRoot 'tests\RenderPassTraceTests.cpp') (Join-Path $PSScriptRoot 'RenderPassTrace.cpp') /link bcrypt.lib user32.lib dxgi.lib d3d11.lib d3dcompiler.lib
@@ -29,4 +29,3 @@ try {
     } finally { Pop-Location }
 } finally { $env:INCLUDE = $oldInclude; $env:LIB = $oldLib; $env:PATH = $oldPath }
 Get-FileHash -LiteralPath (Join-Path $build 'TwinKartDriftRenderProbe.dll') -Algorithm SHA256
-

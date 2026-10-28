@@ -32,6 +32,10 @@ This project is intended to become an **independent public repository, not a for
 
 ## External components and ownership boundary
 
+`NeuralD3D12.*`, `FrameGenerationD3D12.*`, `SharedTextureBridge.*` and the three standalone graphics probes are original integration code. Public NVIDIA/Windows SDK declarations are supplied externally at build time; their implementations and runtimes are not copied into this tree. The hash-limited, opt-in NR path uses private exports of the externally supplied neural model. Its `Init_Ext` ABI differs from the core SDK API. The adapter's distinct `TwinKart..._nvngx.dll` filename satisfies that snippet's component-name convention; no system NVIDIA DLL, driver, signature policy or model file is replaced or patched. The model remains external, is not distributed, and an unknown model hash is rejected by this private path. A successful synthetic GPU fixture does not establish game guide correctness, visible composition or quality.
+
+Original D3D11 shader reflection records resource names/slots and selected camera-field offsets. It does not save shader bytecode or vendor instruction bodies. Shared-texture fixtures exercise actual D3D11/D3D12 GPU fences and D3D12 writes returning to D3D11; CPU readback is used only to check the result. Frame generation reports native presented-frame counts, and a hidden-window fixture with interpolation disabled by NVIDIA's focus check remains explicitly unverified.
+
 The native local-host candidate (`DriftRaceBridge.cpp`, `GameThreadQueue.*`, `RaceControl.h`) and launcher race UI are independently written interface adapters. They call the supplied client's own character/kart preparation and level-travel functions after an exact-build check. Constants, layouts, enum values and short compatibility signatures are observations from the user's local binaries; no decompiled function bodies or third-party launcher source are included. Native host travel, driving AI, finish order and settlement are separate acceptance stages; the candidate is not a completed race implementation. `TrackSupportAudit.AttachDefinitions` validates an external capture of native definitions, which is not distributed with the source.
 
 The public BlueYeeeee/Kartrider-Drift_Offline v0.2.11 implementation has been read as a behavioral reference, as the user requested. Independent authorship does not mean no reference material was consulted. Earlier private A/B runs compiled its server implementation and used external data; those servers and sources remain excluded. The new original launcher/backend run does not load that server. Proprietary client/SDK binaries, private reference-derived data documents, account data, keys and diagnostic configurations remain external. This is not a claim that all gameplay requirements have passed.
@@ -94,6 +98,9 @@ tools/AuditTracks.cs
 tools/PrepareSdkCopy.cs
 tools/PrepareDriftClient.ps1
 tools/RunSession.cs
+tools/ProbeNeuralRuntime.cpp
+tools/ProbeFrameGeneration.cpp
+tools/ProbeSharedTexture.cpp
 tests/*.cs
 tests/*.cpp
 tests/test_protocol_probe.py

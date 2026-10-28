@@ -2,6 +2,9 @@
 
 ## Unreleased / 后续开发
 
+- Add original D3D12 SR and hash-limited private-ABI NR consumers; standalone synthetic GPU evaluation/readback passes. / 新增原创 D3D12 超分及模型指纹限定的 NR 模块，独立合成资源 GPU 计算与读回通过，尚非游戏验收。
+- Add original Streamline FG/Reflex/PCL integration, synchronized D3D11/D3D12 shared textures and shader resource/camera reflection. A hidden-window FG test is correctly not accepted as generated frames. / 新增原创帧生成接口、跨 API 共享纹理及着色器资源／相机布局读取；隐藏窗口未实际插帧，不伪报成功。
+
 - Add original session-local race requests, an opt-in launcher window, speed/item mode, 1–7 AI opponents and laps; preserve original kart/driver preparation and invoke native level travel on the owned game thread.
 - Add explicit game-thread routing without changing keyboard/mouse messages, bounded request syntax, fresh command identities and managed/native interoperability checks.
 - Reconcile every catalog ID with actual native track definitions and retain unresolved mirror/reverse/base entries in the UI; validate client build, thread, counts and complete coverage before committing the report.

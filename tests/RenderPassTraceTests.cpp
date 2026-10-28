@@ -46,6 +46,15 @@ int main() {
         for (int i=0; i<1000; ++i) Need(TwinKartRender::DescribePass(context.Get(),false,120,0x1234,json,sizeof(json))>0,"Scene pass not observed");
         Need(strstr(json,"\"stage\":\"pixel\"") && strstr(json,"\"slot\":127") && strstr(json,"\"mip\":1"),"Binding slot or subresource lost");
         Need(strstr(json,"\"shader_sha256\":\"") && strstr(json,"\"guides_validated\":false"),"Hash missing or guide evidence invented");
+        const char interfaceSource[]="struct CameraData { float4 ViewSizeAndInvSize; row_major float4x4 ClipToPrevClip; float PreExposure; }; cbuffer View:register(b2) { CameraData Camera; }; Texture2D<float4> SceneDepthTexture:register(t3); Texture2D<float4> VelocityTexture:register(t4); Texture2D<float4> PostprocessInput0:register(t5); float4 main():SV_Target { return SceneDepthTexture.Load(int3(0,0,0))+VelocityTexture.Load(int3(0,0,0))+PostprocessInput0.Load(int3(0,0,0))+Camera.ViewSizeAndInvSize*Camera.PreExposure+mul(float4(1,1,1,1),Camera.ClipToPrevClip); }";
+        ComPtr<ID3DBlob> interfaceCode; ComPtr<ID3D11PixelShader> interfaceShader;
+        Check(D3DCompile(interfaceSource,sizeof(interfaceSource),nullptr,nullptr,nullptr,"main","ps_5_0",0,0,&interfaceCode,nullptr));
+        Check(device->CreatePixelShader(interfaceCode->GetBufferPointer(),interfaceCode->GetBufferSize(),nullptr,&interfaceShader));
+        context->PSSetShader(interfaceShader.Get(),nullptr,0);
+        Need(TwinKartRender::DescribePass(context.Get(),false,120,0,json,sizeof(json)) && strstr(json,"\"name\":\"SceneDepthTexture\",\"slot\":3") &&
+            strstr(json,"\"name\":\"VelocityTexture\",\"slot\":4") && strstr(json,"\"name\":\"PostprocessInput0\",\"slot\":5") &&
+            strstr(json,"\"name\":\"View.Camera.ClipToPrevClip\",\"offset\":16") && strstr(json,"\"name\":\"View.Camera.PreExposure\",\"offset\":80"),"Real shader reflection did not preserve resource slots and nested camera offsets");
+        context->PSSetShader(pixel.Get(),nullptr,0);
         Need(textureRefs==References(input.Get()) && viewRefs==References(srv.Get()) && shaderRefs==References(pixel.Get()),"Capture leaks COM references");
         char tiny[8]; Need(!TwinKartRender::DescribePass(context.Get(),false,120,0,tiny,sizeof(tiny)) && !tiny[0],"Truncated JSON accepted");
         Need(textureRefs==References(input.Get()) && viewRefs==References(srv.Get()),"Truncation leaked references");
