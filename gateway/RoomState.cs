@@ -15,6 +15,8 @@ namespace TwinKartLauncher.Gateway
         bool joined;
         bool playRequested;
         bool hostMode;
+        bool observerMode, hideGameKey;
+        CsRaceGameContract setting;
 
         public string SessionId { get { return sessionId; } }
         public string Track { get { return track; } }
@@ -22,6 +24,10 @@ namespace TwinKartLauncher.Gateway
         public bool Joined { get { return joined; } }
         public bool PlayRequested { get { return playRequested; } }
         public bool HostMode { get { return hostMode; } }
+        public bool ObserverMode { get { return observerMode; } }
+        public bool HideGameKey { get { return hideGameKey; } }
+        public CsRaceGameContract Setting { get { return Copy(setting); } }
+        public int[] AiSlots { get { var values = new List<int>(aiSlots); values.Sort(); return values.ToArray(); } }
         public int AiCount { get { return aiSlots.Count; } }
         public bool HasAiSlot(int slot) { return aiSlots.Contains(slot); }
 
@@ -39,7 +45,34 @@ namespace TwinKartLauncher.Gateway
             if (addAi != null) return AddAi(addAi);
             PlayCustomGameContract play = request as PlayCustomGameContract;
             if (play != null) return Play(play);
+            var kick = request as KickCustomGameMemberContract;
+            if (kick != null)
+            {
+                if (!joined || !aiSlots.Remove(kick.Slot)) return GatewayTransition.Reject("No AI member occupies that slot.", request.PacketType, request.RequestId);
+                playRequested = false;
+                return GatewayTransition.Accept(request.PacketType, request.RequestId, "AI member removed locally.");
+            }
+            var change = request as ChangeCustomGameSettingContract;
+            if (change != null)
+            {
+                if (!joined) return GatewayTransition.Reject("Join a local room first.", request.PacketType, request.RequestId);
+                setting = Copy(change.Setting); track = setting.Track; raceMode = setting.GameMode.RaceMode; playRequested = false;
+                return GatewayTransition.Accept(request.PacketType, request.RequestId, "Local room setting changed.");
+            }
+            if (request is ExitCustomGameContract)
+            {
+                if (sessionId == null) return GatewayTransition.Reject("No room exists.", request.PacketType, request.RequestId);
+                sessionId = null; setting = null; track = null; raceMode = 0;
+                joined = playRequested = hostMode = observerMode = hideGameKey = false; aiSlots.Clear();
+                return GatewayTransition.Accept(request.PacketType, request.RequestId, "Local room cleared.");
+            }
             return GatewayTransition.Reject("Operation is not yet modeled.");
+        }
+        static CsRaceGameContract Copy(CsRaceGameContract value)
+        {
+            if (value == null) return null;
+            return new CsRaceGameContract { Track = value.Track, Lap = value.Lap, LevelOption = value.LevelOption,
+                CustomGameOption = value.CustomGameOption, GameMode = new KtGameModeContract { RaceMode = value.GameMode.RaceMode, Profile = value.GameMode.Profile } };
         }
 
         GatewayTransition Create(CreateCustomGameContract packet)
@@ -49,6 +82,7 @@ namespace TwinKartLauncher.Gateway
             sessionId = Guid.NewGuid().ToString("N");
             track = packet.Setting.Track;
             raceMode = packet.Setting.GameMode.RaceMode;
+            setting = Copy(packet.Setting); observerMode = packet.ObserverMode; hideGameKey = packet.HideGameKey ?? false;
             joined = false;
             playRequested = false;
             hostMode = false;
@@ -71,6 +105,7 @@ namespace TwinKartLauncher.Gateway
         GatewayTransition AddAi(AddCustomGameAiContract packet)
         {
             if (!joined) return GatewayTransition.Reject("Join a local room first.", packet.PacketType, packet.RequestId);
+            if (packet.Slot < 1 || packet.Slot > 7) return GatewayTransition.Reject("AI slot must be 1..7; slot zero belongs to the local driver.", packet.PacketType, packet.RequestId);
             if (!aiSlots.Add(packet.Slot))
                 return GatewayTransition.Reject("Slot already contains an AI draft.", packet.PacketType, packet.RequestId);
             playRequested = false;

@@ -58,6 +58,21 @@ namespace TwinKartLauncher.Gateway
         public override string PacketType { get { return "PqPlayCustomGame"; } }
         public bool HostMode { get; internal set; }
     }
+    public sealed class KickCustomGameMemberContract : RoomPacketContract
+    {
+        public override string PacketType { get { return "PqKickCustomGameMember"; } }
+        public int Slot { get; internal set; }
+    }
+    public sealed class ChangeCustomGameSettingContract : RoomPacketContract
+    {
+        public override string PacketType { get { return "PqChangeCustomGameSetting"; } }
+        public CsRaceGameContract Setting { get; internal set; }
+    }
+    public sealed class ExitCustomGameContract : RoomPacketContract
+    {
+        internal string Operation;
+        public override string PacketType { get { return Operation; } }
+    }
 
     public sealed class CustomGamePushShape
     {
@@ -143,6 +158,21 @@ namespace TwinKartLauncher.Gateway
                     if (!RequiredBoolean(packet, "hostMode", out host))
                     { error = "hostMode must be a boolean."; return false; }
                     request = new PlayCustomGameContract { RequestId = reqId, HostMode = host };
+                    error = null; return true;
+                case "PqKickCustomGameMember":
+                    int kickedSlot;
+                    if (!RequiredInt32(packet, "slot", out kickedSlot) || kickedSlot < 1 || kickedSlot > 7)
+                    { error = "Only AI slots 1..7 may be removed."; return false; }
+                    request = new KickCustomGameMemberContract { RequestId = reqId, Slot = kickedSlot };
+                    error = null; return true;
+                case "PqChangeCustomGameSetting":
+                    Dictionary<string, object> changedSetting;
+                    CsRaceGameContract changedRace;
+                    if (!RequiredObject(packet, "setting", out changedSetting) || !TryReadRaceGame(changedSetting, out changedRace, out error)) return false;
+                    request = new ChangeCustomGameSettingContract { RequestId = reqId, Setting = changedRace };
+                    error = null; return true;
+                case "PqLeaveCustomGame": case "PqAbortCustomGame":
+                    request = new ExitCustomGameContract { RequestId = reqId, Operation = type };
                     error = null; return true;
                 default:
                     error = "Room request type is not modeled."; return false;

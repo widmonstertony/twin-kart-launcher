@@ -37,6 +37,7 @@ namespace TwinKartLauncher.Gateway
         readonly Dictionary<string, object> defaults, parts;
         readonly TrackCatalog tracks;
         readonly NativeKartParameters physics;
+        readonly OfflineRoomService rooms;
         readonly int pingPort;
         Dictionary<string, object> state;
         public const string SharedValue = "TwinKartOriginalParametersV1";
@@ -46,6 +47,7 @@ namespace TwinKartLauncher.Gateway
             string vehicleParts, string accountId, int localPingPort, string tuningPlan = null)
         {
             path = Path.GetFullPath(profilePath); account = accountId; pingPort = localPingPort;
+            rooms = new OfflineRoomService(accountId);
             defaults = ProfileJson.Parse(clientDefaults); parts = ProfileJson.Parse(vehicleParts);
             rulesJson = tuningRules; tracks = new TrackCatalog(trackCatalog);
             physics = new NativeKartParameters(physicsCatalog);
@@ -104,6 +106,7 @@ namespace TwinKartLauncher.Gateway
                 bool changed = false;
                 try
                 {
+                    if (OfflineRoomService.Handles(type)) return rooms.Handle(request,id,next,ProfileJson.Object(defaults,"login"));
                     switch (type)
                     {
                         case "PqLogin":
@@ -175,10 +178,9 @@ namespace TwinKartLauncher.Gateway
                             response["trackList"] = new JavaScriptSerializer().DeserializeObject(tracks.TimeAttackRows(new HashSet<string>(ProfileJson.Object(next, "records").Keys)));
                             break;
                         case "PqTimeAttackGetRecords": response["_type"] = "PrTimeAttackGetRecords"; response["records"] = ProfileJson.Copy(next["records"]); break;
-                        case "PqTimeAttackGetRankVersion": response["_type"] = "PrTimeAttackGetRankVersion"; response["version"] = 1; break;
+                        case "PqTimeAttackGetRankVersion": response["_type"] = "PrTimeAttackGetRankVersion"; response["version"] = next.ContainsKey("rankVersion") ? next["rankVersion"] : 1; break;
                         case "PqTimeAttackGetRankers":
-                            response["_type"] = "PrTimeAttackGetRankers"; response["trackId"] = request["trackId"];
-                            response["myRank"] = 0; response["myRecord"] = new object[0]; response["totalRank"] = new object[0]; response["platformRank"] = new object[0]; response["countryRank"] = new object[0]; break;
+                            LocalRankers(next,request["trackId"] as string,response); break;
                         case "PqTimeAttackPrepare": break;
                         case "PqApplySpeedBodyParamForSingleRace": response["_type"] = "PrApplySpeedBodyParamForSingleRace"; Overlay(response, physics.Payload(next, account, SharedValue)); break;
                         case "PqTimeAttackStart":
@@ -187,30 +189,53 @@ namespace TwinKartLauncher.Gateway
                             physics.Payload(next, account, SharedValue);
                             string gameId = Guid.NewGuid().ToString("N");
                             next["activeRace"] = new Dictionary<string, object> { { "gameId", gameId }, { "trackId", track }, { "startTime", Now() } };
-                            response["_type"] = "PrTimeAttackStart"; Overlay(response, ProfileJson.Object(next, "activeRace")); changed = true; break;
+                            response["_type"] = "PrTimeAttackStart"; Overlay(response, ProfileJson.Object(next, "activeRace"));
+                            var startingRace = ProfileJson.Object(next,"activeRace");
+                            startingRace["itemPresetOn"] = ProfileJson.Copy(next["itemPresetOn"]);
+                            startingRace["itemEquipmentOn"] = next.ContainsKey("itemEquipmentOn") ? ProfileJson.Copy(next["itemEquipmentOn"]) : new Dictionary<string,object>();
+                            var startingKart = ProfileJson.Text(ProfileJson.Object(ProfileJson.Object(next,"itemPresetOn"),"itemMap"),"Kart");
+                            startingRace["upgradeInfo"] = ProfileJson.Copy(ProfileJson.Object(next,"ownKartsUpgradeInfo")[startingKart]);
+                            startingRace["beginnerFlag"] = next.ContainsKey("beginnerFlag") ? next["beginnerFlag"] : 0;
+                            startingRace["emblemId"] = next.ContainsKey("emblemItemIdOn") ? next["emblemItemIdOn"] : "";
+                            changed = true; break;
                         case "PqTimeAttackUpdate":
                             var active = ProfileJson.Object(next, "activeRace");
                             if (!Object.Equals(request["gameId"], active["gameId"])) throw new ArgumentException("Race identity mismatch.");
                             var record = ProfileJson.Object(request["timeAttack"]);
                             if (!Object.Equals(record["trackId"], active["trackId"])) throw new ArgumentException("Race track mismatch.");
+                            if (!(record["recordTime"] is int || record["recordTime"] is long)) throw new ArgumentException("Race time must be an integer.");
                             long milliseconds = Convert.ToInt64(record["recordTime"]);
                             if (milliseconds < 0 || milliseconds > 24 * 60 * 60 * 1000) throw new ArgumentException("Invalid race time.");
+                            if (!(request["status"] is int) || (int)request["status"] < 0) throw new ArgumentException("Invalid native result status.");
+                            object cheat;
+                            bool flagged = request.TryGetValue("bCheat",out cheat) && cheat is bool && (bool)cheat;
+                            if (request.ContainsKey("bCheat") && !(cheat is bool)) throw new ArgumentException("Invalid result flag.");
+                            if ((int)request["status"] == 0 && !flagged && milliseconds == 0) throw new ArgumentException("Completed race requires a positive time.");
                             response["_type"] = "PrTimeAttackUpdate";
-                            if (milliseconds > 0)
+                            response["gameId"] = request["gameId"];
+                            response["timeAttack"] = ProfileJson.Copy(record);
+                            response["isUpdated"] = false;
+                            response["dataStoreLink"] = new Dictionary<string,object> { {"url",""},{"verb",""},{"headers",new Dictionary<string,object>()},{"body",""},{"valueIndex",new object[0]},{"metadata",""} };
+                            if ((int)request["status"] == 0 && !flagged && milliseconds > 0)
                             {
                                 var records = ProfileJson.Object(next, "records");
                                 string completedTrack = ProfileJson.Text(active, "trackId"); object best;
                                 if (!records.TryGetValue(completedTrack, out best) || milliseconds < Convert.ToInt64(ProfileJson.Object(best)["lapTime"]))
                                 {
-                                    var equipment = ProfileJson.Object(ProfileJson.Object(next, "itemPresetOn"), "itemMap");
-                                    var vehicle = ProfileJson.Object(ProfileJson.Object(next, "ownKartsUpgradeInfo"), ProfileJson.Text(equipment, "Kart"));
+                                    var equipment = ProfileJson.Object(ProfileJson.Object(active, "itemPresetOn"), "itemMap");
+                                    var vehicle = ProfileJson.Object(active,"upgradeInfo");
                                     records[completedTrack] = new Dictionary<string,object> {
                                         {"trackId",completedTrack},{"lapTime",milliseconds},{"mileage",record.ContainsKey("recordMileage")?record["recordMileage"]:0},
                                         {"kartId",equipment["Kart"]},{"kartLevel",vehicle.ContainsKey("level")?vehicle["level"]:0},{"kartGrade",vehicle["grade"]},
-                                        {"beginnerFlag",next.ContainsKey("beginnerFlag")?next["beginnerFlag"]:0},{"replayPath",""},{"version",1},{"updateDate",Now()},
-                                        {"preview",new Dictionary<string,object>{{"itemPresetOn",ProfileJson.Copy(next["itemPresetOn"])},{"itemEquipmentOn",next.ContainsKey("itemEquipmentOn")?ProfileJson.Copy(next["itemEquipmentOn"]):new Dictionary<string,object>()}}},
-                                        {"emblemId",next.ContainsKey("emblemItemIdOn")?next["emblemItemIdOn"]:""}
+                                        {"beginnerFlag",active["beginnerFlag"]},{"replayPath",""},{"version",1},{"updateDate",Now()},
+                                        {"preview",new Dictionary<string,object>{{"itemPresetOn",ProfileJson.Copy(active["itemPresetOn"])},{"itemEquipmentOn",ProfileJson.Copy(active["itemEquipmentOn"])}}},
+                                        {"emblemId",active["emblemId"]}
                                     };
+                                    int version = next.ContainsKey("rankVersion") ? Convert.ToInt32(next["rankVersion"]) : 1;
+                                    next["rankVersion"] = version == Int32.MaxValue ? 1 : version + 1;
+                                    if (!next.ContainsKey("recordUpgrades")) next["recordUpgrades"] = new Dictionary<string,object>();
+                                    ProfileJson.Object(next,"recordUpgrades")[completedTrack] = ProfileJson.Copy(vehicle);
+                                    response["isUpdated"] = true;
                                 }
                             }
                             next.Remove("activeRace"); changed = true; break;
@@ -241,6 +266,33 @@ namespace TwinKartLauncher.Gateway
                 values.Add(pair.Key, 0);
             }
             return values;
+        }
+        void LocalRankers(Dictionary<string,object> profile, string track, Dictionary<string,object> response)
+        {
+            if (!tracks.Contains(track)) throw new ArgumentException("Unknown ranking track.");
+            var mine = new List<object>(); var ranking = new List<object>(); object saved;
+            if (ProfileJson.Object(profile,"records").TryGetValue(track,out saved))
+            {
+                var best = ProfileJson.Object(ProfileJson.Copy(saved)); mine.Add(best);
+                var avatar = ProfileJson.Object(defaults,"login");
+                if (avatar.ContainsKey("profile")) avatar = ProfileJson.Object(avatar,"profile");
+                object country,platform,name;
+                var row = new Dictionary<string,object> {
+                    {"rank",1},{"accountId",account},{"country",avatar.TryGetValue("countryCode",out country)?country:""},
+                    {"platform",avatar.TryGetValue("platform",out platform)?platform:0},
+                    {"riderName",profile.TryGetValue("riderName",out name)?name:"Local Driver"},
+                    {"lapTime",best["lapTime"]},{"preview",ProfileJson.Copy(best["preview"])},
+                    {"kartLevel",best["kartLevel"]},{"kartGrade",best["kartGrade"]},
+                    {"emblemItemIdOn",best["emblemId"]},{"replayPath",best["replayPath"]}
+                };
+                object upgrades;
+                if (profile.TryGetValue("recordUpgrades",out upgrades) && ProfileJson.Object(upgrades).ContainsKey(track))
+                    row["kartUpgradeInfo"] = ProfileJson.Copy(ProfileJson.Object(upgrades)[track]);
+                ranking.Add(row);
+            }
+            response["_type"] = "PrTimeAttackGetRankers"; response["trackId"] = track;
+            response["myRank"] = mine.Count; response["myRecord"] = mine;
+            response["totalRank"] = ranking; response["platformRank"] = ProfileJson.Copy(ranking); response["countryRank"] = ProfileJson.Copy(ranking);
         }
     }
 }

@@ -1,5 +1,11 @@
 # Changelog / 更新记录
 
+## Unreleased / 后续开发
+
+- Connect the original native room adapter to the profile backend: create/join, seven AI slots, kick, setting changes and exit. Same-track race hosting is still pending. / 原创房间通知已接入后端，覆盖创建/加入、7 个 AI 槽位、移除、设置变化和退出；同场比赛主持协议仍待完成。
+- Complete native time-attack result fields, preserve the starting vehicle/tuning snapshot, refresh local ranking versions and exclude abandoned runs from personal bests. / 补齐计时赛原生结算字段，保存发车时车辆与改装快照，更新本地排行榜版本，退出比赛不覆盖最佳成绩。
+- Integration is software-checked first; user gameplay acceptance follows the combined implementation. / 先整合并做软件检查，整合后由用户进行游戏验收。
+
 ## v0.1.0-alpha.1 — 2026-10-28
 
 Initial independent development prerelease. / 首个独立开发预发布。

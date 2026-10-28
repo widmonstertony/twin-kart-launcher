@@ -22,6 +22,40 @@ static class OfflineBackendTests
             using(var decrypt=aes.CreateDecryptor()) return decrypt.TransformFinalBlock(bytes,0,bytes.Length);
         }
     }
+    static CustomGamePushShape RoomSnapshot(ProfileResult result)
+    {
+        Need(Code(result)==0,"Room operation failed");
+        var notice=result.Notices.Find(value=>(string)value["_type"]=="PcCustomGame");
+        Need(notice!=null,"Missing native room notice");
+        CustomGamePushShape shape; string error;
+        Need(PacketJsonCodec.TryReadCustomGamePush(ProfileJson.Write(notice),out shape,out error),"Native contract rejected room: "+error);
+        return shape;
+    }
+    static void RoomChecks(OfflineProfileStore store)
+    {
+        Need(Code(Call(store,"PqAddCustomGameAiMember",",\"slot\":1"))!=0,"AI added before room join");
+        var created=Call(store,"PqCreateCustomGame",",\"observerMode\":false,\"setting\":{\"_type\":\"CsRaceGame\",\"track\":\"Test_R01\",\"gameMode\":{\"raceMode\":4}}");
+        var draft=RoomSnapshot(created);
+        Need(created.Notices.Count==2 && draft.MemberCount==1,"Room context notification or owner roster missing");
+        Need(Code(Call(store,"PqJoinCustomGame",",\"sessionId\":\"foreign\""))!=0,"Foreign room accepted");
+        var joined=RoomSnapshot(Call(store,"PqJoinCustomGame",",\"sessionId\":\"\""));
+        Need(joined.SessionId==draft.SessionId,"Join replaced room identity");
+        Need(Code(Call(store,"PqAddCustomGameAiMember",",\"slot\":0"))!=0,"AI replaced local driver");
+        for(int slot=1;slot<=7;slot++)
+        {
+            var snapshot=RoomSnapshot(Call(store,"PqAddCustomGameAiMember",",\"slot\":"+slot));
+            Need(snapshot.AiMemberCount==slot && snapshot.MemberCount==slot+1,"AI roster size incorrect");
+            var identities=new HashSet<string>(); foreach(var member in snapshot.Members) Need(identities.Add(member.AccountId),"Duplicate local member identity");
+        }
+        Need(Code(Call(store,"PqAddCustomGameAiMember",",\"slot\":8"))!=0,"Ninth grid slot accepted");
+        Need(Code(Call(store,"PqAddCustomGameAiMember",",\"slot\":2"))!=0,"Duplicate AI accepted");
+        Need(RoomSnapshot(Call(store,"PqKickCustomGameMember",",\"slot\":2")).AiMemberCount==6,"AI removal failed");
+        var changed=RoomSnapshot(Call(store,"PqChangeCustomGameSetting",",\"setting\":{\"_type\":\"CsRaceGame\",\"track\":\"Test_Reverse\",\"gameMode\":{\"raceMode\":1},\"lap\":3}"));
+        Need(changed.RaceSession.GameMode.RaceMode==1 && changed.RaceSession.Track=="Test_Reverse" && changed.AiMemberCount==6,"Mode change lost roster or native setting");
+        Need(Code(Call(store,"PqPlayCustomGame",",\"hostMode\":true"))!=0 && !store.Snapshot().Contains("\"activeRace\""),"Room draft falsely reported a running AI race");
+        Need(Code(Call(store,"PqLeaveCustomGame"))==0,"Room exit failed");
+        Need(Code(Call(store,"PqJoinCustomGame",",\"sessionId\":\"\""))!=0,"Exited room survived");
+    }
     static int Main(string[] args)
     {
         string folder = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "test-scratch", "TwinKartBackendTest-" + Guid.NewGuid().ToString("N"));
@@ -48,15 +82,25 @@ static class OfflineBackendTests
             var race=Call(store,"PqTimeAttackStart",",\"trackId\":\"Test_R01\"");
             Need(Code(race)==0 && ((string)race.Response["gameId"]).Length==32,"Race identity not issued");
             string raceId=(string)race.Response["gameId"];
-            Need(Code(Call(store,"PqTimeAttackUpdate",",\"gameId\":\"wrong\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":1000}"))!=0,"Foreign race result accepted");
-            Need(Code(Call(store,"PqTimeAttackUpdate",",\"gameId\":\""+raceId+"\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":1000}"))==0,"Valid race result rejected");
+            Need(Code(Call(store,"PqTimeAttackUpdate",",\"status\":0,\"gameId\":\"wrong\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":1000}"))!=0,"Foreign race result accepted");
+            Need(Code(Call(store,"PqKartUpgrade",",\"kartItemId\":\"Kart:1\""))==0,"Mid-session upgrade setup failed");
+            Need(Code(Call(store,"PqTimeAttackUpdate",",\"status\":0,\"gameId\":\""+raceId+"\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":1.5}"))!=0,"Fractional race time accepted");
+            var finish=Call(store,"PqTimeAttackUpdate",",\"status\":0,\"gameId\":\""+raceId+"\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":1000}");
+            Need(Code(finish)==0 && (bool)finish.Response["isUpdated"] && (string)finish.Response["gameId"]==raceId,"Native result acknowledgement incomplete");
             Need(store.Snapshot().Contains("\"lapTime\":1000"),"Local personal best not persisted");
+            var rank=Call(store,"PqTimeAttackGetRankers",",\"trackId\":\"Test_R01\"");
+            Need((int)rank.Response["myRank"]==1 && (int)ProfileJson.Object(((List<object>)rank.Response["myRecord"])[0])["kartGrade"]==0,"Record did not preserve starting vehicle configuration");
+            Need((int)Call(store,"PqTimeAttackGetRankVersion").Response["version"]==2,"New best did not invalidate ranking cache");
+            var abandoned=Call(store,"PqTimeAttackStart",",\"trackId\":\"Test_R01\"");
+            var abandon=Call(store,"PqTimeAttackUpdate",",\"status\":1,\"gameId\":\""+(string)abandoned.Response["gameId"]+"\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":1}");
+            Need(Code(abandon)==0 && !(bool)abandon.Response["isUpdated"] && store.Snapshot().Contains("\"lapTime\":1000"),"Abandoned race replaced personal best");
             Need(Code(Call(store,"PqKartUpgrade",",\"kartItemId\":\"Kart:1\""))==0,"Offline upgrade retains a progression/currency gate");
             Need(Code(Call(store,"PqSetQuickMatchData",",\"data\":{\"mode\":\"synthetic\"}"))==0 && store.Snapshot().Contains("synthetic"),"Offline mode choice not persisted");
             Need(Code(Call(store,"PqSetQuickMatchData",",\"data\":17"))!=0,"Invalid mode-choice object accepted");
             var reload=new OfflineProfileStore(path,initial,defaults,unlock,rules,"{\"tracks\":[\"Test_R01\"]}",physics,"{\"vehicles\":{}}","1",54321);
             Need(reload.Snapshot()==store.Snapshot(),"Atomic persistence or restart lost state");
             Need(Code(Call(store,"PqUnsupported"))!=0,"Unknown operation falsely succeeded");
+            RoomChecks(store);
             if(args.Length==1)
             {
                 string data=Path.GetFullPath(args[0]);
@@ -68,6 +112,7 @@ static class OfflineBackendTests
                 Console.WriteLine("PASS external client dataset: original profile, native body payload and 234 track rows; no game started.");
             }
             Console.WriteLine("PASS original backend: inventory, fixed-field tuning, native effect rebasing, atomic rollback/restart and track/session validation.");
+            Console.WriteLine("PASS native room adapter: create/join, seven AI slots, kick, mode change, identity isolation and explicit race-not-ready boundary.");
             return 0;
         }
         catch(Exception error) { Console.Error.WriteLine(error); return 1; }
