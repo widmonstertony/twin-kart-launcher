@@ -20,7 +20,7 @@ namespace TwinKartLauncher.Gateway
             {
                 case "PqCreateCustomGame": case "PqJoinCustomGame": case "PqAddCustomGameAiMember":
                 case "PqKickCustomGameMember": case "PqChangeCustomGameSetting": case "PqLeaveCustomGame":
-                case "PqAbortCustomGame": case "PqPlayCustomGame": return true;
+                case "PqAbortCustomGame": case "PqPlayCustomGame": case "PqCustomGameSetReady": return true;
                 default: return false;
             }
         }
@@ -67,7 +67,7 @@ namespace TwinKartLauncher.Gateway
             items.TryGetValue("Character",out character); items.TryGetValue("Kart",out kart); items.TryGetValue("Costume",out costume);
             return Object("accountId",identity,"profile",avatar,"slot",slot,"isSpectator",!ai && room.ObserverMode,
                 "joinId",slot+1,"chId",character??"","kartId",kart??"","costume",costume??"",
-                "state",1,"readyState",0,"crossPlay",false,"ai",ai);
+                "state",1,"readyState",ai ? 0 : room.ReadyState,"crossPlay",false,"ai",ai);
         }
         Dictionary<string,object> Snapshot(Dictionary<string,object> profile, Dictionary<string,object> login)
         {

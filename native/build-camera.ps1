@@ -1,3 +1,4 @@
+param([switch]$Test)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -19,6 +20,12 @@ try {
     try {
         & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /LD /FoDriftCamera.obj /FeTwinKartDriftCamera.dll (Join-Path $PSScriptRoot 'DriftCamera.cpp') /link bcrypt.lib user32.lib
         if ($LASTEXITCODE -ne 0) { throw 'Camera adapter build failed' }
+        if ($Test) {
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /FoDriftObjectIdentityTests.obj /FeDriftObjectIdentityTests.exe (Join-Path $projectRoot 'tests\DriftObjectIdentityTests.cpp')
+            if ($LASTEXITCODE -ne 0) { throw 'Camera lifetime test build failed' }
+            & (Join-Path $build 'DriftObjectIdentityTests.exe')
+            if ($LASTEXITCODE -ne 0) { throw 'Camera lifetime checks failed' }
+        }
     } finally { Pop-Location }
 } finally { $env:INCLUDE = $oldInclude; $env:LIB = $oldLib; $env:PATH = $oldPath }
 Get-FileHash -LiteralPath (Join-Path $build 'TwinKartDriftCamera.dll') -Algorithm SHA256

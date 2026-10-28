@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include "DriftObjectIdentity.h"
 
 // Independent build-specific adapter. Native object offsets are observations
 // from the supported client; no client function bodies or assets are included.
@@ -32,9 +33,30 @@ bool cockpitHead = false;
 void* auditedMesh = nullptr;
 void* auditedAsset = nullptr;
 int auditedIndex = -1;
+TwinKartCamera::ObjectIdentity auditedIdentity{};
 unsigned long long headName = 0;
 bool headWasHidden = false, headHiddenByUs = false;
 void Log(const char* event);
+// PC preparation consumer indexes the same object array at RVA 0x1ac0dcf.
+TwinKartCamera::ObjectSlot** ObjectChunks() { return *reinterpret_cast<TwinKartCamera::ObjectSlot***>(image + 0x69c28b0); }
+int ObjectCount() { return *reinterpret_cast<int*>(image + 0x69c28c4); }
+void ClearDriver() {
+    auditedMesh = auditedAsset = nullptr; auditedIndex = -1;
+    auditedIdentity = TwinKartCamera::ObjectIdentity{};
+    headName = 0; headWasHidden = headHiddenByUs = false;
+}
+void RestoreDriver() {
+    __try {
+        if (headHiddenByUs && TwinKartCamera::Live(auditedIdentity,ObjectChunks(),ObjectCount()) &&
+            *reinterpret_cast<void**>(static_cast<BYTE*>(auditedMesh) + 0x4c0) == auditedAsset) {
+            using Unhide = void(__fastcall*)(void*, unsigned long long);
+            using IsHidden = bool(__fastcall*)(void*, unsigned long long);
+            reinterpret_cast<Unhide>(image + 0x3e80390)(auditedMesh,headName);
+            Log(reinterpret_cast<IsHidden>(image + 0x3e74d80)(auditedMesh,headName) ? "previous_driver_restore_failed" : "previous_driver_restored");
+        } else if (headHiddenByUs) Log("previous_driver_expired_no_write");
+    } __except (EXCEPTION_EXECUTE_HANDLER) { Log("previous_driver_unavailable_no_write"); }
+    ClearDriver();
+}
 
 bool DriverSignatures() {
     const struct { size_t rva; BYTE prefix[8]; } checks[] = {
@@ -63,20 +85,23 @@ void UpdateDriver(void* component, bool cameraApplied) {
             verified = true;
         }
         BYTE* pawn = *reinterpret_cast<BYTE**>(static_cast<BYTE*>(component) + 0xf20);
-        if (!pawn) return;
+        if (!pawn || (*reinterpret_cast<unsigned*>(pawn + 8) & 0x18000)) { RestoreDriver(); return; }
         using StaticClass = void*(__fastcall*)();
         using FindComponent = BYTE*(__fastcall*)(void*, void*);
         void* type = reinterpret_cast<StaticClass>(image + 0x2251540)();
         auto find = reinterpret_cast<FindComponent>((*reinterpret_cast<BYTE***>(pawn))[0x620 / 8]);
         BYTE* mesh = find(pawn, type);
         if (!mesh || *reinterpret_cast<BYTE**>(mesh) != image + 0x5109e38 ||
-            *reinterpret_cast<BYTE**>(mesh + 0xa0) != pawn) return;
+            *reinterpret_cast<BYTE**>(mesh + 0xa0) != pawn) { RestoreDriver(); return; }
         void* asset = *reinterpret_cast<void**>(mesh + 0x4c0);
         int identity = *reinterpret_cast<int*>(mesh + 0xc);
+        TwinKartCamera::ObjectIdentity currentIdentity{};
+        if (!TwinKartCamera::Capture(mesh,ObjectChunks(),ObjectCount(),&currentIdentity)) { RestoreDriver(); return; }
         using IsHidden = bool(__fastcall*)(void*, unsigned long long);
         using Hide = void(__fastcall*)(void*, unsigned long long, int);
         using Unhide = void(__fastcall*)(void*, unsigned long long);
-        if (mesh != auditedMesh || asset != auditedAsset || identity != auditedIndex) {
+        if (mesh != auditedMesh || asset != auditedAsset || identity != auditedIndex || currentIdentity.serial != auditedIdentity.serial) {
+        RestoreDriver();
         using BoneCount = int(__fastcall*)(void*);
         using BoneName = void*(__fastcall*)(void*, unsigned long long*, int);
         struct String { wchar_t* data; int size, capacity; };
@@ -86,6 +111,7 @@ void UpdateDriver(void* component, bool cameraApplied) {
         if (count < 1 || count > 512) return;
         auditedMesh = mesh;
         auditedAsset = asset; auditedIndex = identity; headName = 0; headHiddenByUs = false;
+        auditedIdentity = currentIdentity;
         for (int index = 0; index < count; ++index) {
             unsigned long long name = 0;
             reinterpret_cast<BoneName>(image + 0x3e6a200)(mesh, &name, index);
@@ -122,7 +148,7 @@ void UpdateDriver(void* component, bool cameraApplied) {
             headHiddenByUs = reinterpret_cast<IsHidden>(image + 0x3e74d80)(mesh, headName);
             Log(headHiddenByUs ? "driver_head_restore_failed" : "driver_head_restored");
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) { meshAudit = false; cockpitHead = false; Log("mesh_adapter_failed"); }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { RestoreDriver(); meshAudit = false; cockpitHead = false; Log("mesh_adapter_failed"); }
 }
 
 void ReadSettings() {

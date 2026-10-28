@@ -1,11 +1,15 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <d3d11.h>
+#include <d3d11_4.h>
 #include <dxgi.h>
 #include <bcrypt.h>
 #include <cstdio>
 #include <cstring>
+#include <intrin.h>
+#include <atomic>
 #include "DlssD3D11.h"
+#include "RenderPassTrace.h"
 
 // First-party resource observer. It does not upscale, interpolate frames, or
 // claim that an observed depth/motion-format texture is a validated DLSS guide.
@@ -16,8 +20,28 @@ using Present = HRESULT(STDMETHODCALLTYPE*)(IDXGISwapChain*, UINT, UINT);
 using Targets = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*);
 using Resources = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, ID3D11ShaderResourceView* const*);
 using Unordered = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, ID3D11UnorderedAccessView* const*, const UINT*);
+using Draw = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT);
+using DrawIndexed = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, INT);
+using DrawInstances = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, UINT, UINT);
+using DrawIndexedInstances = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, UINT, INT, UINT);
+using Dispatch = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, UINT);
+using Indirect = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11Buffer*, UINT);
+using CreatePixel = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11PixelShader**);
+using CreateCompute = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11ComputeShader**);
 Present present = nullptr;
-struct ContextHooks { void** table; Targets targets; Resources pixel, compute; Unordered unordered; };
+struct ContextHooks {
+    void** table; ID3D11DeviceContext* owner; void* cloned[149];
+    Targets targets; Resources pixel, compute; Unordered unordered;
+    Draw draw; DrawIndexed indexed; DrawInstances instances; DrawIndexedInstances indexedInstances;
+    Dispatch dispatch; Indirect indexedIndirect, indirect, dispatchIndirect;
+};
+struct DeviceHooks { void** table; CreatePixel pixel; CreateCompute compute; };
+DeviceHooks devices[8]{};
+unsigned deviceCount = 0;
+SRWLOCK deviceLock = SRWLOCK_INIT;
+std::atomic<ID3D11DeviceContext*> gameContext{nullptr}; // retained for this owned game process
+bool tracePasses = false;
+volatile LONG passRows = 0, sampledRows = 0;
 ContextHooks contexts[8]{};
 unsigned contextCount = 0;
 SRWLOCK contextLock = SRWLOCK_INIT;
@@ -34,6 +58,7 @@ DlssState getDlssState = nullptr;
 volatile LONG dlssAttempted = 0;
 wchar_t dlssCache[32768]{}, dlssProvider[32768]{};
 bool Patch(void** table, unsigned slot, void* replacement, void** original);
+bool HookDevice(ID3D11Device*);
 void STDMETHODCALLTYPE SetTargets(ID3D11DeviceContext*, UINT, ID3D11RenderTargetView* const*, ID3D11DepthStencilView*);
 void STDMETHODCALLTYPE SetResources(ID3D11DeviceContext*, UINT, UINT, ID3D11ShaderResourceView* const*);
 void STDMETHODCALLTYPE SetComputeResources(ID3D11DeviceContext*, UINT, UINT, ID3D11ShaderResourceView* const*);
@@ -52,6 +77,70 @@ void Log(const char* line) {
     AcquireSRWLockExclusive(&logLock);
     DWORD written; WriteFile(output, line, static_cast<DWORD>(strlen(line)), &written, nullptr);
     ReleaseSRWLockExclusive(&logLock);
+}
+void TracePass(ID3D11DeviceContext* context, bool compute, void* caller) {
+    if (!tracePasses || context != gameContext.load(std::memory_order_acquire) || frames < 1 || frames % 120 != 0 || passRows >= 1024 || sampledRows >= 64) return;
+    if (InterlockedIncrement(&sampledRows) > 64) return;
+    uintptr_t address = reinterpret_cast<uintptr_t>(caller), base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
+    uintptr_t rva = address >= base && address - base < 0x8657000 ? address - base : 0;
+    char line[32768];
+    if (TwinKartRender::DescribePass(context, compute, static_cast<unsigned>(frames), rva, line, sizeof(line))) {
+        if (InterlockedIncrement(&passRows) <= 1024) Log(line);
+    }
+}
+void STDMETHODCALLTYPE OnDraw(ID3D11DeviceContext* context, UINT a, UINT b) {
+    if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).draw; if (original) original(context,a,b);
+}
+void STDMETHODCALLTYPE OnIndexed(ID3D11DeviceContext* context, UINT a, UINT b, INT c) {
+    if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indexed; if (original) original(context,a,b,c);
+}
+void STDMETHODCALLTYPE OnInstances(ID3D11DeviceContext* context, UINT a, UINT b, UINT c, UINT d) {
+    if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).instances; if (original) original(context,a,b,c,d);
+}
+void STDMETHODCALLTYPE OnIndexedInstances(ID3D11DeviceContext* context, UINT a, UINT b, UINT c, INT d, UINT e) {
+    if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indexedInstances; if (original) original(context,a,b,c,d,e);
+}
+void STDMETHODCALLTYPE OnDispatch(ID3D11DeviceContext* context, UINT a, UINT b, UINT c) {
+    TracePass(context, true, _ReturnAddress()); auto original = Hooks(context).dispatch; if (original) original(context,a,b,c);
+}
+void STDMETHODCALLTYPE OnIndexedIndirect(ID3D11DeviceContext* context, ID3D11Buffer* args, UINT offset) {
+    TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indexedIndirect; if (original) original(context,args,offset);
+}
+void STDMETHODCALLTYPE OnIndirect(ID3D11DeviceContext* context, ID3D11Buffer* args, UINT offset) {
+    TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indirect; if (original) original(context,args,offset);
+}
+void STDMETHODCALLTYPE OnDispatchIndirect(ID3D11DeviceContext* context, ID3D11Buffer* args, UINT offset) {
+    TracePass(context, true, _ReturnAddress()); auto original = Hooks(context).dispatchIndirect; if (original) original(context,args,offset);
+}
+DeviceHooks DeviceFunctions(ID3D11Device* device) {
+    DeviceHooks result{}; void** table = *reinterpret_cast<void***>(device);
+    AcquireSRWLockShared(&deviceLock);
+    for (unsigned i=0; i<deviceCount; ++i) if (devices[i].table == table) { result = devices[i]; break; }
+    ReleaseSRWLockShared(&deviceLock); return result;
+}
+HRESULT STDMETHODCALLTYPE OnCreatePixel(ID3D11Device* device, const void* bytes, SIZE_T size, ID3D11ClassLinkage* linkage, ID3D11PixelShader** shader) {
+    auto original = DeviceFunctions(device).pixel;
+    if (!original) return E_FAIL;
+    HRESULT result = original(device,bytes,size,linkage,shader);
+    if (SUCCEEDED(result) && shader && *shader) TwinKartRender::TagShader(*shader,bytes,size);
+    return result;
+}
+HRESULT STDMETHODCALLTYPE OnCreateCompute(ID3D11Device* device, const void* bytes, SIZE_T size, ID3D11ClassLinkage* linkage, ID3D11ComputeShader** shader) {
+    auto original = DeviceFunctions(device).compute;
+    if (!original) return E_FAIL;
+    HRESULT result = original(device,bytes,size,linkage,shader);
+    if (SUCCEEDED(result) && shader && *shader) TwinKartRender::TagShader(*shader,bytes,size);
+    return result;
+}
+bool HookDevice(ID3D11Device* device) {
+    void** table = *reinterpret_cast<void***>(device);
+    AcquireSRWLockExclusive(&deviceLock);
+    for (unsigned i=0; i<deviceCount; ++i) if (devices[i].table == table) { ReleaseSRWLockExclusive(&deviceLock); return true; }
+    if (deviceCount == ARRAYSIZE(devices)) { ReleaseSRWLockExclusive(&deviceLock); return false; }
+    auto& hooks = devices[deviceCount++]; hooks.table = table;
+    bool a=Patch(table,15,reinterpret_cast<void*>(OnCreatePixel),reinterpret_cast<void**>(&hooks.pixel));
+    bool b=Patch(table,18,reinterpret_cast<void*>(OnCreateCompute),reinterpret_cast<void**>(&hooks.compute));
+    ReleaseSRWLockExclusive(&deviceLock); return a && b;
 }
 bool Allowed() {
     wchar_t expected[32768], actual[32768];
@@ -133,19 +222,56 @@ void STDMETHODCALLTYPE SetUnordered(ID3D11DeviceContext* context, UINT slot, UIN
     for (UINT i=0; views && i<count && i<8; ++i) ObserveView(views[i], 6);
 }
 bool HookContext(ID3D11DeviceContext* context) {
-    void** table = *reinterpret_cast<void***>(context);
+    void** source = *reinterpret_cast<void***>(context);
+    // The runtime can refresh its shared dispatch table after lazy device
+    // setup. Use a complete instance table, preserving all supported methods.
+    unsigned entries = 115;
+    const struct { const IID* iid; unsigned entries; } versions[] = {
+        {&__uuidof(ID3D11DeviceContext1),134}, {&__uuidof(ID3D11DeviceContext2),144},
+        {&__uuidof(ID3D11DeviceContext3),147}, {&__uuidof(ID3D11DeviceContext4),149}
+    };
+    for (const auto& version : versions) {
+        IUnknown* extra = nullptr;
+        if (SUCCEEDED(context->QueryInterface(*version.iid,reinterpret_cast<void**>(&extra)))) {
+            if (extra == static_cast<IUnknown*>(context)) entries = version.entries;
+            extra->Release();
+        }
+    }
     AcquireSRWLockExclusive(&contextLock);
-    for (unsigned i=0; i<contextCount; ++i) if (contexts[i].table == table) { ReleaseSRWLockExclusive(&contextLock); return true; }
+    for (unsigned i=0; i<contextCount; ++i) if (contexts[i].owner == context) {
+        bool installed = contexts[i].table == source;
+        ReleaseSRWLockExclusive(&contextLock); return installed;
+    }
     if (contextCount == ARRAYSIZE(contexts)) { ReleaseSRWLockExclusive(&contextLock); return false; }
-    auto& hooks = contexts[contextCount++]; hooks.table = table;
+    auto& hooks = contexts[contextCount++]; hooks.owner = context; hooks.table = hooks.cloned;
+    memcpy(hooks.cloned,source,entries*sizeof(void*));
+    void** table = hooks.table;
     // Keep each wrapper's original functions with its own vtable. The game's
     // context can differ from the temporary discovery device's context.
     bool a=Patch(table,33,reinterpret_cast<void*>(SetTargets),reinterpret_cast<void**>(&hooks.targets));
     bool b=Patch(table,8,reinterpret_cast<void*>(SetResources),reinterpret_cast<void**>(&hooks.pixel));
     bool c=Patch(table,67,reinterpret_cast<void*>(SetComputeResources),reinterpret_cast<void**>(&hooks.compute));
     bool d=Patch(table,68,reinterpret_cast<void*>(SetUnordered),reinterpret_cast<void**>(&hooks.unordered));
+    bool e=Patch(table,12,reinterpret_cast<void*>(OnIndexed),reinterpret_cast<void**>(&hooks.indexed));
+    bool f=Patch(table,13,reinterpret_cast<void*>(OnDraw),reinterpret_cast<void**>(&hooks.draw));
+    bool g=Patch(table,20,reinterpret_cast<void*>(OnIndexedInstances),reinterpret_cast<void**>(&hooks.indexedInstances));
+    bool h=Patch(table,21,reinterpret_cast<void*>(OnInstances),reinterpret_cast<void**>(&hooks.instances));
+    bool i=Patch(table,39,reinterpret_cast<void*>(OnIndexedIndirect),reinterpret_cast<void**>(&hooks.indexedIndirect));
+    bool j=Patch(table,40,reinterpret_cast<void*>(OnIndirect),reinterpret_cast<void**>(&hooks.indirect));
+    bool k=Patch(table,41,reinterpret_cast<void*>(OnDispatch),reinterpret_cast<void**>(&hooks.dispatch));
+    bool l=Patch(table,42,reinterpret_cast<void*>(OnDispatchIndirect),reinterpret_cast<void**>(&hooks.dispatchIndirect));
+    bool installed = false;
+    if (a && b && c && d && e && f && g && h && i && j && k && l) {
+        DWORD previous;
+        if (VirtualProtect(context,sizeof(void*),PAGE_READWRITE,&previous)) {
+            installed = InterlockedCompareExchangePointer(reinterpret_cast<PVOID volatile*>(context),table,source) == source;
+            DWORD ignored; VirtualProtect(context,sizeof(void*),previous,&ignored);
+        }
+    }
+    if (installed) context->AddRef(); // adapter remains resident until owned process exit
+    else { --contextCount; hooks = ContextHooks{}; }
     ReleaseSRWLockExclusive(&contextLock);
-    return a && b && c && d;
+    return installed;
 }
 HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT flags) {
     if (!(flags & DXGI_PRESENT_TEST)) {
@@ -155,6 +281,8 @@ HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT fl
                 ID3D11DeviceContext* actualContext = nullptr;
                 actualDevice->GetImmediateContext(&actualContext);
                 if (actualContext) {
+                    actualContext->AddRef(); gameContext.store(actualContext,std::memory_order_release);
+                    HookDevice(actualDevice);
                     Log(HookContext(actualContext) ? "{\"event\":\"real_immediate_context_observed\"}\r\n" : "{\"event\":\"real_context_hook_failed\"}\r\n");
                     actualContext->Release();
                 }
@@ -174,6 +302,7 @@ HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT fl
             } else Log("{\"event\":\"sr_game_device_unavailable\"}\r\n");
         }
         LONG frame = InterlockedIncrement(&frames);
+        InterlockedExchange(&sampledRows, 0);
         LARGE_INTEGER now; QueryPerformanceCounter(&now);
         if (frame == 1 || frame % 120 == 0) {
             DXGI_SWAP_CHAIN_DESC desc{}; swap->GetDesc(&desc);
@@ -205,6 +334,9 @@ DWORD WINAPI Worker(void*) {
     output = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, CREATE_NEW, 0, nullptr);
     if (output == INVALID_HANDLE_VALUE) return 2;
     QueryPerformanceFrequency(&frequency);
+    wchar_t passFlag[8]{};
+    GetEnvironmentVariableW(L"TWIN_KART_RENDER_PASSES", passFlag, ARRAYSIZE(passFlag));
+    tracePasses = passFlag[0] == L'1';
     wchar_t modulePath[32768]{};
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_MODULE", modulePath, ARRAYSIZE(modulePath));
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_CACHE", dlssCache, ARRAYSIZE(dlssCache));
@@ -231,6 +363,7 @@ DWORD WINAPI Worker(void*) {
         void** scTable=*reinterpret_cast<void***>(swap);
         bool a=Patch(scTable,8,reinterpret_cast<void*>(OnPresent),reinterpret_cast<void**>(&present));
         bool b=HookContext(context);
+        HookDevice(device);
         Log(a && b ? "{\"event\":\"observer_installed\",\"is_dlss_implementation\":false}\r\n" : "{\"event\":\"observer_partial_install\"}\r\n");
     } else Log("{\"event\":\"observer_device_failed\"}\r\n");
     if (context) context->Release(); if (device) device->Release(); if (swap) swap->Release();

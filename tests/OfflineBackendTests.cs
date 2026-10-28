@@ -33,6 +33,7 @@ static class OfflineBackendTests
     }
     static void RoomChecks(OfflineProfileStore store)
     {
+        Need(Code(Call(store,"PqCustomGameSetReady",",\"readyState\":1"))!=0,"Readiness accepted outside a joined room");
         Need(Code(Call(store,"PqAddCustomGameAiMember",",\"slot\":1"))!=0,"AI added before room join");
         var created=Call(store,"PqCreateCustomGame",",\"observerMode\":false,\"setting\":{\"_type\":\"CsRaceGame\",\"track\":\"Test_R01\",\"gameMode\":{\"raceMode\":4}}");
         var draft=RoomSnapshot(created);
@@ -40,11 +41,14 @@ static class OfflineBackendTests
         Need(Code(Call(store,"PqJoinCustomGame",",\"sessionId\":\"foreign\""))!=0,"Foreign room accepted");
         var joined=RoomSnapshot(Call(store,"PqJoinCustomGame",",\"sessionId\":\"\""));
         Need(joined.SessionId==draft.SessionId,"Join replaced room identity");
+        Need(RoomSnapshot(Call(store,"PqCustomGameSetReady",",\"readyState\":1")).Members[0].ReadyState==1,"Native owner readiness not included in room notification");
+        Need(Code(Call(store,"PqCustomGameSetReady",",\"readyState\":1.5"))!=0 && Code(Call(store,"PqCustomGameSetReady",",\"readyState\":-1"))!=0,"Malformed readiness accepted");
         Need(Code(Call(store,"PqAddCustomGameAiMember",",\"slot\":0"))!=0,"AI replaced local driver");
         for(int slot=1;slot<=7;slot++)
         {
             var snapshot=RoomSnapshot(Call(store,"PqAddCustomGameAiMember",",\"slot\":"+slot));
             Need(snapshot.AiMemberCount==slot && snapshot.MemberCount==slot+1,"AI roster size incorrect");
+            Need(snapshot.Members[0].ReadyState==0,"Roster change retained stale driver readiness");
             var identities=new HashSet<string>(); foreach(var member in snapshot.Members) Need(identities.Add(member.AccountId),"Duplicate local member identity");
         }
         Need(Code(Call(store,"PqAddCustomGameAiMember",",\"slot\":8"))!=0,"Ninth grid slot accepted");
@@ -88,10 +92,17 @@ static class OfflineBackendTests
             var finish=Call(store,"PqTimeAttackUpdate",",\"status\":0,\"gameId\":\""+raceId+"\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":1000}");
             Need(Code(finish)==0 && (bool)finish.Response["isUpdated"] && (string)finish.Response["gameId"]==raceId,"Native result acknowledgement incomplete");
             Need(store.Snapshot().Contains("\"lapTime\":1000"),"Local personal best not persisted");
+            string afterFinish=store.Snapshot();
+            var retryPacket=ProfileJson.Parse("{\"_type\":\"PqTimeAttackUpdate\",\"reqId\":77,\"bCheat\":false,\"timeAttack\":{\"recordTime\":1000,\"trackId\":\"Test_R01\"},\"status\":0,\"gameId\":\""+raceId+"\"}");
+            var retry=store.Handle(retryPacket,77);
+            Need(Code(retry)==0 && (int)retry.Response["reqId"]==77 && (bool)retry.Response["isUpdated"] && store.Snapshot()==afterFinish,"Result retry changed state, lost acknowledgement or reused old request correlation");
+            Need(Code(Call(store,"PqTimeAttackUpdate",",\"status\":0,\"gameId\":\""+raceId+"\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":999}"))!=0 && store.Snapshot()==afterFinish,"Conflicting completed result accepted");
             var rank=Call(store,"PqTimeAttackGetRankers",",\"trackId\":\"Test_R01\"");
             Need((int)rank.Response["myRank"]==1 && (int)ProfileJson.Object(((List<object>)rank.Response["myRecord"])[0])["kartGrade"]==0,"Record did not preserve starting vehicle configuration");
             Need((int)Call(store,"PqTimeAttackGetRankVersion").Response["version"]==2,"New best did not invalidate ranking cache");
             var abandoned=Call(store,"PqTimeAttackStart",",\"trackId\":\"Test_R01\"");
+            string nextActive=store.Snapshot();
+            Need(Code(store.Handle(retryPacket,78))==0 && store.Snapshot()==nextActive,"Old result retry consumed a new active race");
             var abandon=Call(store,"PqTimeAttackUpdate",",\"status\":1,\"gameId\":\""+(string)abandoned.Response["gameId"]+"\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":1}");
             Need(Code(abandon)==0 && !(bool)abandon.Response["isUpdated"] && store.Snapshot().Contains("\"lapTime\":1000"),"Abandoned race replaced personal best");
             Need(Code(Call(store,"PqKartUpgrade",",\"kartItemId\":\"Kart:1\""))==0,"Offline upgrade retains a progression/currency gate");
@@ -99,6 +110,13 @@ static class OfflineBackendTests
             Need(Code(Call(store,"PqSetQuickMatchData",",\"data\":17"))!=0,"Invalid mode-choice object accepted");
             var reload=new OfflineProfileStore(path,initial,defaults,unlock,rules,"{\"tracks\":[\"Test_R01\"]}",physics,"{\"vehicles\":{}}","1",54321);
             Need(reload.Snapshot()==store.Snapshot(),"Atomic persistence or restart lost state");
+            string beforeReplay=reload.Snapshot();
+            Need(Code(reload.Handle(retryPacket,79))==0 && reload.Snapshot()==beforeReplay,"Completed result acknowledgement lost after restart");
+            for(int index=0;index<17;index++) {
+                var boundedRace=Call(reload,"PqTimeAttackStart",",\"trackId\":\"Test_R01\"");
+                Need(Code(Call(reload,"PqTimeAttackUpdate",",\"status\":1,\"gameId\":\""+(string)boundedRace.Response["gameId"]+"\",\"timeAttack\":{\"trackId\":\"Test_R01\",\"recordTime\":0}"))==0,"Abandonment journal fixture failed");
+            }
+            Need(((object[])ProfileJson.Parse(reload.Snapshot())["raceResultHistory"]).Length==16 && Code(reload.Handle(retryPacket,80))!=0,"Result history unbounded or expired result replayed");
             Need(Code(Call(store,"PqUnsupported"))!=0,"Unknown operation falsely succeeded");
             RoomChecks(store);
             if(args.Length==1)
@@ -112,7 +130,8 @@ static class OfflineBackendTests
                 Console.WriteLine("PASS external client dataset: original profile, native body payload and 234 track rows; no game started.");
             }
             Console.WriteLine("PASS original backend: inventory, fixed-field tuning, native effect rebasing, atomic rollback/restart and track/session validation.");
-            Console.WriteLine("PASS native room adapter: create/join, seven AI slots, kick, mode change, identity isolation and explicit race-not-ready boundary.");
+            Console.WriteLine("PASS native room adapter: create/join, seven AI slots, readiness, kick, mode change, identity isolation and explicit race-not-ready boundary.");
+            Console.WriteLine("PASS result replay: stable acknowledgement across request IDs, property ordering and restart; conflicting result rejected; new active race preserved.");
             return 0;
         }
         catch(Exception error) { Console.Error.WriteLine(error); return 1; }

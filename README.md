@@ -14,6 +14,7 @@
 
 ## 已实现并验证
 
+- 本轮整合补齐原生房间准备状态和跨重启的幂等结算回执，重试不会误结束下一场比赛。座舱新增旧模型恢复与对象分配序号检查；图形探针新增绘制／计算输入输出关联及着色器哈希。生命周期软件检查和 D3D11 WARP 测试通过；这些新增代码尚未做游戏内验收，也不代表完整 AI 或 DLSS 画面已完成。
 - 双版本独立配置、客户端路径和 SHA-256 核查；自动读取 Steam 库定位 Drift。
 - DirectInput 8 设备与轴枚举，分别选择方向盘、油门、刹车，支持踏板接底座或独立 USB。
 - 左／中／右转向校准、松开／踩到底踏板校准、反向轴、死区、按钮绑定、实时输入预览。
@@ -60,6 +61,8 @@ Fanatec ClubSport DD+ 15 Nm（PlayStation）与 ClubSport V3 Inverted 是目标�
 .\gateway\test-unlocks.ps1
 .\gateway\test-offline.ps1
 .\native\build-camera.ps1
+.\native\build-camera.ps1 -Test
+.\native\build-render.ps1 -Test
 .\build\TwinKartLauncher.exe
 ```
 

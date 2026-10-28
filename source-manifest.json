@@ -9,7 +9,7 @@
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "4d374c240b9f7c3b2b293d59bdd4e4b04dd5badd6b23a63cc1cab5f86577f97d"
+    "sha256": "87a8c3ff73b7ddec086b9e2fe1b897c399be3e8a42669c2e6483eccf9dd1ebcd"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -49,11 +49,11 @@
   },
   {
     "file": "gateway/OfflineProfileStore.cs",
-    "sha256": "b3bd507993811cc8b0729caebcad3acc28d6e6df95b9822dc6f54b3bf5d22ab9"
+    "sha256": "c57a5ab49bfb8b3ac78dc850c67088b57b94020e2ab05ded93f6c3dc0ff7d950"
   },
   {
     "file": "gateway/OfflineRoomService.cs",
-    "sha256": "6e17a8e47da8f999cdaf50d17365cd9d884ce347c8279d2743ebcf6cb4b2e685"
+    "sha256": "bb3c0c063940498c9db92df48d29bba97fa4885aa8ba5ac3cd393137ef86e580"
   },
   {
     "file": "gateway/OfflineTuning.cs",
@@ -65,7 +65,7 @@
   },
   {
     "file": "gateway/PacketContracts.cs",
-    "sha256": "844afb3d721a963bb9ccd2d4f4d0b2b2aaf666e324433f60b601ea32d74147fc"
+    "sha256": "34665eff11fd61211bcd1cedabe7756194657af218e38b6288fc3c90daf8340f"
   },
   {
     "file": "gateway/PreAuthSession.cs",
@@ -81,7 +81,7 @@
   },
   {
     "file": "gateway/RoomState.cs",
-    "sha256": "f2736fc24c854148b753d834272083701a713dfdd21568f0101b455c8578f72a"
+    "sha256": "f51f9e3a836d846984754c1c5b146331be74cece8b9591a0b32000d55b2c0f9e"
   },
   {
     "file": "gateway/test-body-layout.ps1",
@@ -121,7 +121,7 @@
   },
   {
     "file": "native/build-camera.ps1",
-    "sha256": "ae9d5587dc78f41bd8a3ef40a8c5b2eae4277165351b3214573a891df01481b7"
+    "sha256": "8f22aab4ab386d9d4daf58560209d9483fc403f3d5d5db7f81b2ad04197bc48e"
   },
   {
     "file": "native/build-dlss.ps1",
@@ -133,7 +133,7 @@
   },
   {
     "file": "native/build-render.ps1",
-    "sha256": "94f4557a5881885f75450381fdb8f68ba77a39537384f95fc445a11d6355a912"
+    "sha256": "dbddbc09892455198961f652b5b3731c37bc80a6f98477d3d3b991f5ee0a13fb"
   },
   {
     "file": "native/build-xinput.ps1",
@@ -149,15 +149,27 @@
   },
   {
     "file": "native/DriftCamera.cpp",
-    "sha256": "9d41d37b80785e0e6a5ef740535cad433737e4f8027bfbcb98d639f49b1d9afb"
+    "sha256": "fd3a5b56b4cff52d634e8f632d20d927ed67ab0643d1f0c83b46c2bcdc6913ef"
+  },
+  {
+    "file": "native/DriftObjectIdentity.h",
+    "sha256": "194ca6e546e053e5fcd408103a72b9e4280a96baea8a0681486407ec88e05663"
   },
   {
     "file": "native/DriftRenderProbe.cpp",
-    "sha256": "a749dc1a74b5fcd71fd3e59c415cf8cadc002b4c0693ce094631a3a950eb554e"
+    "sha256": "d1f7b4f6528f176f887660407c68ed35af44dcf2a6e42c7136dc1cfa49df9e0a"
   },
   {
     "file": "native/InputDevice.cpp",
     "sha256": "1cc98c8f910937cb55416df0f99143497dc549827ea86cbd64f8513a22f85402"
+  },
+  {
+    "file": "native/RenderPassTrace.cpp",
+    "sha256": "093c961f1a6e6668df76c0e2ec878c0cff3caf1d763298607c35a78c9c7f8cf2"
+  },
+  {
+    "file": "native/RenderPassTrace.h",
+    "sha256": "c431e7697c987709b00920fc32affe316fa362ccc20bffd271128e91aae620a0"
   },
   {
     "file": "native/VirtualXInput.cpp",
@@ -169,15 +181,15 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "3cc760d5c5832d107e9727ffd01502f12547523f68cd626760a8701f23acc08c"
+    "sha256": "f447b2a29881261a5bac426dc7abdcde8ec3116efaa66bc6a30cf3c25fd5c720"
   },
   {
     "file": "README.md",
-    "sha256": "283c388c064077c2a980bc858b20f8628478918a8263fc77f3be1b18c25ca252"
+    "sha256": "e9ea356203cc8fcbdd299dc446a61ce881186e8bb9117e2ef67229fff330f611"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
-    "sha256": "a1192baa1fa5f082d9923ebc3f9ee8bca2b9a2be9daba9026b5208268335b958"
+    "sha256": "421108ddd6150e33454074c41d865303117e49a03368c7fd89d0cbe5ccfb49ce"
   },
   {
     "file": "src/ClientDiscovery.cs",
@@ -201,7 +213,7 @@
   },
   {
     "file": "src/OfflineLaunchSession.cs",
-    "sha256": "452738ed51ac53b7fcf23f9fe53bf4eb5ccce2a6bc396274dc65daf08c4d7ab1"
+    "sha256": "6c753ab2a2e2866fc8ed2cca7f66534d09b2d4190d347101ef40b9a5d9219fc0"
   },
   {
     "file": "src/OwnedGameModule.cs",
@@ -224,6 +236,10 @@
     "sha256": "1518df5d64deef60ffc36650cc8e855c5459720e4076c9f59e0e5ba1431a2196"
   },
   {
+    "file": "tests/DriftObjectIdentityTests.cpp",
+    "sha256": "e851e7901b257900a7ed6730e77d98590a1b1e698bf60f3c6588f6f399d48114"
+  },
+  {
     "file": "tests/GatewayTests.cs",
     "sha256": "0ae2d1734b92ea54ea7a67e0b93df6e31e2d5d41b2a3ada6296aaf7447b24abe"
   },
@@ -241,7 +257,7 @@
   },
   {
     "file": "tests/OfflineBackendTests.cs",
-    "sha256": "f3e40c28b1259d7b481247968ba016e3f84b363e8cfa2df9c044298b70e27b0b"
+    "sha256": "3b3cc00066f09e91ff033959f5a82fe248893ef5b78c38dfda6bef2fcf775ae2"
   },
   {
     "file": "tests/PackedFieldLayoutTests.cs",
@@ -250,6 +266,10 @@
   {
     "file": "tests/PacketContractTests.cs",
     "sha256": "57339ef3496dd5e741863850f81db086f6861b9fdc76a8d467825f26426cdbcc"
+  },
+  {
+    "file": "tests/RenderPassTraceTests.cpp",
+    "sha256": "aaf99e15b82c60f6b08d6139cf008e72d8a497256f2a5b9b726d38b912b190c5"
   },
   {
     "file": "tests/RoomStateTests.cs",

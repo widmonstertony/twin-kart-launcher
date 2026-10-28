@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Security.Cryptography;
 using System.Web.Script.Serialization;
 
 namespace TwinKartLauncher.Gateway
@@ -77,6 +78,48 @@ namespace TwinKartLauncher.Gateway
         static Dictionary<string, object> Reply(string type, int id, int code = 0)
         { return new Dictionary<string, object> { { "_type", type }, { "reqId", id }, { "result", new Dictionary<string, object> { { "code", code } } }, { "desc", "" } }; }
         static string Now() { return DateTime.UtcNow.ToString("o", System.Globalization.CultureInfo.InvariantCulture); }
+        static object Canonical(object value)
+        {
+            var map = value as IDictionary<string,object>;
+            if (map != null) {
+                var sorted = new SortedDictionary<string,object>(StringComparer.Ordinal);
+                foreach (var pair in map) sorted.Add(pair.Key,Canonical(pair.Value));
+                return sorted;
+            }
+            var array = value as object[];
+            if (array != null) return array.Select(Canonical).ToArray();
+            return value;
+        }
+        static string ResultSignature(IDictionary<string,object> request)
+        {
+            object flag;
+            var effective = new Dictionary<string,object> {
+                {"timeAttack",request["timeAttack"]},{"status",request["status"]},
+                {"bCheat",request.TryGetValue("bCheat",out flag) ? flag : false}
+            };
+            using (var hash = SHA256.Create()) return Convert.ToBase64String(hash.ComputeHash(Encoding.UTF8.GetBytes(ProfileJson.Write(Canonical(effective)))));
+        }
+        static Dictionary<string,object> ReplayResult(Dictionary<string,object> profile, string gameId, string signature, int requestId)
+        {
+            object raw;
+            if (!profile.TryGetValue("raceResultHistory",out raw)) return null;
+            foreach (object value in (object[])raw) {
+                var saved = ProfileJson.Object(value);
+                if (!Object.Equals(saved["gameId"],gameId)) continue;
+                if (!Object.Equals(saved["signature"],signature)) throw new ArgumentException("Conflicting result for completed race.");
+                var reply = ProfileJson.Object(ProfileJson.Copy(saved["response"])); reply["reqId"] = requestId; return reply;
+            }
+            return null;
+        }
+        static void RememberResult(Dictionary<string,object> profile, string gameId, string signature, Dictionary<string,object> response)
+        {
+            object raw;
+            var history = profile.TryGetValue("raceResultHistory",out raw) ? new List<object>((object[])raw) : new List<object>();
+            var saved = ProfileJson.Object(ProfileJson.Copy(response)); saved.Remove("reqId");
+            history.Add(new Dictionary<string,object>{{"gameId",gameId},{"signature",signature},{"response",saved}});
+            while (history.Count > 16) history.RemoveAt(0);
+            profile["raceResultHistory"] = history;
+        }
         static void Overlay(Dictionary<string, object> destination, Dictionary<string, object> source)
         { foreach (var pair in source) destination[pair.Key] = ProfileJson.Copy(pair.Value); }
         HashSet<string> Owned(Dictionary<string, object> profile)
@@ -199,10 +242,7 @@ namespace TwinKartLauncher.Gateway
                             startingRace["emblemId"] = next.ContainsKey("emblemItemIdOn") ? next["emblemItemIdOn"] : "";
                             changed = true; break;
                         case "PqTimeAttackUpdate":
-                            var active = ProfileJson.Object(next, "activeRace");
-                            if (!Object.Equals(request["gameId"], active["gameId"])) throw new ArgumentException("Race identity mismatch.");
                             var record = ProfileJson.Object(request["timeAttack"]);
-                            if (!Object.Equals(record["trackId"], active["trackId"])) throw new ArgumentException("Race track mismatch.");
                             if (!(record["recordTime"] is int || record["recordTime"] is long)) throw new ArgumentException("Race time must be an integer.");
                             long milliseconds = Convert.ToInt64(record["recordTime"]);
                             if (milliseconds < 0 || milliseconds > 24 * 60 * 60 * 1000) throw new ArgumentException("Invalid race time.");
@@ -211,6 +251,14 @@ namespace TwinKartLauncher.Gateway
                             bool flagged = request.TryGetValue("bCheat",out cheat) && cheat is bool && (bool)cheat;
                             if (request.ContainsKey("bCheat") && !(cheat is bool)) throw new ArgumentException("Invalid result flag.");
                             if ((int)request["status"] == 0 && !flagged && milliseconds == 0) throw new ArgumentException("Completed race requires a positive time.");
+                            string completedId = request["gameId"] as string;
+                            if (String.IsNullOrEmpty(completedId)) throw new ArgumentException("Missing race identity.");
+                            string signature = ResultSignature(request);
+                            var replay = ReplayResult(next,completedId,signature,id);
+                            if (replay != null) { result.Response = replay; return result; }
+                            var active = ProfileJson.Object(next, "activeRace");
+                            if (!Object.Equals(completedId, active["gameId"])) throw new ArgumentException("Race identity mismatch.");
+                            if (!Object.Equals(record["trackId"], active["trackId"])) throw new ArgumentException("Race track mismatch.");
                             response["_type"] = "PrTimeAttackUpdate";
                             response["gameId"] = request["gameId"];
                             response["timeAttack"] = ProfileJson.Copy(record);
@@ -238,6 +286,7 @@ namespace TwinKartLauncher.Gateway
                                     response["isUpdated"] = true;
                                 }
                             }
+                            RememberResult(next,completedId,signature,response);
                             next.Remove("activeRace"); changed = true; break;
                         default:
                             object external;

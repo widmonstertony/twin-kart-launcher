@@ -12,6 +12,7 @@ namespace TwinKartLauncher.Gateway
         string sessionId;
         string track;
         int raceMode;
+        int readyState;
         bool joined;
         bool playRequested;
         bool hostMode;
@@ -21,6 +22,7 @@ namespace TwinKartLauncher.Gateway
         public string SessionId { get { return sessionId; } }
         public string Track { get { return track; } }
         public int RaceMode { get { return raceMode; } }
+        public int ReadyState { get { return readyState; } }
         public bool Joined { get { return joined; } }
         public bool PlayRequested { get { return playRequested; } }
         public bool HostMode { get { return hostMode; } }
@@ -45,24 +47,31 @@ namespace TwinKartLauncher.Gateway
             if (addAi != null) return AddAi(addAi);
             PlayCustomGameContract play = request as PlayCustomGameContract;
             if (play != null) return Play(play);
+            var ready = request as CustomGameReadyContract;
+            if (ready != null)
+            {
+                if (!joined) return GatewayTransition.Reject("Join a local room first.", request.PacketType, request.RequestId);
+                readyState = ready.ReadyState;
+                return GatewayTransition.Accept(request.PacketType, request.RequestId, "Local driver's native readyState updated; not a race-start acknowledgement.");
+            }
             var kick = request as KickCustomGameMemberContract;
             if (kick != null)
             {
                 if (!joined || !aiSlots.Remove(kick.Slot)) return GatewayTransition.Reject("No AI member occupies that slot.", request.PacketType, request.RequestId);
-                playRequested = false;
+                playRequested = false; readyState = 0;
                 return GatewayTransition.Accept(request.PacketType, request.RequestId, "AI member removed locally.");
             }
             var change = request as ChangeCustomGameSettingContract;
             if (change != null)
             {
                 if (!joined) return GatewayTransition.Reject("Join a local room first.", request.PacketType, request.RequestId);
-                setting = Copy(change.Setting); track = setting.Track; raceMode = setting.GameMode.RaceMode; playRequested = false;
+                setting = Copy(change.Setting); track = setting.Track; raceMode = setting.GameMode.RaceMode; playRequested = false; readyState = 0;
                 return GatewayTransition.Accept(request.PacketType, request.RequestId, "Local room setting changed.");
             }
             if (request is ExitCustomGameContract)
             {
                 if (sessionId == null) return GatewayTransition.Reject("No room exists.", request.PacketType, request.RequestId);
-                sessionId = null; setting = null; track = null; raceMode = 0;
+                sessionId = null; setting = null; track = null; raceMode = readyState = 0;
                 joined = playRequested = hostMode = observerMode = hideGameKey = false; aiSlots.Clear();
                 return GatewayTransition.Accept(request.PacketType, request.RequestId, "Local room cleared.");
             }
@@ -86,6 +95,7 @@ namespace TwinKartLauncher.Gateway
             joined = false;
             playRequested = false;
             hostMode = false;
+            readyState = 0;
             aiSlots.Clear();
             return GatewayTransition.Accept(packet.PacketType, packet.RequestId, "Room draft created locally; no client reply sent.");
         }
@@ -108,7 +118,7 @@ namespace TwinKartLauncher.Gateway
             if (packet.Slot < 1 || packet.Slot > 7) return GatewayTransition.Reject("AI slot must be 1..7; slot zero belongs to the local driver.", packet.PacketType, packet.RequestId);
             if (!aiSlots.Add(packet.Slot))
                 return GatewayTransition.Reject("Slot already contains an AI draft.", packet.PacketType, packet.RequestId);
-            playRequested = false;
+            playRequested = false; readyState = 0;
             return GatewayTransition.Accept(packet.PacketType, packet.RequestId, "AI slot recorded locally; no CsMember payload sent.");
         }
 

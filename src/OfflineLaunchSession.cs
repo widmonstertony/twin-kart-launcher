@@ -123,6 +123,7 @@ namespace TwinKartLauncher
                         launch.EnvironmentVariables["TWIN_KART_ALLOWED_GAME"]=game;
                         launch.EnvironmentVariables["TWIN_KART_CAMERA_LOG"]=Path.Combine(run,"camera.jsonl");
                         launch.EnvironmentVariables["TWIN_KART_RENDER_LOG"]=Path.Combine(run,"render.jsonl");
+                        launch.EnvironmentVariables["TWIN_KART_RENDER_PASSES"]="1";
                         launch.EnvironmentVariables["TWIN_KART_DLSS_CACHE"]=Path.Combine(run,"ngx-cache"); Directory.CreateDirectory(Path.Combine(run,"ngx-cache"));
                         gameProcess=Process.Start(launch); report["game_pid"]=gameProcess.Id;
                         Save(Path.Combine(run,"report.json"),report);

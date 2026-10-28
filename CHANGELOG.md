@@ -2,6 +2,10 @@
 
 ## Unreleased / 后续开发
 
+- Add native room readiness notifications and persist a bounded, idempotent result acknowledgement journal. Retries survive restart without consuming another active race or changing rankings twice. / 补齐房间准备状态通知和有限长度的幂等结算回执；重试可跨重启恢复，不会误结束下一场比赛或重复刷新排行榜。
+- Restore a previous cockpit mesh before replacing its cache; validate object slots, destruction flags and allocation serials before retained-object writes. Synthetic lifetime checks pass; new in-game lifecycle acceptance is pending. / 切换座舱缓存前恢复旧模型；写回前核对对象槽、销毁状态和分配序号。生命周期软件检查通过，新版实机生命周期仍待验收。
+- Add sampled D3D11 draw/dispatch input-output traces and SHA-256 shader identifiers. WARP checks cover resource references, pipeline preservation and pixel/compute binding correlation. This is temporal-pass discovery, not working DLSS output. / 新增 D3D11 绘制／计算输入输出采样与着色器 SHA-256；WARP 检查覆盖引用、渲染状态保持和输入输出关联。用于定位时域渲染接点，尚未输出 DLSS 画面。
+- Preserve observer hooks when the D3D11 runtime refreshes its shared dispatch table by cloning the supported context interface per instance. All eight draw/dispatch wrappers produce samples and preserve rendered pixels in WARP tests. / 用每个上下文独立的接口表保留图形 hook，修复 D3D11 运行时刷新共享表后采样丢失的问题；WARP 实测八种绘制／计算入口均持续记录且保持输出像素。
 - Connect the original native room adapter to the profile backend: create/join, seven AI slots, kick, setting changes and exit. Same-track race hosting is still pending. / 原创房间通知已接入后端，覆盖创建/加入、7 个 AI 槽位、移除、设置变化和退出；同场比赛主持协议仍待完成。
 - Complete native time-attack result fields, preserve the starting vehicle/tuning snapshot, refresh local ranking versions and exclude abandoned runs from personal bests. / 补齐计时赛原生结算字段，保存发车时车辆与改装快照，更新本地排行榜版本，退出比赛不覆盖最佳成绩。
 - Integration is software-checked first; user gameplay acceptance follows the combined implementation. / 先整合并做软件检查，整合后由用户进行游戏验收。

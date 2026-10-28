@@ -58,6 +58,13 @@ namespace TwinKartLauncher.Gateway
         public override string PacketType { get { return "PqPlayCustomGame"; } }
         public bool HostMode { get; internal set; }
     }
+    public sealed class CustomGameReadyContract : RoomPacketContract
+    {
+        public override string PacketType { get { return "PqCustomGameSetReady"; } }
+        // Native signed Int32 field; values do not establish that a race host
+        // has finished loading or that a participant is driving.
+        public int ReadyState { get; internal set; }
+    }
     public sealed class KickCustomGameMemberContract : RoomPacketContract
     {
         public override string PacketType { get { return "PqKickCustomGameMember"; } }
@@ -104,6 +111,7 @@ namespace TwinKartLauncher.Gateway
         public bool? Ai { get; internal set; }
         public string AccountId { get; internal set; }
         public bool? IsSpectator { get; internal set; }
+        public int? ReadyState { get; internal set; }
     }
 
     public static class PacketJsonCodec
@@ -158,6 +166,12 @@ namespace TwinKartLauncher.Gateway
                     if (!RequiredBoolean(packet, "hostMode", out host))
                     { error = "hostMode must be a boolean."; return false; }
                     request = new PlayCustomGameContract { RequestId = reqId, HostMode = host };
+                    error = null; return true;
+                case "PqCustomGameSetReady":
+                    int readyState;
+                    if (!RequiredInt32(packet, "readyState", out readyState) || readyState < 0)
+                    { error = "readyState must be a nonnegative Int32."; return false; }
+                    request = new CustomGameReadyContract { RequestId = reqId, ReadyState = readyState };
                     error = null; return true;
                 case "PqKickCustomGameMember":
                     int kickedSlot;
@@ -281,12 +295,16 @@ namespace TwinKartLauncher.Gateway
                 if (!(raw is bool)) { error = "member.isSpectator must be boolean."; return false; }
                 spectator = (bool)raw;
             }
+            int readyState;
+            if (!OptionalInt32(source, "readyState", out readyState))
+            { error = "member.readyState must be Int32."; return false; }
             string accountId;
             if (!OptionalString(source, "accountId", out accountId))
             { error = "member.accountId must be a bounded string."; return false; }
             member = new CsMemberContract {
                 Slot = source.ContainsKey("slot") ? (int?)slot : null,
-                Ai = ai, AccountId = accountId, IsSpectator = spectator
+                Ai = ai, AccountId = accountId, IsSpectator = spectator,
+                ReadyState = source.ContainsKey("readyState") ? (int?)readyState : null
             };
             return true;
         }
