@@ -2,6 +2,10 @@
 
 ## Unreleased / 后续开发
 
+- Add cockpit settings with persistent/live seat, head and FOV controls; identical reapplication after F6 now works. / 新增第一人称设置窗口和持久化、实时座位／头部／视野控制，修复 F6 后重发相同设置不生效的问题。
+- Add optional head-bone anchoring and native weak-reference serial acquisition for new drivers. Control-file checks pass; updated game lifecycle acceptance is pending. / 新增可选头部骨骼定位和原厂弱引用序号获取，控制文件检查通过，新版实机生命周期仍待验收。
+- Add an optional native asset-registry inventory module and a strict track-evidence reconciler. One real isolated capture found 1,585 world/sublevel records and 101 AI-path assets; 19 catalog base aliases remain unmatched after separating two reverse candidates. Configuration restoration passed. / 新增原生资源目录模块和严格赛道证据核对工具；实机隔离采集得到 1,585 个地图／子关卡和 101 份 AI 路线，区分两个反向候选后仍有 19 个基础别名未匹配，配置恢复通过。
+- Prioritize cockpit, complete AI races and all tracks; defer further DLSS/Fanatec work. / 优先完成第一人称、完整 AI 比赛和全赛道，DLSS 与 Fanatec 后排。
 - Add native room readiness notifications and persist a bounded, idempotent result acknowledgement journal. Retries survive restart without consuming another active race or changing rankings twice. / 补齐房间准备状态通知和有限长度的幂等结算回执；重试可跨重启恢复，不会误结束下一场比赛或重复刷新排行榜。
 - Restore a previous cockpit mesh before replacing its cache; validate object slots, destruction flags and allocation serials before retained-object writes. Synthetic lifetime checks pass; new in-game lifecycle acceptance is pending. / 切换座舱缓存前恢复旧模型；写回前核对对象槽、销毁状态和分配序号。生命周期软件检查通过，新版实机生命周期仍待验收。
 - Add sampled D3D11 draw/dispatch input-output traces and SHA-256 shader identifiers. WARP checks cover resource references, pipeline preservation and pixel/compute binding correlation. This is temporal-pass discovery, not working DLSS output. / 新增 D3D11 绘制／计算输入输出采样与着色器 SHA-256；WARP 检查覆盖引用、渲染状态保持和输入输出关联。用于定位时域渲染接点，尚未输出 DLSS 画面。

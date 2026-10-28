@@ -8,6 +8,9 @@ This project is intended to become an **independent public repository, not a for
 |---|---|---|
 | `src/MainForm.cs`, `Profiles.cs`, `ClientDiscovery.cs` | WinForms workflow, separate Classic/Drift profiles, calibration persistence, local Steam discovery and PE/SHA-256 inspection. | .NET Framework 4.8, Windows Registry/file APIs. |
 | `src/DeviceInput.cs`, `SharedPad.cs` | Managed DirectInput wrapper and session-scoped 64-byte input channel. | .NET interop and memory-mapped files. |
+| `src/CockpitForm.cs`, `native/CameraControl.h` | Original cockpit settings UI, persistent/live head/seat/FOV control contract, strict bounds and atomic file replacement handling. | .NET WinForms and Windows SDK. |
+| `gateway/TrackSupportAudit.cs`, `tools/AuditTracks.cs` | Original build-matched native inventory validation and catalog reconciliation, with explicit mirror/reverse candidates, ambiguity handling and no inferred driving acceptance. Real resource captures remain private and external to published source. | .NET Framework JSON/file APIs. |
+| `native/DriftAssetInventory.cpp`, `ClientBuildGuard.h` | Original exact-build guard and optional native IAssetRegistry world/AI-path metadata inventory. Native ABI facts were derived independently from the user's client. No Pak keys, resource contents or engine implementation are included. A real isolated inventory capture completed with configuration restoration. One bounded native array is retained until the owned process exits. | Windows SDK, BCrypt and the user's supported client. |
 | `src/GraphicsProfile.cs` | Evidence-gated SR/FG/NR request schema. It writes no game settings or graphics hooks and does not claim any feature works yet. | .NET Framework. |
 | `native/InputDevice.cpp`, `VirtualXInput.cpp`, `VirtualXInput.def` | DirectInput device enumeration/read and process-local XInput session adapter. No physical force-feedback command is sent. | Windows SDK DirectInput/XInput headers and system DLLs; MSVC. |
 | `native/DriftCamera.cpp` | Independently authored, exact-build camera callback adapter, seat transform, bounded live calibration, process-local toggle and driver-head visibility control. Offsets, entry-point signatures and bone names are observations from the installed client. No vendor function bodies, skeletons, meshes, animation clips or third-party camera implementation are included. Calls to original client interfaces run on the camera callback thread. One Drift track has visual evidence of the original hands and steering wheel; lifecycle and cross-vehicle acceptance remain incomplete. | Windows SDK, BCrypt and the externally supplied supported Drift client. |
@@ -68,6 +71,8 @@ gateway/InventoryUnlocks.cs
 gateway/OfflineTuning.cs
 gateway/OfflineGarage.cs
 gateway/TrackCatalog.cs
+gateway/TrackSupportAudit.cs
+gateway/test-tracks.ps1
 gateway/OfflineProfileStore.cs
 gateway/NativeKartParameters.cs
 gateway/LocalPingServer.cs
@@ -83,6 +88,7 @@ gateway/test-room.ps1
 gateway/test-wire.ps1
 gateway/PROBE.md
 tools/InspectClient.cs
+tools/AuditTracks.cs
 tools/PrepareSdkCopy.cs
 tools/PrepareDriftClient.ps1
 tools/RunSession.cs

@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 #include "DriftObjectIdentity.h"
+#include "CameraControl.h"
 
 // Independent build-specific adapter. Native object offsets are observations
 // from the supported client; no client function bodies or assets are included.
@@ -24,8 +25,11 @@ struct Vec { float x, y, z; };
 struct Quat { float x, y, z, w; };
 struct View { Vec location; Vec rotation; float fov; };
 struct Pose { Vec position; Quat rotation; };
-struct Settings { int active, forward, height, pitch, fov; };
-Settings settings{1, -30, 140, -10, 90};
+using TwinKartCamera::Settings;
+Settings settings{1, -30, 140, -10, 90, 0, 12, 8};
+BY_HANDLE_FILE_INFORMATION lastControl{};
+bool controlSeen=false;
+volatile LONG headAnchored=0, seatFallback=0;
 SRWLOCK settingsLock = SRWLOCK_INIT;
 wchar_t controlPath[32768]{};
 bool meshAudit = false;
@@ -67,7 +71,10 @@ bool DriverSignatures() {
         {0x248b950, {0x48,0x85,0xc9,0x74,0x2e,0x53,0x48,0x83}},
         {0x3e73710, {0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74}},
         {0x3e80390, {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83}},
-        {0x3e74d80, {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83}}
+        {0x3e74d80, {0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83}},
+        {0x2796c20, {0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b}},
+        {0x3e46870, {0x40,0x53,0x48,0x83,0xec,0x60,0x48,0x8b}},
+        {0x3e70900, {0x48,0x8b,0xc4,0x4c,0x89,0x40,0x18,0x55}}
     };
     for (const auto& check : checks) if (memcmp(image + check.rva, check.prefix, 8)) return false;
     return true;
@@ -96,7 +103,15 @@ void UpdateDriver(void* component, bool cameraApplied) {
         void* asset = *reinterpret_cast<void**>(mesh + 0x4c0);
         int identity = *reinterpret_cast<int*>(mesh + 0xc);
         TwinKartCamera::ObjectIdentity currentIdentity{};
-        if (!TwinKartCamera::Capture(mesh,ObjectChunks(),ObjectCount(),&currentIdentity)) { RestoreDriver(); return; }
+        if (!TwinKartCamera::Capture(mesh,ObjectChunks(),ObjectCount(),&currentIdentity)) {
+            // Use the client's FWeakObjectPtr assignment, observed at delegate
+            // binding sites. Its own allocator initializes a zero serial safely.
+            struct Weak { int index, serial; } weak{-1,0};
+            using AssignWeak=void(__fastcall*)(Weak*,void*);
+            reinterpret_cast<AssignWeak>(image+0x2796c20)(&weak,mesh);
+            if (!TwinKartCamera::Capture(mesh,ObjectChunks(),ObjectCount(),&currentIdentity) ||
+                currentIdentity.index!=weak.index || currentIdentity.serial!=weak.serial) { RestoreDriver(); return; }
+        }
         using IsHidden = bool(__fastcall*)(void*, unsigned long long);
         using Hide = void(__fastcall*)(void*, unsigned long long, int);
         using Unhide = void(__fastcall*)(void*, unsigned long long);
@@ -158,18 +173,19 @@ void ReadSettings() {
     if (file == INVALID_HANDLE_VALUE) return;
     char bytes[128]{}; DWORD count = 0;
     bool ok = ReadFile(file, bytes, sizeof(bytes)-1, &count, nullptr) != FALSE;
+    BY_HANDLE_FILE_INFORMATION info{};
+    ok=ok && GetFileInformationByHandle(file,&info)!=FALSE && info.nFileSizeHigh==0 && info.nFileSizeLow<sizeof(bytes);
     CloseHandle(file);
-    Settings candidate; char extra;
-    if (!ok || sscanf_s(bytes, "%d %d %d %d %d %c", &candidate.active, &candidate.forward,
-        &candidate.height, &candidate.pitch, &candidate.fov, &extra, 1u) != 5) return;
-    if ((candidate.active != 0 && candidate.active != 1) || candidate.forward < -200 || candidate.forward > 300 ||
-        candidate.height < 20 || candidate.height > 250 || candidate.pitch < -40 || candidate.pitch > 30 ||
-        candidate.fov < 60 || candidate.fov > 120) return;
+    Settings candidate;
+    if (!ok || !TwinKartCamera::ParseSettings(bytes,&candidate)) return;
+    bool newFile=!controlSeen || info.nFileIndexHigh!=lastControl.nFileIndexHigh || info.nFileIndexLow!=lastControl.nFileIndexLow ||
+        info.dwVolumeSerialNumber!=lastControl.dwVolumeSerialNumber || CompareFileTime(&info.ftLastWriteTime,&lastControl.ftLastWriteTime)!=0;
     AcquireSRWLockExclusive(&settingsLock);
     bool changed = memcmp(&settings, &candidate, sizeof(settings)) != 0;
     settings = candidate;
     ReleaseSRWLockExclusive(&settingsLock);
-    if (changed) InterlockedExchange(&enabled, candidate.active);
+    if (changed || newFile) InterlockedExchange(&enabled, candidate.active);
+    lastControl=info; controlSeen=true;
 }
 
 bool finite(float value) { return std::isfinite(value) != 0; }
@@ -177,9 +193,9 @@ bool valid(Vec value) { return finite(value.x) && finite(value.y) && finite(valu
 float square(float value) { return value * value; }
 void Log(const char* event) {
     if (logFile == INVALID_HANDLE_VALUE) return;
-    char row[320];
-    int size = sprintf_s(row, "{\"event\":\"%s\",\"pid\":%lu,\"thread\":%ld,\"enabled\":%ld,\"calls\":%ld,\"applied\":%ld,\"rejected\":%ld}\r\n",
-        event, GetCurrentProcessId(), lastThread, enabled, calls, applied, rejected);
+    char row[384];
+    int size = sprintf_s(row, "{\"event\":\"%s\",\"pid\":%lu,\"thread\":%ld,\"enabled\":%ld,\"calls\":%ld,\"applied\":%ld,\"rejected\":%ld,\"head_anchored\":%ld,\"seat_fallback\":%ld}\r\n",
+        event, GetCurrentProcessId(), lastThread, enabled, calls, applied, rejected,headAnchored,seatFallback);
     DWORD written; if (size > 0) WriteFile(logFile, row, static_cast<DWORD>(size), &written, nullptr);
 }
 
@@ -247,6 +263,24 @@ bool ApplyView(void* component, void* output) {
         Vec location{ pose.position.x + forward.x * current.forward + up.x * current.height,
                       pose.position.y + forward.y * current.forward + up.y * current.height,
                       pose.position.z + forward.z * current.forward + up.z * current.height };
+        bool atHead=false;
+        BYTE* pawn=*reinterpret_cast<BYTE**>(static_cast<BYTE*>(component)+0xf20);
+        if(current.headAnchor && headName && auditedMesh && TwinKartCamera::Live(auditedIdentity,ObjectChunks(),ObjectCount()) &&
+            *reinterpret_cast<void**>(static_cast<BYTE*>(auditedMesh)+0xa0)==pawn &&
+            *reinterpret_cast<void**>(static_cast<BYTE*>(auditedMesh)+0x4c0)==auditedAsset) {
+            void** table=*reinterpret_cast<void***>(auditedMesh);
+            if(table[0x430/8]==image+0x3e46870 && table[0x428/8]==image+0x3e70900) {
+                using SocketLocation=Vec*(__fastcall*)(void*,Vec*,unsigned long long);
+                Vec head{}; auto result=reinterpret_cast<SocketLocation>(table[0x430/8])(auditedMesh,&head,headName);
+                Vec relative{head.x-pose.position.x,head.y-pose.position.y,head.z-pose.position.z};
+                if(result==&head && valid(head) && square(relative.x)+square(relative.y)+square(relative.z)<square(500.0f)) {
+                    location=Vec{head.x+forward.x*current.eyeForward+up.x*current.eyeHeight,
+                        head.y+forward.y*current.eyeForward+up.y*current.eyeHeight,
+                        head.z+forward.z*current.eyeForward+up.z*current.eyeHeight}; atHead=true;
+                }
+            }
+        }
+        if(atHead) InterlockedIncrement(&headAnchored); else InterlockedIncrement(&seatFallback);
         if (!valid(location) || !valid(angle)) return false;
         view->location = location; view->rotation = angle; view->fov = static_cast<float>(current.fov); return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }

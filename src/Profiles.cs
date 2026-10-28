@@ -1,11 +1,40 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Web.Script.Serialization;
 
 namespace TwinKartLauncher
 {
+    public sealed class CockpitSettings
+    {
+        public bool Enabled { get; set; }
+        public bool FollowHead { get; set; }
+        public int SeatForward { get; set; }
+        public int SeatHeight { get; set; }
+        public int EyeForward { get; set; }
+        public int EyeHeight { get; set; }
+        public int Pitch { get; set; }
+        public int FieldOfView { get; set; }
+        public CockpitSettings() { Enabled=true; FollowHead=true; SeatForward=-30; SeatHeight=140; EyeForward=12; EyeHeight=8; Pitch=-10; FieldOfView=90; }
+        public CockpitSettings Copy() { return (CockpitSettings)MemberwiseClone(); }
+        public bool IsValid { get { return SeatForward>=-200 && SeatForward<=300 && SeatHeight>=20 && SeatHeight<=250 &&
+            EyeForward>=-50 && EyeForward<=80 && EyeHeight>=-30 && EyeHeight<=80 && Pitch>=-40 && Pitch<=30 && FieldOfView>=60 && FieldOfView<=120; } }
+        public string NativeControl()
+        {
+            if(!IsValid) throw new ArgumentOutOfRangeException("CockpitSettings");
+            return String.Join(" ",new[]{Enabled?1:0,SeatForward,SeatHeight,Pitch,FieldOfView,FollowHead?1:0,EyeForward,EyeHeight}.Select(value=>value.ToString(System.Globalization.CultureInfo.InvariantCulture)))+"\n";
+        }
+        internal void WriteNativeControl(string path)
+        {
+            string text=NativeControl(),temporary=path+"."+Guid.NewGuid().ToString("N")+".tmp";
+            try {
+                File.WriteAllText(temporary,text,new System.Text.UTF8Encoding(false));
+                if(File.Exists(path)) File.Replace(temporary,path,null); else File.Move(temporary,path);
+            } finally { if(File.Exists(temporary)) File.Delete(temporary); }
+        }
+    }
     public enum GameEdition { Classic, Drift }
 
     public sealed class AxisBinding
@@ -55,6 +84,7 @@ namespace TwinKartLauncher
         // A file fingerprint only; never a claim of game compatibility.
         public string FingerprintSha256 { get; set; }
         public string OfflineManifestPath { get; set; }
+        public CockpitSettings Cockpit { get; set; }
         public AxisBinding Steering { get; set; }
         public AxisBinding Throttle { get; set; }
         public AxisBinding Brake { get; set; }
@@ -66,6 +96,7 @@ namespace TwinKartLauncher
             ClientPath = ""; FingerprintSha256 = ""; ButtonDeviceGuid = "";
             Steering = new AxisBinding(); Throttle = new AxisBinding(); Brake = new AxisBinding();
             DriftButton = -1; ItemButton = -1;
+            Cockpit = new CockpitSettings();
         }
         public bool InputReady { get { return Steering.IsValid(true) && Throttle.IsValid(false) && Brake.IsValid(false); } }
     }
@@ -81,6 +112,7 @@ namespace TwinKartLauncher
             var result = new JavaScriptSerializer().Deserialize<LauncherProfile>(File.ReadAllText(path));
             if (result == null || result.Edition != edition || result.Steering == null || result.Throttle == null || result.Brake == null)
                 throw new InvalidDataException("设备配置不完整，请重新校准。");
+            if(result.Cockpit==null || !result.Cockpit.IsValid) result.Cockpit=new CockpitSettings();
             return result;
         }
         public void Save(LauncherProfile profile)

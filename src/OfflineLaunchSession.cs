@@ -32,6 +32,13 @@ namespace TwinKartLauncher
     public static class OfflineLaunchSession
     {
         static readonly JavaScriptSerializer Json=new JavaScriptSerializer { MaxJsonLength=1024*1024 };
+        static readonly object cameraGate=new object();
+        static string activeCameraControl;
+        public static bool TryApplyCockpit(CockpitSettings settings)
+        {
+            if(settings==null || !settings.IsValid) throw new ArgumentException("Invalid cockpit settings.");
+            lock(cameraGate) { if(activeCameraControl==null) return false; settings.WriteNativeControl(activeCameraControl); return true; }
+        }
         static string Quote(string path)
         { if(path.IndexOf('"')>=0 || path.EndsWith("\\",StringComparison.Ordinal)) throw new ArgumentException("Invalid process path."); return "\""+path+"\""; }
         static void Save(string path, object value)
@@ -67,7 +74,7 @@ namespace TwinKartLauncher
             if(!String.Equals(process.MainModule.FileName,path,StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Refusing to stop a different process.");
             process.Kill(); if(!process.WaitForExit(10000)) throw new TimeoutException("Owned process did not stop.");
         }
-        public static string Run(string manifestPath, Action<string> progress, CancellationToken cancellation)
+        public static string Run(string manifestPath, Action<string> progress, CancellationToken cancellation, CockpitSettings cockpit=null)
         {
             var manifest=Json.Deserialize<OfflineLaunchManifest>(File.ReadAllText(manifestPath));
             string backend=Path.Combine(AppDomain.CurrentDomain.BaseDirectory,"TwinKartGateway.exe");
@@ -97,6 +104,9 @@ namespace TwinKartLauncher
                 string run=Path.Combine(root,DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")+"-"+Guid.NewGuid().ToString("N").Substring(0,6));
                 string before=Path.Combine(run,"config-before"),after=Path.Combine(run,"config-after");
                 Directory.CreateDirectory(before); Directory.CreateDirectory(after);
+                string cameraControl=Path.Combine(run,"cockpit.control");
+                if(cockpit==null) { string flag; cockpit=new CockpitSettings { Enabled=manifest.Environment!=null && manifest.Environment.TryGetValue("TWIN_KART_FIRST_PERSON",out flag) && flag=="1" }; }
+                cockpit.Copy().WriteNativeControl(cameraControl);
                 var hashes=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
                 foreach(string file in Directory.GetFiles(config,"*.ini")) { string name=Path.GetFileName(file); File.Copy(file,Path.Combine(before,name)); hashes.Add(name,ProfileStore.Fingerprint(file)); }
                 var report=new Dictionary<string,object> { {"original_backend",true},{"original_launcher",true},{"external_sdk_provenance",manifest.ExternalSdkProvenance??"unspecified"},{"restored",false},{"started_utc",DateTime.UtcNow.ToString("o")},{"game_sha256",manifest.GameSha256},{"backend_sha256",manifest.GatewaySha256} };
@@ -122,12 +132,17 @@ namespace TwinKartLauncher
                         if(manifest.Environment!=null) foreach(var variable in manifest.Environment) launch.EnvironmentVariables[variable.Key]=variable.Value;
                         launch.EnvironmentVariables["TWIN_KART_ALLOWED_GAME"]=game;
                         launch.EnvironmentVariables["TWIN_KART_CAMERA_LOG"]=Path.Combine(run,"camera.jsonl");
+                        launch.EnvironmentVariables["TWIN_KART_CAMERA_CONTROL"]=cameraControl;
+                        launch.EnvironmentVariables["TWIN_KART_ASSET_LOG"]=Path.Combine(run,"assets.jsonl");
+                        launch.EnvironmentVariables["TWIN_KART_COCKPIT_HEAD"]="1";
                         launch.EnvironmentVariables["TWIN_KART_RENDER_LOG"]=Path.Combine(run,"render.jsonl");
                         launch.EnvironmentVariables["TWIN_KART_RENDER_PASSES"]="1";
                         launch.EnvironmentVariables["TWIN_KART_DLSS_CACHE"]=Path.Combine(run,"ngx-cache"); Directory.CreateDirectory(Path.Combine(run,"ngx-cache"));
                         gameProcess=Process.Start(launch); report["game_pid"]=gameProcess.Id;
                         Save(Path.Combine(run,"report.json"),report);
                         if(manifest.Modules!=null) foreach(var module in manifest.Modules) OwnedGameModule.Load(gameProcess,game,module.Path,module.Sha256);
+                        if(manifest.Modules!=null && manifest.Modules.Any(module=>String.Equals(Path.GetFileName(module.Path),"TwinKartDriftCamera.dll",StringComparison.OrdinalIgnoreCase)))
+                            lock(cameraGate) activeCameraControl=cameraControl;
                         progress("原创启动器已启动原创后端和原厂游戏；会话："+run);
                         var timer=Stopwatch.StartNew();
                         while(!gameProcess.WaitForExit(250))
@@ -139,6 +154,7 @@ namespace TwinKartLauncher
                 catch(Exception problem) { report["failure_type"]=problem.GetType().Name; throw; }
                 finally
                 {
+                    lock(cameraGate) { if(activeCameraControl==cameraControl) activeCameraControl=null; }
                     StopOwned(gameProcess,game); StopOwned(server,backend);
                     foreach(string file in Directory.GetFiles(config,"*.ini"))
                     { string name=Path.GetFileName(file); File.Copy(file,Path.Combine(after,name),true); if(!hashes.ContainsKey(name)) File.Delete(file); }

@@ -23,3 +23,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Original session runner compilation failed.' }
 & $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ "/out:$buildDir\TwinKartSdkCopy.exe" (Join-Path $PSScriptRoot 'tools\PrepareSdkCopy.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Original SDK copy tool compilation failed.' }
 Write-Output (Join-Path $buildDir 'TwinKartLauncher.exe')
+$trackSources=@('TrackCatalog.cs','TrackSupportAudit.cs') | ForEach-Object { Join-Path $PSScriptRoot ('gateway\'+$_) }
+$trackSources+=Join-Path $PSScriptRoot 'tools\AuditTracks.cs'
+& $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ /r:System.Web.Extensions.dll "/out:$buildDir\TwinKartTrackAudit.exe" $trackSources
+if($LASTEXITCODE -ne 0) { throw 'Native track audit compilation failed' }

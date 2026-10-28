@@ -5,11 +5,11 @@
   },
   {
     "file": "build.ps1",
-    "sha256": "4f4c2cc00b4023a97512e15d1bdfc241d997a58e5320232cbc16947d29fbf49a"
+    "sha256": "68693522aeed7e6992baacbae955566df34c579c6b6a8e9ed4084f7afb8c9ef8"
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "87a8c3ff73b7ddec086b9e2fe1b897c399be3e8a42669c2e6483eccf9dd1ebcd"
+    "sha256": "b52d9470db6fee137d2799a468947c31d519d9da250196dd7ff5b0c4069d677e"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -100,6 +100,10 @@
     "sha256": "f8c8d11b39eed2bcab3cb58bf65d1a75977a1bc83c92d109b01b3e75b9a1dbf0"
   },
   {
+    "file": "gateway/test-tracks.ps1",
+    "sha256": "f10940cdef7fe7a23b6aa7b58c1b9450cbc5b3a6b97cdb4b5e811e5ee7d44577"
+  },
+  {
     "file": "gateway/test-unlocks.ps1",
     "sha256": "88e07473c11b4b5e731670879069dfd81fdeb99a7ff7d0ae5e1af3fb8eac654e"
   },
@@ -112,6 +116,10 @@
     "sha256": "9f8e7ac63af4289a32de57adbb68ee88810bd40278160e79d5fca6a6f733f831"
   },
   {
+    "file": "gateway/TrackSupportAudit.cs",
+    "sha256": "764fc04efbb142811b46b5d1bcec3ccab6295d1b4bccd4ae0186deba7a4f8556"
+  },
+  {
     "file": "gateway/WireCodec.cs",
     "sha256": "b642b4f698a2913d46fe2947c1278a46ccdd756e65e45b02dbee5cbb46ee19e7"
   },
@@ -120,8 +128,12 @@
     "sha256": "3bdab162b16e2e60a0cd1e6b15439c48dc05027d326d91cc405470d6985ce2d5"
   },
   {
+    "file": "native/build-assets.ps1",
+    "sha256": "bff342e4f5ba75c6a702e584c72314f772c24adc67954074cb75f1996ef68529"
+  },
+  {
     "file": "native/build-camera.ps1",
-    "sha256": "8f22aab4ab386d9d4daf58560209d9483fc403f3d5d5db7f81b2ad04197bc48e"
+    "sha256": "adf11b7e8ed8d5bc8b2a36a4d272f9b09d7cf23014b4f277366b877fdbdb2303"
   },
   {
     "file": "native/build-dlss.ps1",
@@ -140,6 +152,14 @@
     "sha256": "f642bbece596f861495b5cdbd903aa5a5f725f53f75c4e3eb5b0c1383c5d0c44"
   },
   {
+    "file": "native/CameraControl.h",
+    "sha256": "c77deb3f020d28fd5c2c1198b014215f1bfa17171681ab2a76e2a78941984d8e"
+  },
+  {
+    "file": "native/ClientBuildGuard.h",
+    "sha256": "232b71391f76d58232be559537d1c6ea9b4238f7688a78afceeb95e40fe9ffb4"
+  },
+  {
     "file": "native/DlssD3D11.cpp",
     "sha256": "02271149cf567215fbcd409bb44c93b1dc9922243783ded3e8558e586f2ba2f3"
   },
@@ -148,8 +168,12 @@
     "sha256": "3c75b1fd33cee375f393c701baff0336f451f547040539245ebe124bf7560ca4"
   },
   {
+    "file": "native/DriftAssetInventory.cpp",
+    "sha256": "b50ab2476891d4e776b71dbaf032704645f821bc66ba10273206407a7e2a691d"
+  },
+  {
     "file": "native/DriftCamera.cpp",
-    "sha256": "fd3a5b56b4cff52d634e8f632d20d927ed67ab0643d1f0c83b46c2bcdc6913ef"
+    "sha256": "e1b225eed584563bb6696dc2be5c14475d0c2a5e623cddf7b49cedf219d1cd68"
   },
   {
     "file": "native/DriftObjectIdentity.h",
@@ -181,19 +205,23 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "f447b2a29881261a5bac426dc7abdcde8ec3116efaa66bc6a30cf3c25fd5c720"
+    "sha256": "ee915f457c55070bb114fd230d05c2b8f67efa602bb16de424dea84700f96456"
   },
   {
     "file": "README.md",
-    "sha256": "e9ea356203cc8fcbdd299dc446a61ce881186e8bb9117e2ef67229fff330f611"
+    "sha256": "38643059cd373643c4aeb4f72167cfb6f8644c03e85c93edbc2a7349526b5e57"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
-    "sha256": "421108ddd6150e33454074c41d865303117e49a03368c7fd89d0cbe5ccfb49ce"
+    "sha256": "c4b57e5beb744b071a1bd8c50dd89effdb3d529762a258b235611d512d50f43d"
   },
   {
     "file": "src/ClientDiscovery.cs",
     "sha256": "5113091a1a3bd459f7446a985e6098592e55738421ec14af204c47132e1a979d"
+  },
+  {
+    "file": "src/CockpitForm.cs",
+    "sha256": "7bbbbb46d1ab03cddf446aceb356f1c8a4f3747b28b0b7d997cdd60b67823e14"
   },
   {
     "file": "src/DeviceInput.cs",
@@ -205,7 +233,7 @@
   },
   {
     "file": "src/MainForm.cs",
-    "sha256": "37866ff28d05b2c9db8ac8e8f031db1fac1013dc0438eda7f07bfefd18bf6085"
+    "sha256": "011bbf4f5be0ef837df1b4d983d2014191ff60fc3fa725b54136c23b56dd3031"
   },
   {
     "file": "src/OfflineGarageForm.cs",
@@ -213,7 +241,7 @@
   },
   {
     "file": "src/OfflineLaunchSession.cs",
-    "sha256": "6c753ab2a2e2866fc8ed2cca7f66534d09b2d4190d347101ef40b9a5d9219fc0"
+    "sha256": "ac8ec4c9b4f83268ea8c9cee2b72a948f0c9a836978f6b4cdc082dec07ced7e4"
   },
   {
     "file": "src/OwnedGameModule.cs",
@@ -221,7 +249,7 @@
   },
   {
     "file": "src/Profiles.cs",
-    "sha256": "88e6f72903fc544df2512f759a0b5faf2bed2fde90ac14c57b91c06e6ca92d78"
+    "sha256": "0c5b3978b215847c1b8f4996e73e1f2b4fa8d9757d6a73aacd4f136ab75b66c3"
   },
   {
     "file": "src/SharedPad.cs",
@@ -234,6 +262,14 @@
   {
     "file": "test-input.ps1",
     "sha256": "1518df5d64deef60ffc36650cc8e855c5459720e4076c9f59e0e5ba1431a2196"
+  },
+  {
+    "file": "tests/CockpitControlTests.cpp",
+    "sha256": "38f7858c8301da765c055c1722194db10fe9a74f61a7d4a0c59e6922a3620cfa"
+  },
+  {
+    "file": "tests/CockpitProfileTests.cs",
+    "sha256": "136ed974a71b68696249063b1380bf02b48f9e3b3240d2c5da0bd112d1858d55"
   },
   {
     "file": "tests/DriftObjectIdentityTests.cpp",
@@ -284,8 +320,16 @@
     "sha256": "88db63fd515e08e8ffbdeccc22d383ddbd2f4cb89603bc8e3a9dd22902fcdec8"
   },
   {
+    "file": "tests/TrackSupportAuditTests.cs",
+    "sha256": "2c76e96d77d23b7cbbf4f6b2ecfc172ef412d3158ea7533617850abbc85b81a7"
+  },
+  {
     "file": "tests/WireCodecTests.cs",
     "sha256": "97f00e302436c4cb024d8d774cc736a83ac62eac15a1e4f40cfc532e31d1c3d2"
+  },
+  {
+    "file": "tools/AuditTracks.cs",
+    "sha256": "eadc0c8b46f23f501a1da70be5745ef58e18d1c826d4e1e6d8af5ee842f8980a"
   },
   {
     "file": "tools/InspectClient.cs",

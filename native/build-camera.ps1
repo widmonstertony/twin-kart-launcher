@@ -25,6 +25,15 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'Camera lifetime test build failed' }
             & (Join-Path $build 'DriftObjectIdentityTests.exe')
             if ($LASTEXITCODE -ne 0) { throw 'Camera lifetime checks failed' }
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /FoCockpitControlTests.obj /FeCockpitControlTests.exe (Join-Path $projectRoot 'tests\CockpitControlTests.cpp') /link bcrypt.lib user32.lib
+            if ($LASTEXITCODE -ne 0) { throw 'Cockpit control test build failed' }
+            & (Join-Path $build 'CockpitControlTests.exe')
+            if ($LASTEXITCODE -ne 0) { throw 'Cockpit control checks failed' }
+            $csc=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+            & $csc /nologo /langversion:5 /platform:x64 /target:exe /r:System.Web.Extensions.dll /out:CockpitProfileTests.exe (Join-Path $projectRoot 'src\Profiles.cs') (Join-Path $projectRoot 'tests\CockpitProfileTests.cs')
+            if ($LASTEXITCODE -ne 0) { throw 'Cockpit profile test build failed' }
+            & (Join-Path $build 'CockpitProfileTests.exe') (Join-Path $build 'CockpitControlTests.exe')
+            if ($LASTEXITCODE -ne 0) { throw 'Managed/native cockpit checks failed' }
         }
     } finally { Pop-Location }
 } finally { $env:INCLUDE = $oldInclude; $env:LIB = $oldLib; $env:PATH = $oldPath }

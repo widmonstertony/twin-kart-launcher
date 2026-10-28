@@ -157,8 +157,18 @@ namespace TwinKartLauncher
             var configure = new Button { Text = "离线配置", Left = 20, Top = 677, Width = 115, Height = 34 };
             var startGame = new Button { Text = "启动原厂游戏", Left = 145, Top = 677, Width = 155, Height = 34 };
             var tuning = new Button { Text = "改装方案", Left = 310, Top = 677, Width = 115, Height = 34 };
-            var pending = new Label { Left = 440, Top = 670, Width = 476, Height = 62, ForeColor = Color.FromArgb(130, 65, 10), Text = "使用本项目后端；外部游戏资源另行提供。\nAI同场、DLSS及全部赛道仍在适配验证中。" };
-            Controls.AddRange(new Control[] { title, editions, editionNote, client, browse, verify, clientStatus, refresh, devicesText, axes, save, preview, bindDrift, bindItem, buttonsText, status, configure, startGame, tuning, pending });
+            var camera=new Button { Text="第一人称视角",Left=435,Top=677,Width=135,Height=34 };
+            var pending = new Label { Left = 585, Top = 670, Width = 330, Height = 62, ForeColor = Color.FromArgb(130, 65, 10), Text = "使用本项目后端；游戏资源另行提供。\n完整 AI 比赛及全赛道仍在适配。" };
+            Controls.AddRange(new Control[] { title, editions, editionNote, client, browse, verify, clientStatus, refresh, devicesText, axes, save, preview, bindDrift, bindItem, buttonsText, status, configure, startGame, tuning,camera, pending });
+            camera.Click+=delegate {
+                if(profile.Edition!=GameEdition.Drift) { status.Text="经典版视角适配需要完整的对应客户端。"; return; }
+                using(var dialog=new CockpitForm(profile.Cockpit??new CockpitSettings(),value=>{
+                    profile.Cockpit=value; dirty=true;
+                    if(!SaveProfile()) throw new IOException("启动器配置未保存。");
+                    bool applied=OfflineLaunchSession.TryApplyCockpit(value);
+                    status.Text=applied?"本场第一人称设置已发送；F6 可切换视角。":"第一人称设置已保存，下次启动生效。";
+                })) dialog.ShowDialog(this);
+            };
             tuning.Click += delegate {
                 try { if(String.IsNullOrEmpty(profile.OfflineManifestPath)) { status.Text="请先选择本机离线配置。"; return; } using(var garage=new OfflineGarageForm(profile.OfflineManifestPath)) garage.ShowDialog(this); }
                 catch(Exception problem) { status.Text="改装配置读取失败："+problem.Message; }
@@ -172,10 +182,11 @@ namespace TwinKartLauncher
                 if(profile.Edition!=GameEdition.Drift) { status.Text="经典版尚缺完整客户端，本入口暂未完成。"; return; }
                 if(String.IsNullOrEmpty(profile.OfflineManifestPath)) { status.Text="请先选择为本机准备的离线会话配置。"; return; }
                 string manifest=profile.OfflineManifestPath;
+                var cockpit=(profile.Cockpit??new CockpitSettings()).Copy();
                 gameSession=new CancellationTokenSource(); startGame.Text="结束并恢复配置"; editions.Enabled=false; configure.Enabled=false;
                 try {
                     Action<string> update=message=>{ if(!closed && IsHandleCreated) BeginInvoke((Action)(()=>status.Text=message)); };
-                    await Task.Run(()=>OfflineLaunchSession.Run(manifest,update,gameSession.Token));
+                    await Task.Run(()=>OfflineLaunchSession.Run(manifest,update,gameSession.Token,cockpit));
                 } catch(OperationCanceledException) { status.Text="会话已结束，配置已恢复。"; }
                 catch(Exception problem) { status.Text="启动失败："+problem.Message; }
                 finally { gameSession.Dispose(); gameSession=null; startGame.Text="启动原厂游戏"; editions.Enabled=true; configure.Enabled=true; }
