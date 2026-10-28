@@ -7,6 +7,23 @@ using System.Web.Script.Serialization;
 
 namespace TwinKartLauncher
 {
+    public sealed class LocalRaceSettings
+    {
+        public string Track { get; set; }
+        public int Mode { get; set; }
+        public int AiCount { get; set; }
+        public int Laps { get; set; }
+        public LocalRaceSettings() { Track="Pirate_R01"; Mode=1; AiCount=7; Laps=3; }
+        public bool IsValid { get { return System.Text.RegularExpressions.Regex.IsMatch(Track??"","^[A-Za-z][A-Za-z0-9_]{0,95}$") &&
+            (Mode==1 || Mode==4) && AiCount>=1 && AiCount<=7 && Laps>=1 && Laps<=9; } }
+        internal void WriteControl(string path) {
+            if(!IsValid) throw new ArgumentException("Invalid local race settings.");
+            string text=String.Format(System.Globalization.CultureInfo.InvariantCulture,"TKRACE1 {0} {1} {2} {3} {4}\n",Guid.NewGuid().ToString("N"),Track,Mode,AiCount,Laps);
+            string temporary=path+"."+Guid.NewGuid().ToString("N")+".tmp";
+            try { File.WriteAllText(temporary,text,new System.Text.UTF8Encoding(false)); if(File.Exists(path)) File.Replace(temporary,path,null); else File.Move(temporary,path); }
+            finally { if(File.Exists(temporary)) File.Delete(temporary); }
+        }
+    }
     public sealed class CockpitSettings
     {
         public bool Enabled { get; set; }
@@ -85,6 +102,7 @@ namespace TwinKartLauncher
         public string FingerprintSha256 { get; set; }
         public string OfflineManifestPath { get; set; }
         public CockpitSettings Cockpit { get; set; }
+        public LocalRaceSettings Race { get; set; }
         public AxisBinding Steering { get; set; }
         public AxisBinding Throttle { get; set; }
         public AxisBinding Brake { get; set; }
@@ -97,6 +115,7 @@ namespace TwinKartLauncher
             Steering = new AxisBinding(); Throttle = new AxisBinding(); Brake = new AxisBinding();
             DriftButton = -1; ItemButton = -1;
             Cockpit = new CockpitSettings();
+            Race = new LocalRaceSettings();
         }
         public bool InputReady { get { return Steering.IsValid(true) && Throttle.IsValid(false) && Brake.IsValid(false); } }
     }
@@ -113,6 +132,7 @@ namespace TwinKartLauncher
             if (result == null || result.Edition != edition || result.Steering == null || result.Throttle == null || result.Brake == null)
                 throw new InvalidDataException("设备配置不完整，请重新校准。");
             if(result.Cockpit==null || !result.Cockpit.IsValid) result.Cockpit=new CockpitSettings();
+            if(result.Race==null || !result.Race.IsValid) result.Race=new LocalRaceSettings();
             return result;
         }
         public void Save(LauncherProfile profile)

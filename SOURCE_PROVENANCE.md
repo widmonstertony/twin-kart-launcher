@@ -32,6 +32,8 @@ This project is intended to become an **independent public repository, not a for
 
 ## External components and ownership boundary
 
+The native local-host candidate (`DriftRaceBridge.cpp`, `GameThreadQueue.*`, `RaceControl.h`) and launcher race UI are independently written interface adapters. They call the supplied client's own character/kart preparation and level-travel functions after an exact-build check. Constants, layouts, enum values and short compatibility signatures are observations from the user's local binaries; no decompiled function bodies or third-party launcher source are included. Native host travel, driving AI, finish order and settlement are separate acceptance stages; the candidate is not a completed race implementation. `TrackSupportAudit.AttachDefinitions` validates an external capture of native definitions, which is not distributed with the source.
+
 The public BlueYeeeee/Kartrider-Drift_Offline v0.2.11 implementation has been read as a behavioral reference, as the user requested. Independent authorship does not mean no reference material was consulted. Earlier private A/B runs compiled its server implementation and used external data; those servers and sources remain excluded. The new original launcher/backend run does not load that server. Proprietary client/SDK binaries, private reference-derived data documents, account data, keys and diagnostic configurations remain external. This is not a claim that all gameplay requirements have passed.
 
 - The user supplies authentic Classic and Drift client binaries and assets from their own installations. Those files remain outside this repository. The current Classic client has not been acquired; the Drift Steam client is installed locally.

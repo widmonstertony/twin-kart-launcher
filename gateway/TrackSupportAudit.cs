@@ -11,6 +11,7 @@ namespace TwinKartLauncher.Gateway
     {
         public string TrackId,BaseAlias,WorldMatch,AiPathMatch,WorldObjectPath,AiPathObjectPath;
         public bool MirrorRequested,ReverseRequested,DrivingVerified;
+        public string NativeDefinitionStatus,NativeLevelName;
     }
     public sealed class TrackSupportReport
     {
@@ -20,12 +21,52 @@ namespace TwinKartLauncher.Gateway
         public int ExactAiPathBaseAliases,ReverseAiPathCandidates,UnmatchedAiPathBaseAliases;
         public string[] UnmatchedMainWorldAliases,NativeTrackRootsWithoutExactCatalogAlias;
         public bool AllTracksDriven;
+        public bool NativeDefinitionsComplete;
+        public int NativeDefinitionsAvailable,NativeDefinitionsEmpty;
         public TrackResourceEvidence[] Tracks;
     }
     // Class/path inventory establishes resource records, not successful loading,
     // correct mirror/reverse transforms, AI navigation or completed races.
     public static class TrackSupportAudit
     {
+        public static void AttachDefinitions(TrackSupportReport report,string lookupJsonLines)
+        {
+            if(report==null || lookupJsonLines==null || lookupJsonLines.Length>1024*1024 || report.NativeDefinitionsComplete) throw new ArgumentException("Invalid native definition input.");
+            var json=new JavaScriptSerializer { MaxJsonLength=16384 };
+            var definitions=new Dictionary<string,Dictionary<string,object>>(StringComparer.Ordinal);
+            bool ready=false,complete=false; int thread=0,found=0,empty=0;
+            using(var reader=new StringReader(lookupJsonLines)) {
+                string line;
+                while((line=reader.ReadLine())!=null) {
+                    if(String.IsNullOrWhiteSpace(line)) continue;
+                    if(complete) throw new FormatException("Rows after native definition completion.");
+                    var row=json.Deserialize<Dictionary<string,object>>(line); string kind=Text(row,"event");
+                    if(kind=="native_race_bridge_ready") {
+                        if(ready || !String.Equals(Text(row,"client_sha256"),report.ClientSha256,StringComparison.OrdinalIgnoreCase)) throw new FormatException("Native definition client mismatch.");
+                        thread=Number(row,"game_thread"); if(thread==0) throw new FormatException("Missing game thread."); ready=true;
+                    } else if(kind=="native_track_lookup_waiting") {
+                        if(!ready || Number(row,"game_thread")!=thread) throw new FormatException("Native lookup thread mismatch.");
+                    } else if(kind=="native_track_definition") {
+                        if(!ready || Number(row,"game_thread")!=thread) throw new FormatException("Native lookup thread mismatch.");
+                        string id=Text(row,"track_id"),level=Text(row,"native_level_name"); int status=Number(row,"status");
+                        if(definitions.Count>=10000 || definitions.ContainsKey(id) || (status!=1 && status!=2) ||
+                            (status==1 && !TrackName.IsMatch(level)) || (status==2 && level.Length!=0)) throw new FormatException("Invalid native track definition.");
+                        definitions.Add(id,row); if(status==1) ++found; else ++empty;
+                    } else if(kind=="native_track_queries_complete") {
+                        if(!ready || Number(row,"found")!=found || Number(row,"empty")!=empty || definitions.Count!=report.Tracks.Length) throw new FormatException("Incomplete native definition counts.");
+                        complete=true;
+                    } else throw new FormatException("Failed or unknown native definition event.");
+                }
+            }
+            if(!complete || report.Tracks.Any(track=>!definitions.ContainsKey(track.TrackId))) throw new FormatException("Native definition capture did not cover the catalog.");
+            // Commit only after the entire capture has passed validation.
+            foreach(var track in report.Tracks) {
+                var row=definitions[track.TrackId]; track.NativeLevelName=Text(row,"native_level_name");
+                track.NativeDefinitionStatus=Number(row,"status")==1?"native-definition-present":
+                    track.MirrorRequested || track.ReverseRequested?"variant-definition-unresolved":"no-native-definition-in-client";
+            }
+            report.NativeDefinitionsComplete=true; report.NativeDefinitionsAvailable=found; report.NativeDefinitionsEmpty=empty;
+        }
         static readonly Regex TrackName=new Regex("^[A-Za-z]+_[IR][0-9]+(?:_rvs)?$",RegexOptions.CultureInvariant);
         static string Text(Dictionary<string,object> row,string key)
         { object value; if(!row.TryGetValue(key,out value) || !(value is string)) throw new FormatException("Missing inventory text field: "+key); return (string)value; }

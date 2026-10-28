@@ -131,7 +131,7 @@ namespace TwinKartLauncher
         bool dirty;
         bool closed;
         CancellationTokenSource gameSession;
-        public MainForm()
+        public MainForm(string startupManifest=null,bool startImmediately=false)
         {
             Text = "Twin Kart Launcher · 原厂客户端离线适配";
             Font = new Font("Microsoft YaHei UI", 10); ClientSize = new Size(936, 740);
@@ -158,8 +158,18 @@ namespace TwinKartLauncher
             var startGame = new Button { Text = "启动原厂游戏", Left = 145, Top = 677, Width = 155, Height = 34 };
             var tuning = new Button { Text = "改装方案", Left = 310, Top = 677, Width = 115, Height = 34 };
             var camera=new Button { Text="第一人称视角",Left=435,Top=677,Width=135,Height=34 };
-            var pending = new Label { Left = 585, Top = 670, Width = 330, Height = 62, ForeColor = Color.FromArgb(130, 65, 10), Text = "使用本项目后端；游戏资源另行提供。\n完整 AI 比赛及全赛道仍在适配。" };
-            Controls.AddRange(new Control[] { title, editions, editionNote, client, browse, verify, clientStatus, refresh, devicesText, axes, save, preview, bindDrift, bindItem, buttonsText, status, configure, startGame, tuning,camera, pending });
+            var race=new Button { Text="AI 比赛候选",Left=580,Top=677,Width=130,Height=34 };
+            var pending = new Label { Left = 725, Top = 670, Width = 190, Height = 62, ForeColor = Color.FromArgb(130, 65, 10), Text = "完整 AI 及 DLSS\n仍待游戏内验收。" };
+            Controls.AddRange(new Control[] { title, editions, editionNote, client, browse, verify, clientStatus, refresh, devicesText, axes, save, preview, bindDrift, bindItem, buttonsText, status, configure, startGame, tuning,camera,race,pending });
+            race.Click+=delegate {
+                try {
+                    if(profile.Edition!=GameEdition.Drift || String.IsNullOrEmpty(profile.OfflineManifestPath)) { status.Text="请先选择 Drift 的本机离线配置。"; return; }
+                    using(var dialog=new LocalRaceForm(profile.OfflineManifestPath,profile.Race??new LocalRaceSettings(),value=>{
+                        if(!OfflineLaunchSession.TryStartRace(value)) throw new InvalidOperationException("请先用此窗口启动包含本地主机候选的游戏会话。");
+                        profile.Race=value; dirty=true; SaveProfile();
+                    })) dialog.ShowDialog(this);
+                } catch(Exception error) { status.Text="AI 比赛入口："+error.Message; }
+            };
             camera.Click+=delegate {
                 if(profile.Edition!=GameEdition.Drift) { status.Text="经典版视角适配需要完整的对应客户端。"; return; }
                 using(var dialog=new CockpitForm(profile.Cockpit??new CockpitSettings(),value=>{
@@ -209,6 +219,11 @@ namespace TwinKartLauncher
                 closed = true; timer.Stop(); foreach (var input in inputs.Values) input.Dispose(); inputs.Clear(); pad.Dispose();
             };
             editions.SelectedIndex = 1;
+            if(startupManifest!=null) {
+                var manifest=new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<OfflineLaunchManifest>(File.ReadAllText(startupManifest));
+                profile.OfflineManifestPath=Path.GetFullPath(startupManifest); client.Text=manifest.GamePath; dirty=true; SaveProfile();
+                if(startImmediately) Shown+=delegate { BeginInvoke((Action)(()=>startGame.PerformClick())); };
+            }
         }
         void MarkDirty() { if (!loading) dirty = true; }
         void SwitchEdition()
@@ -312,7 +327,10 @@ namespace TwinKartLauncher
                 return;
             }
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
-            try { Application.Run(new MainForm()); }
+            try {
+                if(args.Length!=0 && !(args.Length==2 && args[0]=="--start-manifest")) throw new ArgumentException("Usage: TwinKartLauncher.exe [--start-manifest <private.local.json>]");
+                Application.Run(new MainForm(args.Length==2?args[1]:null,args.Length==2));
+            }
             catch (Exception e) { MessageBox.Show(e.Message, "Twin Kart Launcher 启动失败", MessageBoxButtons.OK, MessageBoxIcon.Error); }
         }
     }

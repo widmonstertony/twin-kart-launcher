@@ -9,7 +9,7 @@
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "b52d9470db6fee137d2799a468947c31d519d9da250196dd7ff5b0c4069d677e"
+    "sha256": "e52f34afd633ed848d9680212c44921527517bbf65692dc464f56e805170539d"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -117,7 +117,7 @@
   },
   {
     "file": "gateway/TrackSupportAudit.cs",
-    "sha256": "764fc04efbb142811b46b5d1bcec3ccab6295d1b4bccd4ae0186deba7a4f8556"
+    "sha256": "636d3b32f18201fedd9c27f0fffc4a5f6934afe556eb6836cbb7a80ceace3409"
   },
   {
     "file": "gateway/WireCodec.cs",
@@ -142,6 +142,10 @@
   {
     "file": "native/build-input.ps1",
     "sha256": "b63b43e36c9ae300dbd4125fae3bee3da182adf534ab709ba9a728e94c99fbd2"
+  },
+  {
+    "file": "native/build-race-bridge.ps1",
+    "sha256": "47535deaa24fbc3325533c65f4adba345de45cd5c587882d4f79762d47360893"
   },
   {
     "file": "native/build-render.ps1",
@@ -180,12 +184,28 @@
     "sha256": "194ca6e546e053e5fcd408103a72b9e4280a96baea8a0681486407ec88e05663"
   },
   {
+    "file": "native/DriftRaceBridge.cpp",
+    "sha256": "a99a413504c4ed46ed35846812c60be7a11aa23b52939fc4da826382d3471475"
+  },
+  {
     "file": "native/DriftRenderProbe.cpp",
     "sha256": "d1f7b4f6528f176f887660407c68ed35af44dcf2a6e42c7136dc1cfa49df9e0a"
   },
   {
+    "file": "native/GameThreadQueue.cpp",
+    "sha256": "dd1bbfc84842ccff55f662e72c5fa1d9bb7fcaf7385e51d03d2a3e976b80b4cd"
+  },
+  {
+    "file": "native/GameThreadQueue.h",
+    "sha256": "2920c2577d794ac69d14fb96af6bfd4540a68f5d8638fd2f1756accb74802b23"
+  },
+  {
     "file": "native/InputDevice.cpp",
     "sha256": "1cc98c8f910937cb55416df0f99143497dc549827ea86cbd64f8513a22f85402"
+  },
+  {
+    "file": "native/RaceControl.h",
+    "sha256": "0ec20ff43a8328b58e0b7d7bc33206275b3e5352109491b9bf72f3bf6ca6001f"
   },
   {
     "file": "native/RenderPassTrace.cpp",
@@ -205,15 +225,15 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "ee915f457c55070bb114fd230d05c2b8f67efa602bb16de424dea84700f96456"
+    "sha256": "8ece438a96f3370d79cb867b67ba5e9c2c2731d4e183ef8020ace16d7db1ebf3"
   },
   {
     "file": "README.md",
-    "sha256": "38643059cd373643c4aeb4f72167cfb6f8644c03e85c93edbc2a7349526b5e57"
+    "sha256": "76bda203154d391dc3a809c375e60c57689b8106e45e7f7574d70c42c1c07f0f"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
-    "sha256": "c4b57e5beb744b071a1bd8c50dd89effdb3d529762a258b235611d512d50f43d"
+    "sha256": "d50021907eae088925269c53da207fb1d8d795cced266624e8c9e7f374f216f5"
   },
   {
     "file": "src/ClientDiscovery.cs",
@@ -232,8 +252,12 @@
     "sha256": "c86e1922957bf5e6ce764995ea30f49e819e320ccbb0d7f58e4ca4028f2e181e"
   },
   {
+    "file": "src/LocalRaceForm.cs",
+    "sha256": "7c8e1f92ab28cc6bd43d74d171ca3ed04db470f82688537acc68bbcee25c9e64"
+  },
+  {
     "file": "src/MainForm.cs",
-    "sha256": "011bbf4f5be0ef837df1b4d983d2014191ff60fc3fa725b54136c23b56dd3031"
+    "sha256": "e96542520cf14a6b3ca16806b166d659907f825985f2cffbd56609db470323ba"
   },
   {
     "file": "src/OfflineGarageForm.cs",
@@ -241,7 +265,7 @@
   },
   {
     "file": "src/OfflineLaunchSession.cs",
-    "sha256": "ac8ec4c9b4f83268ea8c9cee2b72a948f0c9a836978f6b4cdc082dec07ced7e4"
+    "sha256": "41984480bf26c22932a655631c813d4ce917493daf17c62174a56d85cbbd20e7"
   },
   {
     "file": "src/OwnedGameModule.cs",
@@ -249,7 +273,7 @@
   },
   {
     "file": "src/Profiles.cs",
-    "sha256": "0c5b3978b215847c1b8f4996e73e1f2b4fa8d9757d6a73aacd4f136ab75b66c3"
+    "sha256": "3fd6dfcaddb177e3aac18890a07b2adcbb926dc035bc57bf3c2b50cd6aa79484"
   },
   {
     "file": "src/SharedPad.cs",
@@ -276,6 +300,10 @@
     "sha256": "e851e7901b257900a7ed6730e77d98590a1b1e698bf60f3c6588f6f399d48114"
   },
   {
+    "file": "tests/GameThreadQueueTests.cpp",
+    "sha256": "55a61bd7eeceaf65668ae10502e726b3d0a9e47f40e7d81e3e2111ac510067ea"
+  },
+  {
     "file": "tests/GatewayTests.cs",
     "sha256": "0ae2d1734b92ea54ea7a67e0b93df6e31e2d5d41b2a3ada6296aaf7447b24abe"
   },
@@ -292,6 +320,10 @@
     "sha256": "c453834fa663b9d56c8f5c8c71616dae6e27ab7678d8fa553dfa32223f6297c0"
   },
   {
+    "file": "tests/LocalRaceProfileTests.cs",
+    "sha256": "08856682f6217865345dddb82639fe2486bb05ba261693c6011b91eebe060d52"
+  },
+  {
     "file": "tests/OfflineBackendTests.cs",
     "sha256": "3b3cc00066f09e91ff033959f5a82fe248893ef5b78c38dfda6bef2fcf775ae2"
   },
@@ -302,6 +334,10 @@
   {
     "file": "tests/PacketContractTests.cs",
     "sha256": "57339ef3496dd5e741863850f81db086f6861b9fdc76a8d467825f26426cdbcc"
+  },
+  {
+    "file": "tests/RaceControlTests.cpp",
+    "sha256": "a7961cd776d309a117897a3dcc8dbebb99ac586d477e2e6203383532eedc22a4"
   },
   {
     "file": "tests/RenderPassTraceTests.cpp",
@@ -321,7 +357,7 @@
   },
   {
     "file": "tests/TrackSupportAuditTests.cs",
-    "sha256": "2c76e96d77d23b7cbbf4f6b2ecfc172ef412d3158ea7533617850abbc85b81a7"
+    "sha256": "8e57643e5855a00198046742836607e2dfeb7fc933dd4f21611a33aee9f77785"
   },
   {
     "file": "tests/WireCodecTests.cs",
@@ -329,7 +365,7 @@
   },
   {
     "file": "tools/AuditTracks.cs",
-    "sha256": "eadc0c8b46f23f501a1da70be5745ef58e18d1c826d4e1e6d8af5ee842f8980a"
+    "sha256": "a5f4d7f2455cef21f6799d78cf826e7e37e964190f8965f49af65dc7af98c2e2"
   },
   {
     "file": "tools/InspectClient.cs",

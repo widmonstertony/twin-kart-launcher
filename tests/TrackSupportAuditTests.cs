@@ -8,6 +8,7 @@ static class TrackSupportAuditTests
     const string Ai="{\"event\":\"native_asset\",\"class\":\"AIPathDataAsset\",\"object_path\":\"/Game/AI/Test_R01.Test_R01\"}\n";
     const string End="{\"event\":\"asset_registry_complete\",\"assets\":100,\"worlds\":1,\"ai_path_assets\":1,\"all_tracks_driven\":true}\n";
     const string Catalog="{\"tracks\":[\"Test_R01\",\"Test_R01_Mirror\",\"Test_R01_rvs\",\"Test_R02\"]}";
+    static string Definition(string id,int status,string name) { return "{\"event\":\"native_track_definition\",\"track_id\":\""+id+"\",\"status\":"+status+",\"native_level_name\":\""+name+"\",\"game_thread\":42}\n"; }
     static void Need(bool value,string message) { if(!value) throw new Exception(message); }
     static void Reject(string log,string hash) { bool rejected=false; try { TrackSupportAudit.Read(log,Catalog,hash); } catch(FormatException) { rejected=true; } Need(rejected,"Invalid native inventory accepted"); }
     static int Main() {
@@ -22,6 +23,18 @@ static class TrackSupportAuditTests
             string duplicate=World.Replace("/Game/Map/","/Game/Other/");
             var ambiguous=TrackSupportAudit.Read(Begin+World+duplicate+Ai+End.Replace("\"worlds\":1","\"worlds\":2"),Catalog,Hash);
             Need(ambiguous.Tracks[0].WorldMatch=="ambiguous-leaf-name" && ambiguous.ExactMainWorldBaseAliases==0,"Ambiguous package leaf silently selected");
+            string definitions="{\"event\":\"native_race_bridge_ready\",\"client_sha256\":\""+Hash+"\",\"game_thread\":42}\n"+
+                Definition("Test_R01",1,"Test_R01")+Definition("Test_R01_Mirror",2,"")+Definition("Test_R01_rvs",2,"")+Definition("Test_R02",2,"")+
+                "{\"event\":\"native_track_queries_complete\",\"found\":1,\"empty\":3}\n";
+            TrackSupportAudit.AttachDefinitions(report,definitions);
+            Need(report.NativeDefinitionsComplete && report.NativeDefinitionsAvailable==1 && report.Tracks[0].NativeLevelName=="Test_R01" &&
+                report.Tracks[1].NativeDefinitionStatus=="variant-definition-unresolved" && report.Tracks[3].NativeDefinitionStatus=="no-native-definition-in-client" && !report.AllTracksDriven,"Native lookup evidence mislabeled transforms or driving");
+            foreach(string bad in new[]{definitions.Replace("\"game_thread\":42}","\"game_thread\":43}").Replace("\"game_thread\":43}\n{\"event\":\"native_track_definition\"","\"game_thread\":42}\n{\"event\":\"native_track_definition\""),
+                definitions.Replace("\"empty\":3","\"empty\":2"),definitions.Replace(Definition("Test_R02",2,""),Definition("Test_R01",2,"")),definitions.Replace("\"status\":2,\"native_level_name\":\"\"","\"status\":2,\"native_level_name\":\"Other\""),definitions.Replace(Hash,new string('b',64))}) {
+                var clean=TrackSupportAudit.Read(Begin+World+Ai+End,Catalog,Hash); bool invalid=false;
+                try { TrackSupportAudit.AttachDefinitions(clean,bad); } catch(FormatException) { invalid=true; }
+                Need(invalid && !clean.NativeDefinitionsComplete && clean.Tracks[0].NativeDefinitionStatus==null,"Invalid definition capture partially committed");
+            }
             Console.WriteLine("PASS native track inventory: build/count/completion checks, mirror and reverse separation, ambiguous names, failed/truncated captures and no invented driving acceptance."); return 0;
         } catch(Exception error) { Console.Error.WriteLine(error); return 1; }
     }

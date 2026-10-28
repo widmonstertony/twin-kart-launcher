@@ -2,6 +2,11 @@
 
 ## Unreleased / 后续开发
 
+- Add original session-local race requests, an opt-in launcher window, speed/item mode, 1–7 AI opponents and laps; preserve original kart/driver preparation and invoke native level travel on the owned game thread.
+- Add explicit game-thread routing without changing keyboard/mouse messages, bounded request syntax, fresh command identities and managed/native interoperability checks.
+- Reconcile every catalog ID with actual native track definitions and retain unresolved mirror/reverse/base entries in the UI; validate client build, thread, counts and complete coverage before committing the report.
+- Keep race driving, settlement, all-track acceptance and DLSS status explicitly unverified. The alpha Release is unchanged.
+
 - Add cockpit settings with persistent/live seat, head and FOV controls; identical reapplication after F6 now works. / 新增第一人称设置窗口和持久化、实时座位／头部／视野控制，修复 F6 后重发相同设置不生效的问题。
 - Add optional head-bone anchoring and native weak-reference serial acquisition for new drivers. Control-file checks pass; updated game lifecycle acceptance is pending. / 新增可选头部骨骼定位和原厂弱引用序号获取，控制文件检查通过，新版实机生命周期仍待验收。
 - Add an optional native asset-registry inventory module and a strict track-evidence reconciler. One real isolated capture found 1,585 world/sublevel records and 101 AI-path assets; 19 catalog base aliases remain unmatched after separating two reverse candidates. Configuration restoration passed. / 新增原生资源目录模块和严格赛道证据核对工具；实机隔离采集得到 1,585 个地图／子关卡和 101 份 AI 路线，区分两个反向候选后仍有 19 个基础别名未匹配，配置恢复通过。

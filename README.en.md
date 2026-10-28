@@ -1,5 +1,11 @@
 # Twin Kart Launcher
 
+Latest source checkpoint: an independently authored, opt-in native local-host candidate now connects the launcher to the client's own character/kart preparation and level-travel interfaces. Its UI requests speed or item mode, 1–7 AI opponents, laps and a track. Managed/native request interoperability, same-process game-thread dispatch and builds pass. **Same-grid starts, driving AI, item interactions and settlement remain unverified and are not claimed complete.** The existing room-protocol start boundary still returns an error instead of claiming a host exists.
+
+All 234 external catalog IDs have now been queried through the actual PC client's native track-definition interface: 96 return definitions and 138 are empty. Empty results comprise 117 mirror variants, 2 non-mirror reverse variants and 19 other base aliases. Mirror/reverse support needs further adaptation; unlocking IDs does not add missing native definitions or assets. The new report validates build, thread, complete coverage and counts, and keeps definition availability separate from map/AI resources and driving acceptance. The launcher retains all entries and labels unresolved ones.
+
+The native host candidate requires `EnableExperimentalRaceHost`, a matching `TrackReportPath`, and an explicitly listed `TwinKartDriftRaceBridge.dll` in the private launch manifest. Start the game, log in and stay in the lobby, then use the launcher's AI candidate window. `TwinKartLauncher.exe --start-manifest <private.local.json>` opens the launcher and starts its owned game session while keeping the live cockpit and race controls available. Run `native/build-race-bridge.ps1 -Test` and `gateway/test-tracks.ps1` for the corresponding software checks. This checkpoint does not complete DLSS SR, FG or DLSS 5 final composition.
+
 [简体中文](README.md) | English
 
 Independent launchers and an offline compatibility backend for the original **KartRider (2004 lineage)** and **KartRider: Drift** clients. This project does not recreate the racing game. It is an independently created repository, not a fork of another launcher.

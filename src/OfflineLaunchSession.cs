@@ -28,12 +28,20 @@ namespace TwinKartLauncher
         public LaunchModule[] Modules { get; set; }
         public LaunchModule[] ClientFiles { get; set; }
         public string ExternalSdkProvenance { get; set; }
+        public bool EnableExperimentalRaceHost { get; set; }
+        public string TrackReportPath { get; set; }
     }
     public static class OfflineLaunchSession
     {
         static readonly JavaScriptSerializer Json=new JavaScriptSerializer { MaxJsonLength=1024*1024 };
         static readonly object cameraGate=new object();
         static string activeCameraControl;
+        static string activeRaceControl;
+        public static bool TryStartRace(LocalRaceSettings settings)
+        {
+            if(settings==null || !settings.IsValid) throw new ArgumentException("Invalid race settings.");
+            lock(cameraGate) { if(activeRaceControl==null) return false; settings.WriteControl(activeRaceControl); return true; }
+        }
         public static bool TryApplyCockpit(CockpitSettings settings)
         {
             if(settings==null || !settings.IsValid) throw new ArgumentException("Invalid cockpit settings.");
@@ -105,6 +113,7 @@ namespace TwinKartLauncher
                 string before=Path.Combine(run,"config-before"),after=Path.Combine(run,"config-after");
                 Directory.CreateDirectory(before); Directory.CreateDirectory(after);
                 string cameraControl=Path.Combine(run,"cockpit.control");
+                string raceControl=Path.Combine(run,"race.control");
                 if(cockpit==null) { string flag; cockpit=new CockpitSettings { Enabled=manifest.Environment!=null && manifest.Environment.TryGetValue("TWIN_KART_FIRST_PERSON",out flag) && flag=="1" }; }
                 cockpit.Copy().WriteNativeControl(cameraControl);
                 var hashes=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase);
@@ -134,6 +143,8 @@ namespace TwinKartLauncher
                         launch.EnvironmentVariables["TWIN_KART_CAMERA_LOG"]=Path.Combine(run,"camera.jsonl");
                         launch.EnvironmentVariables["TWIN_KART_CAMERA_CONTROL"]=cameraControl;
                         launch.EnvironmentVariables["TWIN_KART_ASSET_LOG"]=Path.Combine(run,"assets.jsonl");
+                        launch.EnvironmentVariables["TWIN_KART_RACE_BRIDGE_LOG"]=Path.Combine(run,"race-bridge.jsonl");
+                        if(manifest.EnableExperimentalRaceHost) launch.EnvironmentVariables["TWIN_KART_RACE_CONTROL"]=raceControl;
                         launch.EnvironmentVariables["TWIN_KART_COCKPIT_HEAD"]="1";
                         launch.EnvironmentVariables["TWIN_KART_RENDER_LOG"]=Path.Combine(run,"render.jsonl");
                         launch.EnvironmentVariables["TWIN_KART_RENDER_PASSES"]="1";
@@ -143,6 +154,8 @@ namespace TwinKartLauncher
                         if(manifest.Modules!=null) foreach(var module in manifest.Modules) OwnedGameModule.Load(gameProcess,game,module.Path,module.Sha256);
                         if(manifest.Modules!=null && manifest.Modules.Any(module=>String.Equals(Path.GetFileName(module.Path),"TwinKartDriftCamera.dll",StringComparison.OrdinalIgnoreCase)))
                             lock(cameraGate) activeCameraControl=cameraControl;
+                        if(manifest.EnableExperimentalRaceHost && manifest.Modules!=null && manifest.Modules.Any(module=>String.Equals(Path.GetFileName(module.Path),"TwinKartDriftRaceBridge.dll",StringComparison.OrdinalIgnoreCase)))
+                            lock(cameraGate) activeRaceControl=raceControl;
                         progress("原创启动器已启动原创后端和原厂游戏；会话："+run);
                         var timer=Stopwatch.StartNew();
                         while(!gameProcess.WaitForExit(250))
@@ -155,6 +168,7 @@ namespace TwinKartLauncher
                 finally
                 {
                     lock(cameraGate) { if(activeCameraControl==cameraControl) activeCameraControl=null; }
+                    lock(cameraGate) { if(activeRaceControl==raceControl) activeRaceControl=null; }
                     StopOwned(gameProcess,game); StopOwned(server,backend);
                     foreach(string file in Directory.GetFiles(config,"*.ini"))
                     { string name=Path.GetFileName(file); File.Copy(file,Path.Combine(after,name),true); if(!hashes.ContainsKey(name)) File.Delete(file); }
