@@ -9,7 +9,7 @@
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "2a641359701c559b9792073244ed5fe0b60ccebc3747c1e1dc5827fd4c829209"
+    "sha256": "49aed5cb98da8c18814d8ed2d5aa4f4920636c2745a231b553d28f729ba5a5c8"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -221,7 +221,7 @@
   },
   {
     "file": "native/LocalRaceRuntime.h",
-    "sha256": "63facfa7f11c7b30e3525c7fe7ae01bd4b16c9b206a38aff7dfbab8aa6b6d554"
+    "sha256": "153255837d0489ff35770f91152e78d2af3e6603be8cfe7af52710a4a0b60ce6"
   },
   {
     "file": "native/NeuralD3D12.cpp",

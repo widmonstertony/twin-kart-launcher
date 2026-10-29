@@ -7,6 +7,7 @@ using Spawn=bool(__fastcall*)(void*,void*,int,void*,void**,bool*);
 using AddUnknown=void(__fastcall*)(void*,void*,int,bool);
 using AutoDrive=void(__fastcall*)(void*,bool);
 using ResultInit=void(__fastcall*)(void*,const void*,const void*,const void*,void**,void**);
+using Construct=void*(__fastcall*)(void*);
 using Event=void(*)(const char*,int,int);
 inline BYTE* image=nullptr;
 inline DWORD owner=0;
@@ -17,7 +18,10 @@ inline Spawn spawn=nullptr;
 inline AddUnknown addUnknown=nullptr;
 inline AutoDrive autoDrive=nullptr;
 inline ResultInit resultInit=nullptr;
+inline Construct construct=nullptr;
+inline BYTE* registrationActor=nullptr;
 inline TwinKartNative::OwnedCodePatch spawnPatch,statePatch,driverPatch,resultPatch;
+inline TwinKartNative::OwnedCodePatch constructionPatches[5];
 inline bool AiSlot(int slot,int players,int ais) {
     return players==1 && ais>=1 && ais<=7 && slot>=players && slot<players+ais;
 }
@@ -37,6 +41,32 @@ inline bool Local(BYTE* rule) {
         *reinterpret_cast<void**>(rule)==image+0x51dd410 && World(rule);
 }
 inline void Emit(const char* name,int slot,int value) { if(event) event(name,slot,value); }
+inline void* __fastcall OnConstruct(void* parameters) {
+    // Only the five original construction calls inside this AI registration
+    // function are redirected. FStaticConstructObjectParameters begins with
+    // Class, Outer; both were verified in the exact PC constructor/consumer.
+    auto values=static_cast<BYTE**>(parameters);
+    if(armed && GetCurrentThreadId()==owner && registrationActor && parameters &&
+       values[1]==registrationActor && Live(registrationActor) && Live(values[0])) {
+        using Find=BYTE*(__fastcall*)(void*,void*);
+        auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(registrationActor))[0x620/8]);
+        BYTE* existing=find(registrationActor,values[0]);
+        if(Live(existing) && *reinterpret_cast<void**>(existing+0xa0)==registrationActor &&
+           *reinterpret_cast<void**>(existing+0x10)==values[0]) {
+            Emit("native_local_ai_component_reused",-1,1);
+            return existing;
+        }
+    }
+    return construct(parameters);
+}
+inline void RegisterMissing(BYTE* actor) {
+    BYTE* previous=registrationActor; registrationActor=actor;
+    __try {
+        using Register=void(__fastcall*)(void*);
+        reinterpret_cast<Register>(image+0x1973d10)(actor+0x320);
+    } __finally { registrationActor=previous; }
+}
+inline void RestoreConstruction() { for(auto& patch:constructionPatches) patch.Restore(); }
 inline bool __fastcall OnSpawn(void* raw,void* mode,int slot,void* start,void** pawn,bool* isAi) {
     auto rule=static_cast<BYTE*>(raw);
     if(Local(rule) && isAi) {
@@ -60,8 +90,9 @@ inline bool __fastcall OnSpawn(void* raw,void* mode,int slot,void* start,void** 
             // supplies its own FollowTG, movement and speed/item components.
             // Its this pointer is the original interface subobject at +0x320.
             if(Live(actor) && *reinterpret_cast<void**>(actor+0x10)==aiType && !find(actor,pathType)) {
-                using Register=void(__fastcall*)(void*);
-                reinterpret_cast<Register>(image+0x1973d10)(actor+0x320);
+                // Native RegisterComponentWithWorld is idempotent for an
+                // already registered component (verified flag at +0x88).
+                RegisterMissing(actor);
                 Emit("native_local_ai_driver_registered",slot,find(actor,pathType)?1:0);
             }
         }
@@ -125,13 +156,16 @@ inline bool Install(BYTE* base,Event callback) {
        memcmp(image+0x15f5d00,resultPrefix,sizeof(resultPrefix)) || memcmp(image+0x168da80,factoryPrefix,sizeof(factoryPrefix)) || memcmp(image+0x168db20,factoryPrefix,sizeof(factoryPrefix))) return false;
     spawn=reinterpret_cast<Spawn>(image+0x1926150);
     addUnknown=reinterpret_cast<AddUnknown>(image+0x18f7370);
-    if(!spawnPatch.Call(image+0x1913d1a,reinterpret_cast<void*>(spawn),reinterpret_cast<void*>(OnSpawn))) return false;
-    if(!statePatch.Call(image+0x1913d72,reinterpret_cast<void*>(addUnknown),reinterpret_cast<void*>(OnUnknown))) { spawnPatch.Restore(); return false; }
+    construct=reinterpret_cast<Construct>(image+0x278aa90);
+    const unsigned sites[]={0x1973d59,0x1973da1,0x1973de7,0x1973e7a,0x1973eaf};
+    for(unsigned i=0;i<5;++i) if(!constructionPatches[i].Call(image+sites[i],reinterpret_cast<void*>(construct),reinterpret_cast<void*>(OnConstruct))) { RestoreConstruction(); return false; }
+    if(!spawnPatch.Call(image+0x1913d1a,reinterpret_cast<void*>(spawn),reinterpret_cast<void*>(OnSpawn))) { RestoreConstruction(); return false; }
+    if(!statePatch.Call(image+0x1913d72,reinterpret_cast<void*>(addUnknown),reinterpret_cast<void*>(OnUnknown))) { spawnPatch.Restore(); RestoreConstruction(); return false; }
     if(!driverPatch.Entry(image+0x15acaf0,prefix,sizeof(prefix),reinterpret_cast<void*>(OnAutoDrive),reinterpret_cast<void**>(&autoDrive))) {
-        statePatch.Restore(); spawnPatch.Restore(); return false;
+        statePatch.Restore(); spawnPatch.Restore(); RestoreConstruction(); return false;
     }
     if(!resultPatch.Entry(image+0x15f5d00,resultPrefix,sizeof(resultPrefix),reinterpret_cast<void*>(OnResultInit),reinterpret_cast<void**>(&resultInit))) {
-        driverPatch.Restore(); statePatch.Restore(); spawnPatch.Restore(); return false;
+        driverPatch.Restore(); statePatch.Restore(); spawnPatch.Restore(); RestoreConstruction(); return false;
     }
     installed=true; Emit("native_local_ai_hooks_installed",-1,1); return true;
 }
