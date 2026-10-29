@@ -74,6 +74,10 @@ static class OfflineBackendTests
             string path=Path.Combine(folder,"save.json");
             var store=new OfflineProfileStore(path,initial,defaults,unlock,rules,"{\"tracks\":[\"Test_R01\",\"Test_Reverse\"]}",physics,"{\"vehicles\":{}}","1",54321);
             Need(Code(Call(store,"PqLogin"))==0,"Profile login failed");
+            Need(Code(Call(store,"PqReadyGame",",\"ready\":true"))==0 && store.Snapshot().Contains("\"localReady\":true"),"Local lobby readiness rejected");
+            string beforeInvalidReady=store.Snapshot();
+            Need(Code(Call(store,"PqReadyGame",",\"ready\":\"true\""))!=0 && store.Snapshot()==beforeInvalidReady,"Malformed ready request mutated profile");
+            Need(!store.Snapshot().Contains("\"activeRace\""),"Readiness fabricated a race session");
             Need(ProfileJson.Write(Call(store,"PqInventory").Response).Contains("Character:2,1"),"New backend inventory grants absent");
             Need(((object[])Call(store,"PqTimeAttackGetTracks").Response["trackList"]).Length==2,"Track catalogue gates entries");
             var gear=Call(store,"PqKartGearSet",",\"kartItemId\":\"Kart:1\",\"gearSettings\":{\"fixed\":5}");

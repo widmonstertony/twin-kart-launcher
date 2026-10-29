@@ -31,6 +31,6 @@ inline bool Options(const Request& request,wchar_t* target,size_t capacity) {
     // PC MajorConnectRule::ApplyOptions consumes players and ais separately.
     // This creates an experimental local host; it does not establish racing,
     // AI movement, item rules, finish order or settlement acceptance.
-    return swprintf_s(target,capacity,L"?game=/Script/KartDrift.%sGameMode?gamemode=%s?team=0?teamsize=1?players=1?observers=0?ais=%d?lap=%d",mode,mode,request.ai,request.laps)>0;
+    return swprintf_s(target,capacity,L"game=/Script/KartDrift.%sGameMode?gamemode=%s?team=0?teamsize=1?players=1?observers=0?ais=%d?lap=%d",mode,mode,request.ai,request.laps)>0;
 }
 }

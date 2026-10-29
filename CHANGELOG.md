@@ -2,6 +2,8 @@
 
 ## Unreleased / 后续开发
 
+- Replace time-attack preparation with the original local loading transition; a PC trial entered Village_I01 and spawned three real AI pawns. They remained stationary. / 改用原厂本地加载流程；PC 实机已进入 Village_I01 并生成三个 AI，但 AI 仍静止。
+- Add exact-build AI component registration, FollowTG preservation, native solo speed/item lobby routing, solo result-styler fallback and readiness responses. Software checks pass; real-game acceptance is pending. Native solo buttons reuse the last launcher track/AI/lap choice. / 新增构建限定的原厂 AI 组件、寻路保留、大厅个人竞速／道具转接、结算样式兜底和准备状态响应；软件检查通过，实机未验收，原生按钮沿用启动器上次赛道／AI／圈数选择。
 - Add original D3D12 SR and hash-limited private-ABI NR consumers; standalone synthetic GPU evaluation/readback passes. / 新增原创 D3D12 超分及模型指纹限定的 NR 模块，独立合成资源 GPU 计算与读回通过，尚非游戏验收。
 - Add original Streamline FG/Reflex/PCL integration, synchronized D3D11/D3D12 shared textures and shader resource/camera reflection. A hidden-window FG test is correctly not accepted as generated frames. / 新增原创帧生成接口、跨 API 共享纹理及着色器资源／相机布局读取；隐藏窗口未实际插帧，不伪报成功。
 

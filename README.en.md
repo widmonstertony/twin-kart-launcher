@@ -18,6 +18,8 @@ Independent launchers and an offline compatibility backend for the original **Ka
 
 ## Current state
 
+2026-10-29 race update: a real PC trial entered `Village_I01` through the original loading transition and spawned three actual AI pawns with AI markers. Player driving, original animated hands/wheel and an item slot were observed, but AI stayed on the grid. Subsequent changes add native AI component registration, FollowTG preservation, native solo speed/item button routing, an original solo result-styler fallback and readiness responses. Native patch and backend software checks pass; **the new changes have not been loaded into a real trial, and complete AI races remain unverified**. The native lobby defaults to `Village_I01` and then reuses the last launcher track/AI/lap request. PC interfaces were independently mapped using the owner's working iOS project as a behavioral reference; no reference launcher implementation is included.
+
 | Area | Evidence and remaining work |
 | --- | --- |
 | Original launcher/backend | The real Drift client accepted login, inventory, login completion, equipment changes and repeated keepalive requests. |

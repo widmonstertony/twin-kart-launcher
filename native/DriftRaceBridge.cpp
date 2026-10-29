@@ -10,6 +10,7 @@
 #include "GameThreadQueue.h"
 #include "DriftObjectIdentity.h"
 #include "RaceControl.h"
+#include "LocalRaceRuntime.h"
 
 // Original game-thread bridge for exact-build native race preparation work.
 // Track lookup and an opt-in native local-host candidate. A travel request is
@@ -20,9 +21,17 @@ BYTE* image=nullptr; HINSTANCE module=nullptr; HANDLE output=INVALID_HANDLE_VALU
 TwinKartNative::GameThreadQueue queue;
 struct NativeString { const wchar_t* data; int count,capacity; };
 struct Query { std::wstring alias; wchar_t level[512]{}; int status=-1; DWORD executedThread=0; HANDLE complete=nullptr; };
-struct StartQuery { TwinKartRace::Request request; wchar_t track[97]{},options[512]{}; int status=-1; DWORD executedThread=0; HANDLE complete=nullptr; };
+struct StartQuery { TwinKartRace::Request request; wchar_t track[97]{},options[512]{}; int status=-1,stage=0; DWORD fault=0; uintptr_t faultRva=0; DWORD executedThread=0; HANDLE complete=nullptr; };
 struct NativeMode { unsigned char mode; unsigned char padding[7]; NativeString profile; };
 static_assert(sizeof(NativeMode)==24,"Supported native game mode layout");
+struct NativeModes { NativeMode* data; int count,capacity; };
+wchar_t matchControl[32768]{};
+// Owned only by the game thread. Native solo buttons reuse the last launcher
+// track/AI/lap selection while retaining the mode the player just clicked.
+TwinKartRace::Request lobbyChoice;
+using Match=void(__fastcall*)(void*,NativeModes*,bool);
+Match originalMatch=nullptr;
+TwinKartNative::OwnedCodePatch matchPatchA,matchPatchB;
 // All object access remains inside this game's window thread. No object pointer
 // survives a queued task or a level transition.
 BYTE* Traveler() {
@@ -42,8 +51,67 @@ BYTE* Traveler() {
 }
 // 0=model not ready; 1=native travel submitted; 2=definition absent;
 // -1=native fault; -2=unsupported transform; no value means race acceptance.
-int NativeStart(const wchar_t* track,const wchar_t* options,int mode) {
+void RuntimeEvent(const char* name,int slot,int value) {
+    char line[256]; int bytes=sprintf_s(line,"{\"event\":\"%s\",\"slot\":%d,\"value\":%d,\"race_verified\":false}\r\n",name,slot,value);
+    DWORD written=0; if(bytes>0) WriteFile(output,line,static_cast<DWORD>(bytes),&written,nullptr);
+}
+// Called by the original lobby on its game thread. Preserve the original
+// selected solo mode, consume the by-value native array using its destructor,
+// then let the existing request worker invoke the native loading transition.
+// No fabricated matchmaking ticket or host-success packet is sent.
+void __fastcall OnMatch(void* account,NativeModes* modes,bool tutorial) {
+    bool accepted=false;
     __try {
+        if(GetCurrentThreadId()==queue.ThreadId() && matchControl[0] && TwinKartLocalRace::Live(static_cast<BYTE*>(account)) &&
+           modes && modes->data && modes->count==1 && modes->capacity>=1 && modes->capacity<=1024 &&
+           (modes->data[0].mode==1 || modes->data[0].mode==4)) {
+            BYTE* traveler=Traveler();
+            using GetWorld=BYTE*(__fastcall*)(void*);
+            auto world=traveler?reinterpret_cast<GetWorld>((*reinterpret_cast<void***>(traveler))[0x160/8])(traveler):nullptr;
+            if(TwinKartLocalRace::Live(world) && !*reinterpret_cast<void**>(world+0x38)) {
+                BYTE random[16];
+                if(BCryptGenRandom(nullptr,random,sizeof(random),BCRYPT_USE_SYSTEM_PREFERRED_RNG)>=0) {
+                    char identity[33]{}; for(unsigned i=0;i<16;++i) sprintf_s(identity+i*2,3,"%02x",random[i]);
+                    const char* track=lobbyChoice.track[0]?lobbyChoice.track:"Village_I01";
+                    char text[256]; int length=sprintf_s(text,"TKRACE1 %s %s %u %d %d\n",identity,track,modes->data[0].mode,lobbyChoice.ai,lobbyChoice.laps);
+                    wchar_t temporary[32768];
+                    if(swprintf_s(temporary,L"%s.pending",matchControl)>0 && length>0) {
+                        HANDLE file=CreateFileW(temporary,GENERIC_WRITE,0,nullptr,CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,nullptr);
+                        if(file!=INVALID_HANDLE_VALUE) {
+                            DWORD written=0; bool saved=WriteFile(file,text,static_cast<DWORD>(length),&written,nullptr) && written==static_cast<DWORD>(length) && FlushFileBuffers(file);
+                            CloseHandle(file);
+                            if(saved && MoveFileExW(temporary,matchControl,MOVEFILE_REPLACE_EXISTING|MOVEFILE_WRITE_THROUGH)) {
+                                accepted=true; RuntimeEvent("native_lobby_solo_request_routed",-1,modes->data[0].mode);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) { accepted=false; }
+    if(!accepted) { originalMatch(account,modes,tutorial); return; }
+    using Destroy=void(__fastcall*)(NativeModes*);
+    reinterpret_cast<Destroy>(image+0x10df9f0)(modes);
+}
+void InitializeRuntime(void* raw) {
+    auto& value=*static_cast<Query*>(raw); value.executedThread=GetCurrentThreadId();
+    bool ready=TwinKartLocalRace::Install(image,RuntimeEvent);
+    originalMatch=reinterpret_cast<Match>(image+0x1acec30);
+    if(ready) ready=matchPatchA.Call(image+0x1a8d00a,reinterpret_cast<void*>(originalMatch),reinterpret_cast<void*>(OnMatch));
+    if(ready) ready=matchPatchB.Call(image+0x1df5897,reinterpret_cast<void*>(originalMatch),reinterpret_cast<void*>(OnMatch));
+    if(!ready) { matchPatchB.Restore(); matchPatchA.Restore(); }
+    value.status=ready?1:-1; SetEvent(value.complete);
+}
+int NativeFault(EXCEPTION_POINTERS* error,StartQuery& query) {
+    query.fault=error->ExceptionRecord->ExceptionCode;
+    auto address=reinterpret_cast<uintptr_t>(error->ExceptionRecord->ExceptionAddress),base=reinterpret_cast<uintptr_t>(image);
+    query.faultRva=address>=base && address-base<0x8657000?address-base:0;
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+int NativeStart(StartQuery& query) {
+    const wchar_t* track=query.track; const wchar_t* options=query.options; int mode=query.request.mode;
+    __try {
+        query.stage=1;
         BYTE* traveler=Traveler();
         using Model=void*(__fastcall*)(void*);
         if(!traveler || !reinterpret_cast<Model>(image+0x1ba3cf0)(traveler)) return 0;
@@ -52,6 +120,7 @@ int NativeStart(const wchar_t* track,const wchar_t* options,int mode) {
         alignas(16) BYTE definition[0x160]{};
         using Get=void*(__fastcall*)(void*,const NativeString*);
         using Destroy=void(__fastcall*)(void*);
+        query.stage=2;
         if(reinterpret_cast<Get>(image+0x1472ce0)(definition,&alias)!=definition) return -1;
         const auto level=*reinterpret_cast<NativeString*>(definition);
         if(!level.data || level.count<=1 || level.count>512 || level.capacity<level.count || level.data[level.count-1]) {
@@ -60,28 +129,26 @@ int NativeStart(const wchar_t* track,const wchar_t* options,int mode) {
         unsigned long long levelName=0;
         using Name=void*(__fastcall*)(void*,const wchar_t*,int);
         reinterpret_cast<Name>(image+0x2589130)(&levelName,level.data,1);
-        // Retain the client's character/kart setup and its native allocation,
-        // reference-count and preview rules instead of cloning vendor structs.
-        using Prepare=void(__fastcall*)(void*,const void*);
-        reinterpret_cast<Prepare>(image+0x1bba570)(traveler,definition);
         reinterpret_cast<Destroy>(image+0x1620210)(definition);
-        void* details=*reinterpret_cast<void**>(traveler+0x360);
-        if(!details) return -1;
-        NativeMode selected{}; selected.mode=static_cast<unsigned char>(mode);
-        NativeString owned{};
-        using Copy=void*(__fastcall*)(NativeString*,const NativeString*);
-        reinterpret_cast<Copy>(image+0x9120e0)(&owned,&alias);
-        using Initialize=bool(__fastcall*)(void*,const NativeMode*,NativeString*,void*,const void*,bool);
-        if(!reinterpret_cast<Initialize>(image+0x1bba140)(traveler,&selected,&owned,details,traveler+0x368,true)) return -1;
+        query.stage=3;
+        if(!TwinKartLocalRace::Install(image,RuntimeEvent)) return -3;
+        lobbyChoice=query.request;
+        TwinKartLocalRace::Arm(mode);
+        // The single-player preparation path fabricates time-attack details
+        // and is inappropriate for native major-connect speed/item hosts.
+        // Retain the original loading/transition path, as established by the
+        // owner's working iOS client and this PC function's native callers.
+        const wchar_t* modeText=mode==1?L"SpeedSingle":L"ItemSingle";
+        NativeString modeName{modeText,static_cast<int>(wcslen(modeText)+1),static_cast<int>(wcslen(modeText)+1)};
         NativeString optionText{options,static_cast<int>(wcslen(options)+1),static_cast<int>(wcslen(options)+1)};
-        using Open=void(__fastcall*)(const void*,unsigned long long,bool,const NativeString*);
-        reinterpret_cast<Open>(image+0x3f50670)(traveler,levelName,true,&optionText);
-        return 1;
-    } __except(EXCEPTION_EXECUTE_HANDLER) { return -1; }
+        using Load=bool(__fastcall*)(void*,const NativeString*,const NativeString*,unsigned long long,bool,const NativeString*,bool);
+        query.stage=4;
+        return reinterpret_cast<Load>(image+0x1bc6120)(traveler,&modeName,&alias,levelName,true,&optionText,true)?1:-4;
+    } __except(NativeFault(GetExceptionInformation(),query)) { return -1; }
 }
 void ExecuteStart(void* raw) {
     auto& value=*static_cast<StartQuery*>(raw); value.executedThread=GetCurrentThreadId();
-    value.status=NativeStart(value.track,value.options,value.request.mode); SetEvent(value.complete);
+    value.status=NativeStart(value); SetEvent(value.complete);
 }
 void CancelStart(void* raw) { auto& value=*static_cast<StartQuery*>(raw); value.status=-1; SetEvent(value.complete); }
 // 0=not ready, 1=valid native name, 2=empty native definition, -1=fault/cancel.
@@ -121,8 +188,9 @@ bool SignaturesReady() {
         const BYTE prepare[]={0x48,0x89,0x5c,0x24,0x18,0x55,0x56,0x57};
         const BYTE name[]={0x48,0x89,0x5c,0x24,0x08,0x57,0x48,0x83};
         const BYTE open[]={0x48,0x89,0x54,0x24,0x10,0x55,0x53,0x56};
+        const BYTE loading[]={0x4c,0x89,0x4c,0x24,0x20,0x4c,0x89,0x44};
         return !memcmp(image+0x1472ce0,get,8) && !memcmp(image+0x1620210,destroy,8) && !memcmp(image+0x1bba140,initialize,8) &&
-            !memcmp(image+0x1bba570,prepare,8) && !memcmp(image+0x2589130,name,8) && !memcmp(image+0x3f50670,open,8);
+            !memcmp(image+0x1bba570,prepare,8) && !memcmp(image+0x2589130,name,8) && !memcmp(image+0x3f50670,open,8) && !memcmp(image+0x1bc6120,loading,8);
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 BOOL CALLBACK FindWindow(HWND window,LPARAM raw) {
@@ -200,6 +268,7 @@ void WatchControl(const wchar_t* path) {
         CloseHandle(value.complete);
         Log(std::string("{\"event\":\"native_local_host_request\",\"request_id\":")+Json(value.request.identity)+",\"track_id\":"+Json(value.request.track)+
             ",\"mode\":"+std::to_string(value.request.mode)+",\"ai\":"+std::to_string(value.request.ai)+",\"status\":"+std::to_string(value.status)+
+            ",\"stage\":"+std::to_string(value.stage)+",\"fault_code\":"+std::to_string(value.fault)+",\"fault_rva\":"+std::to_string(value.faultRva)+
             ",\"travel_requested\":"+(value.status==1?"true":"false")+",\"race_verified\":false,\"game_thread\":"+std::to_string(value.executedThread)+"}");
     }
 }
@@ -216,6 +285,16 @@ DWORD WINAPI Worker(void*) {
         auto aliases=b?Queries(input):std::vector<std::string>{}; HWND window=nullptr;
         for(int attempt=0;attempt<480 && !window;++attempt) { if(SignaturesReady()) EnumWindows(FindWindow,reinterpret_cast<LPARAM>(&window)); if(!window) Sleep(250); }
         if(!window || !queue.Install(window,module)) throw std::runtime_error("Owned game-thread message hook unavailable");
+        if(c) {
+            wcscpy_s(matchControl,control);
+            Query runtime; runtime.complete=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+            if(!runtime.complete) throw std::runtime_error("Runtime setup event unavailable");
+            bool submitted=queue.Submit({InitializeRuntime,&runtime,Cancel});
+            if(!submitted || WaitForSingleObject(runtime.complete,5000)!=WAIT_OBJECT_0) { queue.Stop(); CloseHandle(runtime.complete); throw std::runtime_error("Runtime setup not dispatched"); }
+            CloseHandle(runtime.complete);
+            if(runtime.status!=1 || runtime.executedThread!=queue.ThreadId()) throw std::runtime_error("Exact-build local match adapters unavailable");
+            Log("{\"event\":\"native_lobby_match_adapter_installed\",\"default_track\":\"Village_I01\",\"ai\":7,\"race_verified\":false}");
+        }
         Log(std::string("{\"event\":\"native_race_bridge_ready\",\"client_sha256\":\"")+ClientSha+"\",\"can_start_race\":false,\"experimental_local_host\":"+(c?"true":"false")+",\"game_thread\":"+std::to_string(queue.ThreadId())+"}");
         unsigned found=0,empty=0; bool initialized=false;
         for(const auto& alias:aliases) {

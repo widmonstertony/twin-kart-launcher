@@ -1,0 +1,42 @@
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <cstdio>
+#include <stdexcept>
+#include "../native/LocalRaceRuntime.h"
+using Function=int(__fastcall*)(int);
+Function originalEntry=nullptr;
+int __fastcall Replacement(int value) { return value+10; }
+int __fastcall EntryReplacement(int value) { return originalEntry(value)+10; }
+void Need(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
+int main() {
+    try {
+        auto code=static_cast<BYTE*>(VirtualAlloc(nullptr,4096,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
+        Need(code!=nullptr,"Fixture allocation");
+        // Original Windows x64 call frame with mandatory home space/alignment.
+        const BYTE caller[]={0x48,0x83,0xec,0x28,0xe8,0,0,0,0,0x48,0x83,0xc4,0x28,0xc3};
+        memcpy(code,caller,sizeof(caller)); const BYTE callee[]={0x8d,0x41,0x01,0xc3};
+        memcpy(code+64,callee,sizeof(callee)); int relative=64-9; memcpy(code+5,&relative,4);
+        BYTE prefix[15]{0x8b,0xc1,0x83,0xc0,0x01}; memset(prefix+5,0x90,10);
+        memcpy(code+128,prefix,sizeof(prefix)); code[143]=0xc3;
+        DWORD ignored=0; Need(VirtualProtect(code,4096,PAGE_EXECUTE_READ,&ignored)!=FALSE,"Fixture protection");
+        FlushInstructionCache(GetCurrentProcess(),code,144);
+        auto call=reinterpret_cast<Function>(code),entry=reinterpret_cast<Function>(code+128);
+        Need(call(2)==3 && entry(2)==3,"Original generated machine code");
+        TwinKartNative::OwnedCodePatch redirect;
+        Need(!redirect.Call(code+4,code+63,reinterpret_cast<void*>(Replacement)),"Unknown call target accepted");
+        Need(redirect.Call(code+4,code+64,reinterpret_cast<void*>(Replacement)) && call(2)==12,"Real patched call did not execute replacement");
+        Need(redirect.Restore() && call(2)==3,"Call rollback did not restore execution");
+        TwinKartNative::OwnedCodePatch detour;
+        BYTE wrong[15]{};
+        Need(!detour.Entry(code+128,wrong,15,reinterpret_cast<void*>(EntryReplacement),reinterpret_cast<void**>(&originalEntry)),"Unknown prologue accepted");
+        Need(detour.Entry(code+128,prefix,15,reinterpret_cast<void*>(EntryReplacement),reinterpret_cast<void**>(&originalEntry)),"Entry install");
+        Need(originalEntry(2)==3 && entry(2)==13,"Trampoline did not preserve displaced instructions");
+        Need(detour.Restore() && entry(2)==3,"Entry rollback");
+        for(int ais=1;ais<=7;++ais) for(int slot=-1;slot<10;++slot)
+            Need(TwinKartLocalRace::AiSlot(slot,1,ais)==(slot>=1 && slot<=ais),"AI slot boundary");
+        Need(!TwinKartLocalRace::AiSlot(1,2,3) && !TwinKartLocalRace::AiSlot(1,1,8),"Unsupported player count accepted");
+        VirtualFree(code,0,MEM_RELEASE);
+        puts("PASS real x64 call redirection, original trampoline execution, exact-byte rejection, rollback and local AI slot boundaries. No game started.");
+        return 0;
+    } catch(const std::exception& error) { fprintf(stderr,"%s\n",error.what()); return 1; }
+}

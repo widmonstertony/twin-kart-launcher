@@ -20,6 +20,10 @@ try {
         & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /LD /Fo./ /FeTwinKartDriftRaceBridge.dll (Join-Path $PSScriptRoot 'DriftRaceBridge.cpp') (Join-Path $PSScriptRoot 'GameThreadQueue.cpp') /link bcrypt.lib user32.lib
         if($LASTEXITCODE -ne 0) { throw 'Native race bridge build failed' }
         if($Test) {
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeOwnedCodePatchTests.exe (Join-Path $projectRoot 'tests\OwnedCodePatchTests.cpp')
+            if($LASTEXITCODE -ne 0) { throw 'Owned call adapter test build failed' }
+            & (Join-Path $build 'OwnedCodePatchTests.exe')
+            if($LASTEXITCODE -ne 0) { throw 'Owned call adapter checks failed' }
             & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeRaceControlTests.exe (Join-Path $projectRoot 'tests\RaceControlTests.cpp')
             if($LASTEXITCODE -ne 0) { throw 'Race request test build failed' }
             & (Join-Path $build 'RaceControlTests.exe')

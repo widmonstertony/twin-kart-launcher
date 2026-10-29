@@ -167,6 +167,12 @@ namespace TwinKartLauncher.Gateway
                         case "PqEcho": response["_type"] = "PrEcho"; break;
                         case "PqServerTime": response["_type"] = "PrServerTime"; response["utc"] = Now(); break;
                         case "PqSetClientStage": response["_type"] = "PrSetClientStage"; break;
+                        case "PqReadyGame":
+                            if(!request.ContainsKey("ready") || !(request["ready"] is bool)) throw new ArgumentException("Expected ready boolean.");
+                            // Readiness is local lobby state. Race travel is
+                            // consumed on the original client's game thread;
+                            // this reply does not claim a running match.
+                            next["localReady"]=(bool)request["ready"]; changed=true; break;
                         case "PqChangeBeginnerSetting":
                             if (request.ContainsKey("beginnerFlag")) { next["beginnerFlag"] = request["beginnerFlag"]; changed = true; }
                             break;

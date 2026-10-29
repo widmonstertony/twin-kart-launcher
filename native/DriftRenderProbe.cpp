@@ -42,6 +42,7 @@ SRWLOCK deviceLock = SRWLOCK_INIT;
 std::atomic<ID3D11DeviceContext*> gameContext{nullptr}; // retained for this owned game process
 bool tracePasses = false;
 volatile LONG passRows = 0, sampledRows = 0;
+unsigned traceInterval=120,traceLimit=1024,tracePerFrame=64;
 ContextHooks contexts[8]{};
 unsigned contextCount = 0;
 SRWLOCK contextLock = SRWLOCK_INIT;
@@ -79,13 +80,13 @@ void Log(const char* line) {
     ReleaseSRWLockExclusive(&logLock);
 }
 void TracePass(ID3D11DeviceContext* context, bool compute, void* caller) {
-    if (!tracePasses || context != gameContext.load(std::memory_order_acquire) || frames < 1 || frames % 120 != 0 || passRows >= 1024 || sampledRows >= 64) return;
-    if (InterlockedIncrement(&sampledRows) > 64) return;
+    if (!tracePasses || context != gameContext.load(std::memory_order_acquire) || frames < 1 || frames % traceInterval != 0 || passRows >= static_cast<LONG>(traceLimit) || sampledRows >= static_cast<LONG>(tracePerFrame)) return;
+    if (InterlockedIncrement(&sampledRows) > static_cast<LONG>(tracePerFrame)) return;
     uintptr_t address = reinterpret_cast<uintptr_t>(caller), base = reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr));
     uintptr_t rva = address >= base && address - base < 0x8657000 ? address - base : 0;
     char line[32768];
     if (TwinKartRender::DescribePass(context, compute, static_cast<unsigned>(frames), rva, line, sizeof(line))) {
-        if (InterlockedIncrement(&passRows) <= 1024) Log(line);
+        if (InterlockedIncrement(&passRows) <= static_cast<LONG>(traceLimit)) Log(line);
     }
 }
 void STDMETHODCALLTYPE OnDraw(ID3D11DeviceContext* context, UINT a, UINT b) {
@@ -328,6 +329,12 @@ bool Patch(void** table, unsigned slot, void* replacement, void** original) {
     void* found = InterlockedCompareExchangePointer(reinterpret_cast<PVOID volatile*>(table+slot), replacement, expected);
     DWORD ignored; VirtualProtect(table+slot, sizeof(void*), old, &ignored); return found == expected;
 }
+unsigned EnvironmentNumber(const wchar_t* name,unsigned fallback,unsigned minimum,unsigned maximum) {
+    wchar_t text[16]{}; DWORD length=GetEnvironmentVariableW(name,text,ARRAYSIZE(text));
+    if(!length || length>=ARRAYSIZE(text)) return fallback;
+    wchar_t* end=nullptr; unsigned long value=wcstoul(text,&end,10);
+    return end && !*end && value>=minimum && value<=maximum?static_cast<unsigned>(value):fallback;
+}
 DWORD WINAPI Worker(void*) {
     wchar_t path[32768]; DWORD n = GetEnvironmentVariableW(L"TWIN_KART_RENDER_LOG", path, ARRAYSIZE(path));
     if (!n || n >= ARRAYSIZE(path) || !Allowed()) return 1;
@@ -337,6 +344,9 @@ DWORD WINAPI Worker(void*) {
     wchar_t passFlag[8]{};
     GetEnvironmentVariableW(L"TWIN_KART_RENDER_PASSES", passFlag, ARRAYSIZE(passFlag));
     tracePasses = passFlag[0] == L'1';
+    traceInterval=EnvironmentNumber(L"TWIN_KART_RENDER_TRACE_INTERVAL",120,30,3600);
+    traceLimit=EnvironmentNumber(L"TWIN_KART_RENDER_TRACE_LIMIT",1024,64,16384);
+    tracePerFrame=EnvironmentNumber(L"TWIN_KART_RENDER_TRACE_PER_FRAME",64,8,256);
     wchar_t modulePath[32768]{};
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_MODULE", modulePath, ARRAYSIZE(modulePath));
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_CACHE", dlssCache, ARRAYSIZE(dlssCache));
