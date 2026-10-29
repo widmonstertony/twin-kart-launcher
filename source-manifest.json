@@ -9,7 +9,7 @@
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "4d9de0003f30d67bed0e0cf1f69075ece46f6f442b4d3ee70091bd91c01ba49c"
+    "sha256": "46b6697c1d26fa237c57afe1353032c8a2ba40daceedf9f26b570cfa8c039959"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -193,7 +193,7 @@
   },
   {
     "file": "native/DriftRaceBridge.cpp",
-    "sha256": "a93e10860c9cc070bcce9fd7f2531b5bee001f7038847d5cc931c1254508bba6"
+    "sha256": "3f1e1346377cc6d76f2c7aeb8df5788ab5579a78bf899341d2bcc45e75e22a68"
   },
   {
     "file": "native/DriftRenderProbe.cpp",
@@ -242,6 +242,10 @@
   {
     "file": "native/NativePresentation.h",
     "sha256": "a873e745e801d063c01ff87b4c747aa6a56a90ea9ea26acd0863df74de3ae229"
+  },
+  {
+    "file": "native/NativeRacePhase.h",
+    "sha256": "d09f56b83656e190764dde559b6400bf2dda4159e9f1b1de7fce2a50d6ba497b"
   },
   {
     "file": "native/NativeTemporalContract.h",
@@ -317,15 +321,15 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "b527c5c552bdbf9fe9feb662b3013922b611297ceb5d104968c8ef9e8cbc06df"
+    "sha256": "00c14ceb76cdea78ee072458437fa121e8a8a4b214e1602834da477deae0deb0"
   },
   {
     "file": "README.md",
-    "sha256": "747a1ffed3025a6615bb01f81381fd82da84fc7232c48a2d71a0ba23135eb0fc"
+    "sha256": "a254650a1d3f6bb7a398c3630f2a97f6228a67dd7b45ac0963324639da1b677f"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
-    "sha256": "fe3b2907eb0d055adf0d4b043937efe62fda87d7dc6e0622da4f080f9b15c741"
+    "sha256": "86d73c468467bd096c01a242ca08a8eff832f5ac8e1fea3f7e444515a9a8fcfa"
   },
   {
     "file": "src/ClientDiscovery.cs",
@@ -449,7 +453,7 @@
   },
   {
     "file": "tests/OwnedCodePatchTests.cpp",
-    "sha256": "3740dc1b37b8048d38fa01c7af24973ff576d3097e3d87a5a18c6138c2a4b3df"
+    "sha256": "11e603e55d70a42e01c96fdfaf240e59664b287899884a5fbe662935664f9793"
   },
   {
     "file": "tests/OwnedGameStartupTests.cs",

@@ -4,6 +4,7 @@
 #include <stdexcept>
 #include "../native/LocalRaceRuntime.h"
 #include "../native/RenderActivity.h"
+#include "../native/NativeRacePhase.h"
 using Function=int(__fastcall*)(int);
 Function originalEntry=nullptr;
 int __fastcall Replacement(int value) { return value+10; }
@@ -40,8 +41,15 @@ int main() {
         Need(!activity.Active(2000),"Unpublished scene treated as racing");activity.Publish(true,2000);
         Need(activity.Active(2000) && activity.Active(3000) && !activity.Active(3001) && !activity.Active(1999),"Stale/loading/invalid-clock scene activity accepted");
         activity.Publish(false,2500);Need(!activity.Active(2500),"Paused/menu scene retained racing state");
+        int phaseClass=0,transitionClass=0;
+        auto phase=[&](const void* type,unsigned long long name,bool paused=false){return TwinKartGraphics::ClassifyNativeRacePhase(type,&phaseClass,name,100,200,paused);};
+        Need(phase(&phaseClass,100) && phase(&phaseClass,200),"Native BeginRace/retirement phase rejected");
+        Need(!phase(&transitionClass,100),"A transition rule object was accepted as CurrentPhase");
+        Need(!phase(&phaseClass,300) && !phase(&phaseClass,0) && !phase(&phaseClass,100,true) && !phase(nullptr,100),"Menu/countdown/result/invalid/paused scene accepted");
+        Need(!TwinKartGraphics::ClassifyNativeRacePhase(&phaseClass,&phaseClass,100,100,100,false) &&
+             !TwinKartGraphics::ClassifyNativeRacePhase(&phaseClass,&phaseClass,100,100,0,false),"Uninitialized/aliased native FName globals accepted");
         VirtualFree(code,0,MEM_RELEASE);
-        puts("PASS real x64 call redirection, original trampoline execution, exact-byte rejection, rollback and local AI slot boundaries. No game started.");
+        puts("PASS real x64 call redirection, trampoline/rollback, AI slot boundaries, native phase-name versus transition-class regression, paused/menu/countdown/result rejection and stale activity expiry. No game started.");
         return 0;
     } catch(const std::exception& error) { fprintf(stderr,"%s\n",error.what()); return 1; }
 }

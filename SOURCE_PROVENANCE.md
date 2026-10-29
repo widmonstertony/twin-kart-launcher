@@ -115,6 +115,8 @@ Before any public push, review the staged file list and scan **that staged tree*
 
 ## Audit result on 2026-10-28
 
+The original `NativeRacePhase.h` classifier uses interface facts independently derived from the local PC client's property type/offset metadata, phase-construction call sites and FName initializers. It includes no vendor function body, native capture, asset or reference launcher implementation. Synthetic fixtures explicitly distinguish a phase object from its transition rule; they do not establish live phase or frame-generation acceptance.
+
 The HDR temporal adapter, input/output rectangle and exposure validator, raw/resolved guide conversion, camera history revisions and WARP boundary fixtures are original code written in this project. Local captures were used only to inspect layouts and reject false 1:1 SR claims. No captured shader instructions, game textures, native function bodies or reference launcher code are published. The fixture consumer writes a known pattern; it is explicitly not NVIDIA output. Native shader hashes and interface addresses select the supported external build and are not a substitute for game acceptance.
 
 The separate original offscreen temporal SR probe dynamically calls our hash-checked D3D11 consumer with synthetic HDR/color/depth/motion resources. Real NVIDIA initialization/evaluation and GPU output readback passed. It does not create a window, swapchain or game and does not treat synthetic guides as native game evidence. The external SDK/runtime remains excluded.

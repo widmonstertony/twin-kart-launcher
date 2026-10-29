@@ -12,6 +12,7 @@
 #include "RaceControl.h"
 #include "LocalRaceRuntime.h"
 #include "RenderActivity.h"
+#include "NativeRacePhase.h"
 
 // Original game-thread bridge for exact-build native race preparation work.
 // Track lookup and an opt-in native local-host candidate. A travel request is
@@ -62,17 +63,22 @@ void UpdateRenderActivity(void*) {
                 BYTE* state=*reinterpret_cast<BYTE**>(world+0x120);
                 if(TwinKartLocalRace::Live(state)) {
                     using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
-                    auto phaseType=reinterpret_cast<Type>(image+0x23cc5f0)();
+                    auto phaseType=reinterpret_cast<Type>(image+TwinKartGraphics::RacePhaseComponentGetter)();
                     auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(state))[0x620/8]);
                     BYTE* component=find(state,phaseType);
                     if(TwinKartLocalRace::Live(component) && *reinterpret_cast<void**>(component+0xa0)==state) {
-                        // Exact PC reflected CurrentPhase offset, not an iOS
-                        // address/layout assumption. No phase is advanced here.
-                        BYTE* phase=*reinterpret_cast<BYTE**>(component+0x110);
-                        auto racingType=reinterpret_cast<Type>(image+0x23c04a0)();
+                        // CurrentPhase is a UPhase. BeginRace is its native
+                        // FName, while UTransition_BeginRace is a rule object
+                        // inside it. Comparing those two classes never matches.
+                        BYTE* phase=*reinterpret_cast<BYTE**>(component+TwinKartGraphics::CurrentPhaseOffset);
+                        auto phaseClass=reinterpret_cast<Type>(image+TwinKartGraphics::PhaseObjectGetter)();
                         using Paused=bool(__fastcall*)(void*);
-                        active=TwinKartLocalRace::Live(phase) && *reinterpret_cast<void**>(phase+0x10)==racingType &&
-                            !reinterpret_cast<Paused>(image+0x4011c70)(world);
+                        if(TwinKartLocalRace::Live(phase))active=TwinKartGraphics::ClassifyNativeRacePhase(
+                            *reinterpret_cast<void**>(phase+0x10),phaseClass,
+                            *reinterpret_cast<unsigned long long*>(phase+TwinKartGraphics::PhaseNameOffset),
+                            *reinterpret_cast<unsigned long long*>(image+TwinKartGraphics::BeginRaceNameRva),
+                            *reinterpret_cast<unsigned long long*>(image+TwinKartGraphics::RetireCountdownNameRva),
+                            reinterpret_cast<Paused>(image+0x4011c70)(world));
                     }
                 }
             }

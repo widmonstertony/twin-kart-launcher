@@ -2,6 +2,7 @@
 
 ## Unreleased / 后续开发
 
+- Fix the native FG race-state gate: CurrentPhase is a UPhase containing transition rules, not a UTransition_BeginRace instance. Compare the independently verified native BeginRace/RetireCountdown FNames and retain pause/stale-state rejection. Source regression only; no game or generated-frame acceptance. / 修复将比赛阶段误当转换规则的判断错误；使用已核对的原生阶段名称，保留暂停与过期快照保护，未启动游戏验收。
 - Add a hash-checked offscreen D3D11 SR probe. Two actual NVIDIA HDR evaluations and GPU readback pass at 640×360 → 1280×720, with 921,600 finite nonzero output pixels and preserved native pipeline state. Synthetic input only; no window/Present/game and no native temporal-source or quality acceptance. / 新增 NVIDIA D3D11 超分实际计算与离屏读回验证，合成输入检查通过，不冒充游戏验收。
 - Add an independently authored pre-AA HDR temporal SR candidate with exact shader selection, reflected compute-group validation, padded input/output rectangles, native jitter/pre-exposure and original D3D11 NGX evaluation. Actual WARP boundary tests cover cropped conversion, exact output writes, state restoration and failure fallback with a synthetic consumer; actual in-game upscaling remains unverified. / 新增抗锯齿前 HDR 时域超分候选与 GPU 接口测试，未将合成测试当作游戏验收。
 - Reset reconstruction history on cockpit controls/head-anchor changes, camera cuts, missed frames and respawns; correct FG jitter for resolved inputs. Defer resize reconfiguration to the render owner, check graphics files/hashes before config writes and gate all requested graphics startup on hook readiness. / 补齐视角与相机变化的时域重置，修正插帧抖动、分辨率切换和启动依赖检查。
