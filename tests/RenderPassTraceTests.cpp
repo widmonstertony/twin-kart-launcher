@@ -40,6 +40,8 @@ int main() {
         ComPtr<ID3D11PixelShader> pixel; ComPtr<ID3D11ComputeShader> compute;
         Check(device->CreatePixelShader(pixelCode->GetBufferPointer(),pixelCode->GetBufferSize(),nullptr,&pixel));
         Check(device->CreateComputeShader(computeCode->GetBufferPointer(),computeCode->GetBufferSize(),nullptr,&compute));
+        unsigned groupX=0,groupY=0,groupZ=0;
+        Need(TwinKartRender::ShaderThreadGroup(compute.Get(),groupX,groupY,groupZ) && groupX==1 && groupY==1 && groupZ==1,"Actual native shader group metadata missing");
         ComPtr<ID3D11VertexShader> vertex; Check(device->CreateVertexShader(vertexCode->GetBufferPointer(),vertexCode->GetBufferSize(),nullptr,&vertex));
         ID3D11RenderTargetView* boundTarget=rtv.Get(); context->OMSetRenderTargets(1,&boundTarget,nullptr);
         ID3D11ShaderResourceView* boundInput=srv.Get(); context->PSSetShaderResources(127,1,&boundInput);

@@ -112,6 +112,19 @@ unsigned FrameGeneration::BeginFrame(unsigned index,const CameraFrame& camera) {
     constants.motionVectorsJittered=sl::Boolean::eFalse; constants.orthographicProjection=sl::Boolean::eFalse; constants.motionVectorsDilated=sl::Boolean::eFalse;
     return Code(impl->constants(constants,*impl->token,impl->viewport));
 }
+bool FrameGeneration::AdoptInitialRenderThread() {
+    if(!impl->bound || impl->token)return impl->Owner();
+    impl->thread=GetCurrentThreadId();return true;
+}
+unsigned FrameGeneration::SetActive(bool enabled) {
+    if(!impl->Owner() || !impl->configured)return Invalid;
+    auto desired=enabled?sl::DLSSGMode::eOn:sl::DLSSGMode::eOff;
+    if(impl->options.mode==desired)return 0;
+    auto changed=impl->options;changed.mode=desired;
+    auto result=impl->setOptions(impl->viewport,changed);
+    if(result==sl::Result::eOk)impl->options=changed;
+    return Code(result);
+}
 unsigned FrameGeneration::Marker(FrameStage stage) {
     if(!impl->Owner()) return WrongThread;
     if(!impl->token || !impl->marker) return Invalid;

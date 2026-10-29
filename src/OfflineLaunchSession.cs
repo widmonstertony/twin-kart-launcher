@@ -6,6 +6,7 @@ using System.Linq;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
 
 namespace TwinKartLauncher
@@ -30,9 +31,11 @@ namespace TwinKartLauncher
         public string ExternalSdkProvenance { get; set; }
         public bool EnableExperimentalRaceHost { get; set; }
         public string TrackReportPath { get; set; }
+        public OfflineGraphicsOptions Graphics { get; set; }
     }
     public static class OfflineLaunchSession
     {
+        [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool QueryFullProcessImageName(IntPtr process,uint flags,StringBuilder path,ref uint length);
         static readonly JavaScriptSerializer Json=new JavaScriptSerializer { MaxJsonLength=1024*1024 };
         static readonly object cameraGate=new object();
         static string activeCameraControl;
@@ -79,7 +82,10 @@ namespace TwinKartLauncher
         static void StopOwned(Process process, string path)
         {
             if(process==null || process.HasExited) return;
-            if(!String.Equals(process.MainModule.FileName,path,StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Refusing to stop a different process.");
+            // This also works before primary-thread loader initialization,
+            // when a suspended process may have no PEB module enumeration yet.
+            var image=new StringBuilder(32768);uint length=(uint)image.Capacity;
+            if(!QueryFullProcessImageName(process.Handle,0,image,ref length) || !String.Equals(image.ToString(),path,StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Refusing to stop a different process.");
             process.Kill(); if(!process.WaitForExit(10000)) throw new TimeoutException("Owned process did not stop.");
         }
         public static string Run(string manifestPath, Action<string> progress, CancellationToken cancellation, CockpitSettings cockpit=null)
@@ -91,6 +97,13 @@ namespace TwinKartLauncher
             if(ProfileStore.Fingerprint(game)!=manifest.GameSha256 || ProfileStore.Fingerprint(backend)!=manifest.GatewaySha256) throw new InvalidDataException("Game/backend build differs from manifest.");
             if(manifest.ClientFiles!=null) foreach(var companion in manifest.ClientFiles)
                 if(ProfileStore.Fingerprint(companion.Path)!=companion.Sha256) throw new InvalidDataException("Client dependency differs from manifest.");
+            if(manifest.Modules!=null)foreach(var module in manifest.Modules)
+                if(module==null || ProfileStore.Fingerprint(module.Path)!=module.Sha256)throw new InvalidDataException("Original module differs from manifest.");
+            if(manifest.Graphics!=null)manifest.Graphics.ValidateFiles(manifest.Environment);
+            if(manifest.Graphics!=null && manifest.Graphics.NeedsRenderer && (manifest.Modules==null || !manifest.Modules.Any(m=>String.Equals(Path.GetFileName(m.Path),"TwinKartDriftRenderProbe.dll",StringComparison.OrdinalIgnoreCase))))
+                throw new InvalidDataException("Requested graphics integration requires the original render adapter module.");
+            if(manifest.Graphics!=null && manifest.Graphics.FrameGeneration && (manifest.Modules==null || !manifest.Modules.Any(m=>String.Equals(Path.GetFileName(m.Path),"TwinKartDriftRaceBridge.dll",StringComparison.OrdinalIgnoreCase))))
+                throw new InvalidDataException("Frame generation requires the original race-state bridge for menu/loading/pause gating.");
             if(!Directory.Exists(config)) throw new DirectoryNotFoundException("Game config directory unavailable.");
             if(manifest.ServerSection==null || !manifest.ServerSection.ContainsKey("ServerAddrs") || !manifest.ServerSection.ContainsKey("PreAuthKey")) throw new ArgumentException("External server route configuration required.");
             foreach(var pair in manifest.ServerSection)
@@ -137,8 +150,18 @@ namespace TwinKartLauncher
                         cancellation.ThrowIfCancellationRequested();
                         string gameIni=Path.Combine(config,"Game.ini");
                         File.WriteAllBytes(gameIni,Route(File.Exists(gameIni)?File.ReadAllBytes(gameIni):null,manifest.ServerSection));
+                        if(manifest.Graphics!=null && (manifest.Graphics.SuperResolution || manifest.Graphics.FrameGeneration)) {
+                            string userIni=Path.Combine(config,"GameUserSettings.ini");
+                            File.WriteAllBytes(userIni,manifest.Graphics.RouteUserSettings(File.Exists(userIni)?File.ReadAllBytes(userIni):null));
+                        }
                         var launch=new ProcessStartInfo(game,manifest.GameArguments??"") { UseShellExecute=false,WorkingDirectory=Path.GetDirectoryName(game) };
                         if(manifest.Environment!=null) foreach(var variable in manifest.Environment) launch.EnvironmentVariables[variable.Key]=variable.Value;
+                        if(manifest.Graphics!=null) {
+                            var graphicsEnvironment=new Dictionary<string,string>();
+                            foreach(string key in launch.EnvironmentVariables.Keys)graphicsEnvironment[key]=launch.EnvironmentVariables[key];
+                            manifest.Graphics.ApplyEnvironment(graphicsEnvironment,run);
+                            foreach(var variable in graphicsEnvironment)launch.EnvironmentVariables[variable.Key]=variable.Value;
+                        }
                         launch.EnvironmentVariables["TWIN_KART_ALLOWED_GAME"]=game;
                         launch.EnvironmentVariables["TWIN_KART_CAMERA_LOG"]=Path.Combine(run,"camera.jsonl");
                         launch.EnvironmentVariables["TWIN_KART_CAMERA_CONTROL"]=cameraControl;
@@ -149,9 +172,23 @@ namespace TwinKartLauncher
                         launch.EnvironmentVariables["TWIN_KART_RENDER_LOG"]=Path.Combine(run,"render.jsonl");
                         launch.EnvironmentVariables["TWIN_KART_RENDER_PASSES"]="1";
                         launch.EnvironmentVariables["TWIN_KART_DLSS_CACHE"]=Path.Combine(run,"ngx-cache"); Directory.CreateDirectory(Path.Combine(run,"ngx-cache"));
-                        gameProcess=Process.Start(launch); report["game_pid"]=gameProcess.Id;
-                        Save(Path.Combine(run,"report.json"),report);
-                        if(manifest.Modules!=null) foreach(var module in manifest.Modules) OwnedGameModule.Load(gameProcess,game,module.Path,module.Sha256);
+                        if(manifest.Graphics!=null && manifest.Graphics.NeedsRenderer) {
+                            string readyName="Local\\TwinKartRenderReady-"+Guid.NewGuid().ToString("N");
+                            using(var graphicsReady=new EventWaitHandle(false,EventResetMode.ManualReset,readyName)) {
+                                launch.EnvironmentVariables["TWIN_KART_RENDER_READY_EVENT"]=readyName;
+                                using(var startup=OwnedGameStartup.Create(launch)) {
+                                    gameProcess=startup.Process;report["game_pid"]=gameProcess.Id;Save(Path.Combine(run,"report.json"),report);
+                                    if(manifest.Modules!=null)foreach(var module in manifest.Modules)startup.Load(module.Path,module.Sha256);
+                                    if(!graphicsReady.WaitOne(15000))throw new TimeoutException("Graphics hooks were not ready before client startup; the owned process was not resumed.");
+                                    cancellation.ThrowIfCancellationRequested();startup.Resume();
+                                    report["graphics_hooks_before_primary_thread"]=true;
+                                }
+                            }
+                        } else {
+                            gameProcess=Process.Start(launch); report["game_pid"]=gameProcess.Id;
+                            Save(Path.Combine(run,"report.json"),report);
+                            if(manifest.Modules!=null) foreach(var module in manifest.Modules) OwnedGameModule.Load(gameProcess,game,module.Path,module.Sha256);
+                        }
                         if(manifest.Modules!=null && manifest.Modules.Any(module=>String.Equals(Path.GetFileName(module.Path),"TwinKartDriftCamera.dll",StringComparison.OrdinalIgnoreCase)))
                             lock(cameraGate) activeCameraControl=cameraControl;
                         if(manifest.EnableExperimentalRaceHost && manifest.Modules!=null && manifest.Modules.Any(module=>String.Equals(Path.GetFileName(module.Path),"TwinKartDriftRaceBridge.dll",StringComparison.OrdinalIgnoreCase)))

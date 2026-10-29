@@ -16,7 +16,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed.' }
 $auditSources = @((Join-Path $PSScriptRoot 'src\Profiles.cs'), (Join-Path $PSScriptRoot 'src\ClientDiscovery.cs'), (Join-Path $PSScriptRoot 'tools\InspectClient.cs'))
 & $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ "/out:$buildDir\TwinKartAudit.exe" /r:System.Web.Extensions.dll $auditSources
 if ($LASTEXITCODE -ne 0) { throw 'Client audit compilation failed.' }
-$sessionSources = @('Profiles.cs','OwnedGameModule.cs','OfflineLaunchSession.cs') | ForEach-Object { Join-Path $PSScriptRoot ('src\'+$_) }
+$sessionSources = @('Profiles.cs','OwnedGameModule.cs','OwnedGameStartup.cs','OfflineGraphicsOptions.cs','OfflineLaunchSession.cs') | ForEach-Object { Join-Path $PSScriptRoot ('src\'+$_) }
 $sessionSources += Join-Path $PSScriptRoot 'tools\RunSession.cs'
 & $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ "/out:$buildDir\TwinKartSession.exe" /r:System.Web.Extensions.dll $sessionSources
 if ($LASTEXITCODE -ne 0) { throw 'Original session runner compilation failed.' }

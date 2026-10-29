@@ -22,9 +22,15 @@ int wmain(int argc,wchar_t** argv) {
         else { swprintf_s(path,L"CockpitControlTests-%lu.control",GetCurrentProcessId()); WriteControl(path,"1 -30 140 -10 90 1 12 8\n"); }
         wcscpy_s(controlPath,path); ReadSettings();
         Need(enabled==1 && settings.headAnchor==1,"Managed/native initial control interoperability failed");
+        auto revision=TwinKartCameraHistoryRevision();
         enabled=0; ReadSettings(); Need(enabled==0,"Unchanged file undid an F6 toggle");
+        Need(TwinKartCameraHistoryRevision()==revision,"Unchanged file reset temporal history every poll");
         WriteControl(path,"1 -30 140 -10 90 1 12 8\n"); ReadSettings();
         Need(enabled==1,"Reapplying identical GUI settings did not override an F6 toggle");
+        Need(TwinKartCameraHistoryRevision()>revision,"GUI camera mode change did not publish reset");
+        revision=TwinKartCameraHistoryRevision();
+        WriteControl(path,"1 -30 140 -10 90 1 12 8\n"); ReadSettings();
+        Need(TwinKartCameraHistoryRevision()==revision,"Identical effective settings reset history unnecessarily");
         WriteControl(path,"0 -30 140 -10 90 1 12 8\n"); ReadSettings(); Need(enabled==0,"Explicit third-person control failed");
         WriteControl(path,"1 -30 140 -10 150 1 12 8\n"); ReadSettings(); Need(enabled==0 && settings.fov==90,"Invalid control partially applied");
         DeleteFileW(path);

@@ -12,6 +12,8 @@
 #include "RenderPassTrace.h"
 #include "TemporalCapture.h"
 #include "NativeNeuralPass.h"
+#include "NativeTemporalPass.h"
+#include "NativePresentation.h"
 
 // First-party resource observer with an opt-in, exact-build NR adapter.
 // SR and generated-frame presentation remain separate unfinished integrations.
@@ -111,7 +113,9 @@ void STDMETHODCALLTYPE OnIndexedInstances(ID3D11DeviceContext* context, UINT a, 
 }
 void STDMETHODCALLTYPE OnDispatch(ID3D11DeviceContext* context, UINT a, UINT b, UINT c) {
     if(context==gameContext.load(std::memory_order_acquire)) TwinKartGraphics::CaptureTemporalInputs(context,static_cast<unsigned>(frames));
-    TracePass(context, true, _ReturnAddress()); auto original = Hooks(context).dispatch; if (original) original(context,a,b,c);
+    TracePass(context, true, _ReturnAddress());
+    bool replaced=context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeTemporalPass(context,static_cast<unsigned>(frames),a,b,c);
+    auto original = Hooks(context).dispatch; if (original && !replaced) original(context,a,b,c);
     if(context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnIndexedIndirect(ID3D11DeviceContext* context, ID3D11Buffer* args, UINT offset) {
@@ -287,11 +291,15 @@ bool HookContext(ID3D11DeviceContext* context) {
     return installed;
 }
 HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT flags) {
-    bool nrBackbuffer=false;LONG nrRenderFrame=frames;
+    // Streamline's private D3D12 chain can reach the shared native DXGI vtable.
+    // Its nested Present must not increment the D3D11 frame or run hooks again.
+    if(TwinKartGraphics::InsideNativePresentation())return present(swap,interval,flags);
+    bool nrBackbuffer=false,srBackbuffer=false;LONG nrRenderFrame=frames;
     if(!(flags&DXGI_PRESENT_TEST) && nrLastSubmitted==nrRenderFrame) {
         ID3D11Texture2D* texture=nullptr;
         if(SUCCEEDED(swap->GetBuffer(0,__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&texture)))) {
-            nrBackbuffer=TwinKartGraphics::NativeNeuralOutputMatches(texture,static_cast<unsigned>(nrRenderFrame));texture->Release();
+            nrBackbuffer=TwinKartGraphics::NativeNeuralOutputMatches(texture,static_cast<unsigned>(nrRenderFrame));
+            srBackbuffer=TwinKartGraphics::NativeSuperResolutionOutputMatches(texture,static_cast<unsigned>(nrRenderFrame));texture->Release();
         }
     }
     if (!(flags & DXGI_PRESENT_TEST)) {
@@ -328,8 +336,8 @@ HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT fl
             DXGI_SWAP_CHAIN_DESC desc{}; swap->GetDesc(&desc);
             char line[512];
             double elapsed = lastPresent.QuadPart ? 1000.0*(now.QuadPart-lastPresent.QuadPart)/frequency.QuadPart : 0;
-            sprintf_s(line, "{\"event\":\"real_dxgi_present\",\"frame\":%ld,\"width\":%u,\"height\":%u,\"dxgi_format\":%u,\"last_interval_ms\":%.4f,\"dlss_sr_evaluated\":false,\"generated_frames\":0,\"nr_pre_hud_copy_render_frame\":%ld,\"nr_final_composite\":false}\r\n",
-                frame, desc.BufferDesc.Width, desc.BufferDesc.Height, desc.BufferDesc.Format, elapsed,nrLastSubmitted);
+            sprintf_s(line, "{\"event\":\"real_dxgi_present\",\"frame\":%ld,\"width\":%u,\"height\":%u,\"dxgi_format\":%u,\"last_interval_ms\":%.4f,\"dlss_sr_evaluated\":%s,\"generated_frames\":null,\"nr_pre_hud_copy_render_frame\":%ld,\"nr_final_composite\":false}\r\n",
+                frame, desc.BufferDesc.Width, desc.BufferDesc.Height, desc.BufferDesc.Format, elapsed,srBackbuffer?"true":"false",nrLastSubmitted);
             Log(line);
             ID3D11Texture2D* back = nullptr;
             if (SUCCEEDED(swap->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back)))) {
@@ -338,7 +346,10 @@ HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT fl
         }
         lastPresent = now;
     }
-    HRESULT presented=present(swap, interval, flags);
+    HRESULT presented=TwinKartGraphics::IsNativePresentation(swap)?TwinKartGraphics::PresentNativePresentation(swap,interval,flags,static_cast<unsigned>(nrRenderFrame)):present(swap,interval,flags);
+    if(srBackbuffer && (nrRenderFrame%120==0 || FAILED(presented))) {
+        char line[320];sprintf_s(line,"{\"event\":\"sr_native_backbuffer_present\",\"render_frame\":%ld,\"present_hresult\":%ld,\"same_output_resource\":true,\"quality_verified\":false}\r\n",nrRenderFrame,presented);Log(line);
+    }
     if(!(flags&DXGI_PRESENT_TEST)) TwinKartGraphics::FinishNativeNeuralFrame(static_cast<unsigned>(nrRenderFrame));
     if(nrBackbuffer && (nrRenderFrame%120==0 || FAILED(presented))) {
         char line[320];sprintf_s(line,"{\"event\":\"nr_native_backbuffer_present\",\"render_frame\":%ld,\"present_hresult\":%ld,\"same_output_resource\":true,\"quality_verified\":false}\r\n",nrRenderFrame,presented);Log(line);
@@ -365,6 +376,9 @@ DWORD WINAPI Worker(void*) {
     output = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr, CREATE_NEW, 0, nullptr);
     if (output == INVALID_HANDLE_VALUE) return 2;
     QueryPerformanceFrequency(&frequency);
+    bool presentationReady=TwinKartGraphics::ConfigureNativePresentation(OnPresent,Log);
+    wchar_t fgRequested[8]{};GetEnvironmentVariableW(L"TWIN_KART_FRAME_GENERATION",fgRequested,ARRAYSIZE(fgRequested));
+    bool neuralReady=false,temporalReady=false;
     wchar_t passFlag[8]{};
     GetEnvironmentVariableW(L"TWIN_KART_RENDER_PASSES", passFlag, ARRAYSIZE(passFlag));
     tracePasses = passFlag[0] == L'1';
@@ -382,13 +396,24 @@ DWORD WINAPI Worker(void*) {
     DWORD neuralLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_MODULE",neuralModule,ARRAYSIZE(neuralModule));
     DWORD providerLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_PROVIDER",neuralProvider,ARRAYSIZE(neuralProvider));
     DWORD cacheLength=GetEnvironmentVariableW(L"TWIN_KART_DLSS_CACHE",neuralCache,ARRAYSIZE(neuralCache));
-    if(neuralLength && neuralLength<ARRAYSIZE(neuralModule) && providerLength && providerLength<ARRAYSIZE(neuralProvider) && cacheLength && cacheLength<ARRAYSIZE(neuralCache))
-        Log(TwinKartGraphics::ConfigureNativeNeuralPass(neuralModule,neuralProvider,neuralCache,Log)?"{\"event\":\"nr_native_pass_configured\",\"game_acceptance\":false}\r\n":"{\"event\":\"nr_native_pass_configuration_rejected\"}\r\n");
+    if(neuralLength && neuralLength<ARRAYSIZE(neuralModule) && providerLength && providerLength<ARRAYSIZE(neuralProvider) && cacheLength && cacheLength<ARRAYSIZE(neuralCache)) {
+        neuralReady=TwinKartGraphics::ConfigureNativeNeuralPass(neuralModule,neuralProvider,neuralCache,Log);
+        Log(neuralReady?"{\"event\":\"nr_native_pass_configured\",\"game_acceptance\":false}\r\n":"{\"event\":\"nr_native_pass_configuration_rejected\"}\r\n");
+    }
     wchar_t modulePath[32768]{};
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_MODULE", modulePath, ARRAYSIZE(modulePath));
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_CACHE", dlssCache, ARRAYSIZE(dlssCache));
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_PROVIDER", dlssProvider, ARRAYSIZE(dlssProvider));
-    if (modulePath[0] && dlssCache[0] && dlssProvider[0]) {
+    wchar_t srFlag[8]{};GetEnvironmentVariableW(L"TWIN_KART_SUPER_RESOLUTION",srFlag,ARRAYSIZE(srFlag));
+    if(!wcscmp(srFlag,L"1")) {
+        wchar_t moduleSha[65]{};char sha[65]{};
+        DWORD length=GetEnvironmentVariableW(L"TWIN_KART_DLSS_MODULE_SHA256",moduleSha,ARRAYSIZE(moduleSha));
+        if(length==64)for(unsigned i=0;i<64;++i)sha[i]=moduleSha[i]<128?static_cast<char>(moduleSha[i]):'!';
+        temporalReady=TwinKartGraphics::ConfigureNativeTemporalPass(modulePath,sha,dlssProvider,dlssCache,Log);
+        Log(temporalReady?
+            "{\"event\":\"sr_native_temporal_pass_configured\",\"game_acceptance\":false}\r\n":
+            "{\"event\":\"sr_native_temporal_pass_rejected\"}\r\n");
+    } else if (modulePath[0] && dlssCache[0] && dlssProvider[0]) {
         HMODULE module = LoadLibraryExW(modulePath, nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
         if (module) {
             initializeDlss = reinterpret_cast<DlssInitialize>(GetProcAddress(module, "TwinKartDlssInitialize"));
@@ -410,8 +435,19 @@ DWORD WINAPI Worker(void*) {
         void** scTable=*reinterpret_cast<void***>(swap);
         bool a=Patch(scTable,8,reinterpret_cast<void*>(OnPresent),reinterpret_cast<void**>(&present));
         bool b=HookContext(context);
-        HookDevice(device);
-        Log(a && b ? "{\"event\":\"observer_installed\",\"is_dlss_implementation\":false}\r\n" : "{\"event\":\"observer_partial_install\"}\r\n");
+        bool c=HookDevice(device);
+        Log(a && b && c ? "{\"event\":\"observer_installed\",\"is_dlss_implementation\":false}\r\n" : "{\"event\":\"observer_partial_install\"}\r\n");
+        bool requestedReady=(wcscmp(fgRequested,L"1") || presentationReady) &&
+            (!neuralLength || neuralReady) && (wcscmp(srFlag,L"1") || temporalReady);
+        if(a && b && c && requestedReady) {
+            wchar_t readyName[128]{};
+            DWORD readyLength=GetEnvironmentVariableW(L"TWIN_KART_RENDER_READY_EVENT",readyName,ARRAYSIZE(readyName));
+            constexpr wchar_t prefix[]=L"Local\\TwinKartRenderReady-";
+            if(readyLength && readyLength<ARRAYSIZE(readyName) && !wcsncmp(readyName,prefix,ARRAYSIZE(prefix)-1)) {
+                HANDLE ready=OpenEventW(EVENT_MODIFY_STATE,FALSE,readyName);
+                if(ready){SetEvent(ready);CloseHandle(ready);}
+            }
+        }
     } else Log("{\"event\":\"observer_device_failed\"}\r\n");
     if (context) context->Release(); if (device) device->Release(); if (swap) swap->Release();
     if (window) DestroyWindow(window);

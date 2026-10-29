@@ -13,6 +13,7 @@ namespace TwinKartRender {
 namespace {
 const GUID ShaderDigest = {0x95df261a,0x7bbc,0x4197,{0xa2,0x20,0x42,0x44,0x71,0x96,0x52,0xac}};
 const GUID ShaderInterface = {0x813a4b4d,0xaae6,0x46c3,{0xa6,0x62,0x99,0xfa,0xe1,0xc8,0x55,0x4d}};
+const GUID ThreadGroup = {0xf4573c63,0xc815,0x4998,{0x96,0x76,0x15,0x9a,0xdb,0xc0,0x75,0xcb}};
 struct Digest { unsigned version; unsigned long long bytes; BYTE hash[32]; };
 struct Writer {
     char* output; size_t capacity, used; bool failed;
@@ -54,6 +55,11 @@ bool TagInterface(ID3D11DeviceChild* shader,const void* bytecode,size_t length) 
     ID3D11ShaderReflection* reflection=nullptr;
     if(FAILED(D3DReflect(bytecode,length,__uuidof(ID3D11ShaderReflection),reinterpret_cast<void**>(&reflection)))) return false;
     D3D11_SHADER_DESC desc{}; bool success=SUCCEEDED(reflection->GetDesc(&desc));
+    if(success && D3D11_SHVER_GET_TYPE(desc.Version)==D3D11_SHVER_COMPUTE_SHADER) {
+        unsigned group[3]{};
+        if(reflection->GetThreadGroupSize(group,group+1,group+2) && group[0] && group[1] && group[2])
+            shader->SetPrivateData(ThreadGroup,sizeof(group),group);
+    }
     char text[16384]{}; Writer writer{text,sizeof(text),0,false};
     if(success) {
         writer.Add("{\"bindings\":["); bool comma=false;
@@ -188,6 +194,13 @@ bool ShaderHash(ID3D11DeviceChild* shader,char (&hex)[65]) {
     if(!shader || FAILED(shader->GetPrivateData(ShaderDigest,&length,&value)) || length!=sizeof(value) || value.version!=1) return false;
     for(unsigned i=0;i<32;++i) sprintf_s(hex+i*2,65-i*2,"%02x",value.hash[i]);
     return true;
+}
+bool ShaderThreadGroup(ID3D11ComputeShader* shader,unsigned& x,unsigned& y,unsigned& z) {
+    unsigned group[3]{};UINT length=sizeof(group);
+    if(!shader || FAILED(shader->GetPrivateData(ThreadGroup,&length,group)) || length!=sizeof(group) ||
+       !group[0] || !group[1] || !group[2] || group[0]>1024 || group[1]>1024 || group[2]>64 ||
+       static_cast<unsigned long long>(group[0])*group[1]*group[2]>1024)return false;
+    x=group[0];y=group[1];z=group[2];return true;
 }
 size_t DescribePass(ID3D11DeviceContext* context, bool compute, unsigned frame,
     uintptr_t callerRva, char* output, size_t capacity) {

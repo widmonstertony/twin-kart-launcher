@@ -62,6 +62,10 @@ inline void* __fastcall OnConstruct(void* parameters) {
 inline void RegisterMissing(BYTE* actor) {
     BYTE* previous=registrationActor; registrationActor=actor;
     __try {
+        // Native AI registration selects AISpeed[Team]Component when this
+        // mode flag is true and AIItem[Team]Component otherwise. It is not an
+        // authority flag. The normal constructor defaults it to item mode.
+        *reinterpret_cast<BYTE*>(actor+0x328)=armedMode==1?1:0;
         using Register=void(__fastcall*)(void*);
         reinterpret_cast<Register>(image+0x1973d10)(actor+0x320);
     } __finally { registrationActor=previous; }
@@ -79,23 +83,6 @@ inline bool __fastcall OnSpawn(void* raw,void* mode,int slot,void* start,void** 
     bool result=spawn(raw,mode,slot,start,pawn,isAi);
     if(Local(rule)) {
         Emit("native_local_pawn_spawned",slot,result && pawn && *pawn?1:0);
-        if(result && pawn && *pawn && isAi && *isAi) {
-            auto actor=static_cast<BYTE*>(*pawn);
-            using Type=void*(__fastcall*)(); using Find=BYTE*(__fastcall*)(void*,void*);
-            auto aiType=reinterpret_cast<Type>(image+0x23bd880)();
-            auto pathType=reinterpret_cast<Type>(image+0x22b1e10)();
-            auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(actor))[0x620/8]);
-            // The PC client-only component route creates a display pawn with
-            // no authoritative driver. The retained native server registration
-            // supplies its own FollowTG, movement and speed/item components.
-            // Its this pointer is the original interface subobject at +0x320.
-            if(Live(actor) && *reinterpret_cast<void**>(actor+0x10)==aiType && !find(actor,pathType)) {
-                // Native RegisterComponentWithWorld is idempotent for an
-                // already registered component (verified flag at +0x88).
-                RegisterMissing(actor);
-                Emit("native_local_ai_driver_registered",slot,find(actor,pathType)?1:0);
-            }
-        }
     }
     return result;
 }
@@ -115,6 +102,47 @@ inline void __fastcall OnUnknown(void* raw,void* rawPawn,int slot,bool flag) {
         }
     }
     addUnknown(raw,rawPawn,slot,flag);
+    // Native client setup owns the initial component population. Complete it
+    // before asking the native server interface to supply a missing AI driver;
+    // existing movement/animation components are reused by OnConstruct.
+    if(local && Local(rule) && Live(pawn) && AiSlot(slot,*reinterpret_cast<int*>(rule+0x130),*reinterpret_cast<int*>(rule+0x138))) {
+        using Type=void*(__fastcall*)(); using Find=BYTE*(__fastcall*)(void*,void*);
+        auto aiType=reinterpret_cast<Type>(image+0x23bd880)();
+        auto pathType=reinterpret_cast<Type>(image+0x22b1e10)();
+        // Both supported launcher modes are solo races. A pre-existing path
+        // alone does not establish that native speed/item behavior was added.
+        auto behaviorType=reinterpret_cast<Type>(image+(armedMode==1?0x2218050:0x220fed0))();
+        bool exactAi=*reinterpret_cast<void**>(pawn+0x10)==aiType;
+        auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(pawn))[0x620/8]);
+        BYTE* path=find(pawn,pathType);
+        BYTE* behavior=find(pawn,behaviorType);
+        Emit("native_local_ai_driver_setup_state",slot,(exactAi?1:0)|(Live(path)?2:0)|(Live(behavior)?4:0));
+        if(exactAi && (!path || !behavior)) {
+            RegisterMissing(pawn);
+            path=find(pawn,pathType);
+            behavior=find(pawn,behaviorType);
+            Emit("native_local_ai_driver_registered",slot,Live(path)?1:0);
+        }
+        Emit("native_local_ai_mode_behavior_ready",slot,Live(behavior) && *reinterpret_cast<void**>(behavior+0xa0)==pawn &&
+            *reinterpret_cast<void**>(behavior+0x10)==behaviorType?armedMode:0);
+        if(exactAi && Live(path) && *reinterpret_cast<void**>(path+0xa0)==pawn &&
+           *reinterpret_cast<void**>(path+0x10)==pathType) {
+            auto movementType=reinterpret_cast<Type>(image+0x22f9030)();
+            BYTE* movement=find(pawn,movementType);
+            if(Live(movement) && *reinterpret_cast<void**>(movement+0xa0)==pawn &&
+               *reinterpret_cast<void**>(movement+0x10)==movementType) {
+                BYTE* current=*reinterpret_cast<BYTE**>(movement+0xf08);
+                if(!current || current==path) {
+                    // Exact native SetAIBaseComponent, independently verified
+                    // as assigning this movement's AutoMoveComponent. Reusing
+                    // a previously registered movement must not leave it null.
+                    using Bind=void(__fastcall*)(void*,void*);
+                    reinterpret_cast<Bind>(image+0x15d1100)(movement,path);
+                    Emit("native_local_ai_movement_driver_bound",slot,*reinterpret_cast<void**>(movement+0xf08)==path?1:0);
+                } else Emit("native_local_ai_driver_binding_conflict",slot,1);
+            }
+        }
+    }
 }
 inline void __fastcall OnAutoDrive(void* raw,bool enabled) {
     auto movement=static_cast<BYTE*>(raw);
@@ -150,10 +178,12 @@ inline bool Install(BYTE* base,Event callback) {
     const BYTE registerPrefix[]={0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x74};
     const BYTE resultPrefix[]={0x48,0x83,0xec,0x58,0x48,0x89,0x5c,0x24,0x60,0x48,0x89,0x6c,0x24,0x68,0x49,0x8b,0xe9};
     const BYTE factoryPrefix[]={0x40,0x53,0x48,0x83,0xec,0x20};
+    const BYTE bindPrefix[]={0x48,0x89,0x91,0x08,0x0f,0x00,0x00,0xc3};
     // Prologue consists entirely of relocatable register/stack instructions.
     // Calls are patched only while this owned game's window thread is idle.
     if(memcmp(image+0x15acaf0,prefix,sizeof(prefix)) || memcmp(image+0x1973d10,registerPrefix,sizeof(registerPrefix)) ||
-       memcmp(image+0x15f5d00,resultPrefix,sizeof(resultPrefix)) || memcmp(image+0x168da80,factoryPrefix,sizeof(factoryPrefix)) || memcmp(image+0x168db20,factoryPrefix,sizeof(factoryPrefix))) return false;
+       memcmp(image+0x15f5d00,resultPrefix,sizeof(resultPrefix)) || memcmp(image+0x168da80,factoryPrefix,sizeof(factoryPrefix)) || memcmp(image+0x168db20,factoryPrefix,sizeof(factoryPrefix)) ||
+       memcmp(image+0x15d1100,bindPrefix,sizeof(bindPrefix))) return false;
     spawn=reinterpret_cast<Spawn>(image+0x1926150);
     addUnknown=reinterpret_cast<AddUnknown>(image+0x18f7370);
     construct=reinterpret_cast<Construct>(image+0x278aa90);

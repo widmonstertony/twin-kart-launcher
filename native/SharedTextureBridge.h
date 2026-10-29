@@ -13,6 +13,8 @@ public:
     SharedTextureBridge& operator=(const SharedTextureBridge&)=delete;
     HRESULT Initialize(ID3D11Device*,ID3D12Device*,ID3D12CommandQueue*,unsigned width,unsigned height,DXGI_FORMAT);
     ID3D12Resource* Texture12() const;
+    // Borrowed view of the shared texture, valid while this bridge exists.
+    ID3D11Texture2D* Texture11() const;
     HRESULT CopyTo12(ID3D11Texture2D* source);
     // Caller submits its D3D12 work and transitions the shared texture back to
     // COMMON before handing it to D3D11. target may be null for display-only use.

@@ -16,6 +16,8 @@ using CameraView = void(__fastcall*)(void*, float, void*);
 CameraView originalView = nullptr;
 PVOID volatile* viewSlot = nullptr;
 volatile LONG enabled = 0;
+alignas(8) volatile LONG64 historyRevision = 1;
+void InvalidateHistory() { InterlockedIncrement64(&historyRevision); }
 volatile LONG calls = 0, applied = 0, rejected = 0;
 volatile LONG lastThread = 0;
 HANDLE logFile = INVALID_HANDLE_VALUE;
@@ -50,6 +52,7 @@ void ClearDriver() {
     headName = 0; headWasHidden = headHiddenByUs = false;
 }
 void RestoreDriver() {
+    bool hadDriver=auditedMesh!=nullptr;
     __try {
         if (headHiddenByUs && TwinKartCamera::Live(auditedIdentity,ObjectChunks(),ObjectCount()) &&
             *reinterpret_cast<void**>(static_cast<BYTE*>(auditedMesh) + 0x4c0) == auditedAsset) {
@@ -60,6 +63,7 @@ void RestoreDriver() {
         } else if (headHiddenByUs) Log("previous_driver_expired_no_write");
     } __except (EXCEPTION_EXECUTE_HANDLER) { Log("previous_driver_unavailable_no_write"); }
     ClearDriver();
+    if(hadDriver)InvalidateHistory();
 }
 
 bool DriverSignatures() {
@@ -127,6 +131,7 @@ void UpdateDriver(void* component, bool cameraApplied) {
         auditedMesh = mesh;
         auditedAsset = asset; auditedIndex = identity; headName = 0; headHiddenByUs = false;
         auditedIdentity = currentIdentity;
+        InvalidateHistory();
         for (int index = 0; index < count; ++index) {
             unsigned long long name = 0;
             reinterpret_cast<BoneName>(image + 0x3e6a200)(mesh, &name, index);
@@ -184,7 +189,10 @@ void ReadSettings() {
     bool changed = memcmp(&settings, &candidate, sizeof(settings)) != 0;
     settings = candidate;
     ReleaseSRWLockExclusive(&settingsLock);
-    if (changed || newFile) InterlockedExchange(&enabled, candidate.active);
+    if (changed || newFile) {
+        LONG old=InterlockedExchange(&enabled, candidate.active);
+        if(changed || old!=candidate.active)InvalidateHistory();
+    }
     lastControl=info; controlSeen=true;
 }
 
@@ -282,6 +290,9 @@ bool ApplyView(void* component, void* output) {
         }
         if(atHead) InterlockedIncrement(&headAnchored); else InterlockedIncrement(&seatFallback);
         if (!valid(location) || !valid(angle)) return false;
+        static bool previousHeadAnchor=false;
+        if(atHead!=previousHeadAnchor)InvalidateHistory();
+        previousHeadAnchor=atHead;
         view->location = location; view->rotation = angle; view->fov = static_cast<float>(current.fov); return true;
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
@@ -295,6 +306,12 @@ void __fastcall ViewHook(void* component, float delta, void* output) {
         else InterlockedIncrement(&rejected);
     }
     UpdateDriver(component, modified);
+    // Publish only a scalar; render threads never inspect native camera/pawn
+    // objects. A newly available head anchor also changes the actual viewpoint.
+    static bool wasModified=false;
+    static void* lastComponent=nullptr;
+    if(modified!=wasModified || (modified && component!=lastComponent))InvalidateHistory();
+    wasModified=modified;lastComponent=component;
 }
 
 DWORD WINAPI Worker(void*) {
@@ -342,13 +359,17 @@ DWORD WINAPI Worker(void*) {
         // The transition bit also catches taps shorter than the sampling period.
         bool requested = toggleEvent && WaitForSingleObject(toggleEvent, 0) == WAIT_OBJECT_0;
         if (requested || (foregroundPid == GetCurrentProcessId() && !wasDown && (down || (key & 1)))) {
-            InterlockedExchange(&enabled, !enabled); Log("camera_toggled");
+            InterlockedExchange(&enabled, !enabled); InvalidateHistory(); Log("camera_toggled");
         }
         wasDown = down;
         if (tick % 200 == 0) Log("camera_sample");
         Sleep(10);
     }
 }
+}
+
+extern "C" __declspec(dllexport) unsigned long long WINAPI TwinKartCameraHistoryRevision() {
+    return static_cast<unsigned long long>(InterlockedCompareExchange64(&historyRevision,0,0));
 }
 
 BOOL WINAPI DllMain(HINSTANCE self, DWORD reason, LPVOID) {

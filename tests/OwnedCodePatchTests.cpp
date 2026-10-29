@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <stdexcept>
 #include "../native/LocalRaceRuntime.h"
+#include "../native/RenderActivity.h"
 using Function=int(__fastcall*)(int);
 Function originalEntry=nullptr;
 int __fastcall Replacement(int value) { return value+10; }
@@ -35,6 +36,10 @@ int main() {
         for(int ais=1;ais<=7;++ais) for(int slot=-1;slot<10;++slot)
             Need(TwinKartLocalRace::AiSlot(slot,1,ais)==(slot>=1 && slot<=ais),"AI slot boundary");
         Need(!TwinKartLocalRace::AiSlot(1,2,3) && !TwinKartLocalRace::AiSlot(1,1,8),"Unsupported player count accepted");
+        TwinKartGraphics::RenderActivity activity;
+        Need(!activity.Active(2000),"Unpublished scene treated as racing");activity.Publish(true,2000);
+        Need(activity.Active(2000) && activity.Active(3000) && !activity.Active(3001) && !activity.Active(1999),"Stale/loading/invalid-clock scene activity accepted");
+        activity.Publish(false,2500);Need(!activity.Active(2500),"Paused/menu scene retained racing state");
         VirtualFree(code,0,MEM_RELEASE);
         puts("PASS real x64 call redirection, original trampoline execution, exact-byte rejection, rollback and local AI slot boundaries. No game started.");
         return 0;

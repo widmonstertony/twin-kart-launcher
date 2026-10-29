@@ -7,13 +7,26 @@
 #include <cstdio>
 #include <cstring>
 #include "../native/SharedTextureBridge.h"
+#include "../native/FrameGenerationD3D12.h"
 using Microsoft::WRL::ComPtr;
-int main() {
+int wmain(int argc,wchar_t** argv) {
+    if(argc!=1 && argc!=3)return 2;
+    TwinKartGraphics::FrameGeneration generation;
+    using Factory=HRESULT(WINAPI*)(REFIID,void**);using Device=HRESULT(WINAPI*)(IUnknown*,D3D_FEATURE_LEVEL,REFIID,void**);
+    Factory createFactory=CreateDXGIFactory1;Device createDevice=D3D12CreateDevice;
+    if(argc==3) {
+        unsigned loaded=generation.Load(argv[1],argv[2]);
+        printf("{\"event\":\"shared_texture_interposer_init\",\"result\":%u,\"no_presentation\":true,\"game_started\":false}\n",loaded);
+        if(loaded)return 20;
+        createFactory=reinterpret_cast<Factory>(generation.GraphicsEntry("CreateDXGIFactory1"));
+        createDevice=reinterpret_cast<Device>(generation.GraphicsEntry("D3D12CreateDevice"));
+        if(!createFactory || !createDevice)return 21;
+    }
     ComPtr<IDXGIFactory6> factory; ComPtr<IDXGIAdapter1> adapter; ComPtr<ID3D12Device> d12;
-    HRESULT hr=CreateDXGIFactory1(IID_PPV_ARGS(&factory)); if(FAILED(hr)) return 2;
+    HRESULT hr=createFactory(IID_PPV_ARGS(&factory)); if(FAILED(hr)) return 2;
     for(UINT index=0;factory->EnumAdapterByGpuPreference(index,DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE,IID_PPV_ARGS(&adapter))!=DXGI_ERROR_NOT_FOUND;++index) {
         DXGI_ADAPTER_DESC1 desc{}; adapter->GetDesc1(&desc);
-        if(desc.VendorId==0x10de && SUCCEEDED(D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&d12)))) break; adapter.Reset();
+        if(desc.VendorId==0x10de && SUCCEEDED(createDevice(adapter.Get(),D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&d12)))) break; adapter.Reset();
     }
     if(!d12) return 3;
     ComPtr<ID3D11Device> d11; ComPtr<ID3D11DeviceContext> context;

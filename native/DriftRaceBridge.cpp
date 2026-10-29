@@ -11,6 +11,7 @@
 #include "DriftObjectIdentity.h"
 #include "RaceControl.h"
 #include "LocalRaceRuntime.h"
+#include "RenderActivity.h"
 
 // Original game-thread bridge for exact-build native race preparation work.
 // Track lookup and an opt-in native local-host candidate. A travel request is
@@ -19,6 +20,8 @@ namespace {
 constexpr char ClientSha[]="5041d9f5d45adb4b1c932d8056a89f70db7fa98f93614ac30685cd1adeb9d9c2";
 BYTE* image=nullptr; HINSTANCE module=nullptr; HANDLE output=INVALID_HANDLE_VALUE;
 TwinKartNative::GameThreadQueue queue;
+TwinKartGraphics::RenderActivity renderActivity;
+volatile LONG renderActivityPending=0;
 struct NativeString { const wchar_t* data; int count,capacity; };
 struct Query { std::wstring alias; wchar_t level[512]{}; int status=-1; DWORD executedThread=0; HANDLE complete=nullptr; };
 struct StartQuery { TwinKartRace::Request request; wchar_t track[97]{},options[512]{}; int status=-1,stage=0; DWORD fault=0; uintptr_t faultRva=0; DWORD executedThread=0; HANDLE complete=nullptr; };
@@ -49,6 +52,35 @@ BYTE* Traveler() {
     }
     return found;
 }
+void UpdateRenderActivity(void*) {
+    bool active=false;
+    __try {
+        if(GetCurrentThreadId()==queue.ThreadId()) {
+            BYTE* traveler=Traveler();using GetWorld=BYTE*(__fastcall*)(void*);
+            BYTE* world=traveler?reinterpret_cast<GetWorld>((*reinterpret_cast<void***>(traveler))[0x160/8])(traveler):nullptr;
+            if(TwinKartLocalRace::Live(world) && !*reinterpret_cast<void**>(world+0x38)) {
+                BYTE* state=*reinterpret_cast<BYTE**>(world+0x120);
+                if(TwinKartLocalRace::Live(state)) {
+                    using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
+                    auto phaseType=reinterpret_cast<Type>(image+0x23cc5f0)();
+                    auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(state))[0x620/8]);
+                    BYTE* component=find(state,phaseType);
+                    if(TwinKartLocalRace::Live(component) && *reinterpret_cast<void**>(component+0xa0)==state) {
+                        // Exact PC reflected CurrentPhase offset, not an iOS
+                        // address/layout assumption. No phase is advanced here.
+                        BYTE* phase=*reinterpret_cast<BYTE**>(component+0x110);
+                        auto racingType=reinterpret_cast<Type>(image+0x23c04a0)();
+                        using Paused=bool(__fastcall*)(void*);
+                        active=TwinKartLocalRace::Live(phase) && *reinterpret_cast<void**>(phase+0x10)==racingType &&
+                            !reinterpret_cast<Paused>(image+0x4011c70)(world);
+                    }
+                }
+            }
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {active=false;}
+    renderActivity.Publish(active,GetTickCount64());InterlockedExchange(&renderActivityPending,0);
+}
+void CancelRenderActivity(void*){renderActivity.Publish(false,0);InterlockedExchange(&renderActivityPending,0);}
 // 0=model not ready; 1=native travel submitted; 2=definition absent;
 // -1=native fault; -2=unsupported transform; no value means race acceptance.
 void RuntimeEvent(const char* name,int slot,int value) {
@@ -245,6 +277,8 @@ void WatchControl(const wchar_t* path) {
     char previous[33]{};
     for(;;) {
         Sleep(250);
+        if(InterlockedCompareExchange(&renderActivityPending,1,0)==0 && !queue.Submit({UpdateRenderActivity,nullptr,CancelRenderActivity}))CancelRenderActivity(nullptr);
+        if(!path || !*path)continue;
         HANDLE file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,0,nullptr);
         if(file==INVALID_HANDLE_VALUE) continue;
         LARGE_INTEGER size{}; char bytes[257]{}; DWORD read=0;
@@ -277,10 +311,12 @@ DWORD WINAPI Worker(void*) {
     DWORD a=GetEnvironmentVariableW(L"TWIN_KART_RACE_BRIDGE_LOG",path,ARRAYSIZE(path));
     DWORD b=GetEnvironmentVariableW(L"TWIN_KART_TRACK_QUERIES",input,ARRAYSIZE(input));
     DWORD c=GetEnvironmentVariableW(L"TWIN_KART_RACE_CONTROL",control,ARRAYSIZE(control));
-    if(!a || a>=ARRAYSIZE(path) || b>=ARRAYSIZE(input) || c>=ARRAYSIZE(control) || (!b && !c) || !TwinKartClient::Allowed(ClientSha)) return 1;
+    wchar_t fg[8]{};GetEnvironmentVariableW(L"TWIN_KART_FRAME_GENERATION",fg,ARRAYSIZE(fg));bool graphics=fg[0]==L'1' && !fg[1];
+    if(!a || a>=ARRAYSIZE(path) || b>=ARRAYSIZE(input) || c>=ARRAYSIZE(control) || (!b && !c && !graphics) || !TwinKartClient::Allowed(ClientSha)) return 1;
     output=CreateFileW(path,GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_NEW,0,nullptr);
     if(output==INVALID_HANDLE_VALUE) return 2;
     image=reinterpret_cast<BYTE*>(GetModuleHandleW(nullptr));
+    TwinKartLocalRace::image=image;
     try {
         auto aliases=b?Queries(input):std::vector<std::string>{}; HWND window=nullptr;
         for(int attempt=0;attempt<480 && !window;++attempt) { if(SignaturesReady()) EnumWindows(FindWindow,reinterpret_cast<LPARAM>(&window)); if(!window) Sleep(250); }
@@ -314,12 +350,15 @@ DWORD WINAPI Worker(void*) {
             if(value.status==1) ++found; else ++empty;
         }
         Log(std::string("{\"event\":\"native_track_queries_complete\",\"found\":")+std::to_string(found)+",\"empty\":"+std::to_string(empty)+",\"race_started\":false}");
-        if(c) WatchControl(control);
+        if(c || graphics) WatchControl(c?control:nullptr);
     } catch(const std::exception&) {
         const char line[]="{\"event\":\"native_race_bridge_failed\",\"can_start_race\":false}\r\n"; DWORD written; WriteFile(output,line,sizeof(line)-1,&written,nullptr);
     }
     queue.Stop(); CloseHandle(output); output=INVALID_HANDLE_VALUE; return 0;
 }
+}
+extern "C" __declspec(dllexport) BOOL WINAPI TwinKartRaceRenderingActive() {
+    return renderActivity.Active(GetTickCount64())?TRUE:FALSE;
 }
 BOOL WINAPI DllMain(HINSTANCE self,DWORD reason,LPVOID) {
     if(reason==DLL_PROCESS_ATTACH) { module=self; DisableThreadLibraryCalls(self); HANDLE worker=CreateThread(nullptr,0,Worker,nullptr,0,nullptr); if(worker) CloseHandle(worker); }

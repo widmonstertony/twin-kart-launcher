@@ -19,7 +19,7 @@ try {
     try {
         & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MD /Fo./ /FeProbeFrameGeneration.exe (Join-Path $projectRoot 'tools\ProbeFrameGeneration.cpp') (Join-Path $PSScriptRoot 'FrameGenerationD3D12.cpp') /link user32.lib d3d12.lib dxgi.lib wintrust.lib crypt32.lib
         if($LASTEXITCODE -ne 0) { throw 'Original frame generation adapter build failed' }
-        & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MD /Fo./ /FeProbeSharedTexture.exe (Join-Path $projectRoot 'tools\ProbeSharedTexture.cpp') (Join-Path $PSScriptRoot 'SharedTextureBridge.cpp') /link user32.lib d3d11.lib d3d12.lib dxgi.lib
+        & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MD /Fo./ /FeProbeSharedTexture.exe (Join-Path $projectRoot 'tools\ProbeSharedTexture.cpp') (Join-Path $PSScriptRoot 'SharedTextureBridge.cpp') (Join-Path $PSScriptRoot 'FrameGenerationD3D12.cpp') /link user32.lib d3d11.lib d3d12.lib dxgi.lib wintrust.lib crypt32.lib
         if($LASTEXITCODE -ne 0) { throw 'Original D3D11/D3D12 texture bridge build failed' }
     } finally { Pop-Location }
 } finally { $env:INCLUDE=$oldInclude; $env:LIB=$oldLib; $env:PATH=$oldPath }

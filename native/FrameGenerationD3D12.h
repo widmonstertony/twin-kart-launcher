@@ -35,6 +35,9 @@ public:
     FARPROC GraphicsEntry(const char* name) const;
     unsigned BindDevice(ID3D12Device* device);
     unsigned Configure(unsigned multiplier,unsigned displayWidth,unsigned displayHeight,unsigned colorFormat,unsigned backBuffers);
+    // Serialized startup handoff only, before the first frame token exists.
+    bool AdoptInitialRenderThread();
+    unsigned SetActive(bool);
     unsigned BeginFrame(unsigned index,const CameraFrame& camera);
     unsigned Marker(FrameStage stage);
     unsigned Tag(const GenerationResources& resources);

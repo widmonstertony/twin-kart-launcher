@@ -45,6 +45,7 @@ HRESULT SharedTextureBridge::Initialize(ID3D11Device* d11,ID3D12Device* d12,ID3D
     hr=impl->device5->OpenSharedFence(fenceHandle,IID_PPV_ARGS(&impl->fence11)); CloseHandle(fenceHandle); return hr;
 }
 ID3D12Resource* SharedTextureBridge::Texture12() const { return impl->texture12.Get(); }
+ID3D11Texture2D* SharedTextureBridge::Texture11() const { return impl->texture11.Get(); }
 HRESULT SharedTextureBridge::CopyTo12(ID3D11Texture2D* source) {
     if(!impl->Owner() || !impl->fence11 || impl->in12 || !impl->Texture(source)) return E_INVALIDARG;
     impl->context->CopyResource(impl->texture11.Get(),source);

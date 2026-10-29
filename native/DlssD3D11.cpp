@@ -82,6 +82,7 @@ unsigned TwinKartDlssEvaluate(const TwinKartTemporalFrame* frame) {
     ID3DDeviceContextState* saved = nullptr;
     context->SwapDeviceContextState(isolatedState, &saved);
     int flags = NVSDK_NGX_DLSS_Feature_Flags_MVLowRes;
+    flags |= NVSDK_NGX_DLSS_Feature_Flags_AutoExposure;
     if (frame->hdr) flags |= NVSDK_NGX_DLSS_Feature_Flags_IsHDR;
     if (frame->invertedDepth) flags |= NVSDK_NGX_DLSS_Feature_Flags_DepthInverted;
     NVSDK_NGX_Result result = NVSDK_NGX_Result_Success;

@@ -7,3 +7,7 @@ if (-not (Test-Path -LiteralPath $csc)) { throw '.NET Framework compiler is requ
 if ($LASTEXITCODE -ne 0) { throw 'Graphics profile test compilation failed.' }
 & (Join-Path $buildDir 'GraphicsProfileTests.exe')
 if ($LASTEXITCODE -ne 0) { throw 'Graphics profile tests failed.' }
+& $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ "/out:$buildDir\OfflineGraphicsOptionsTests.exe" (Join-Path $PSScriptRoot 'src\OfflineGraphicsOptions.cs') (Join-Path $PSScriptRoot 'tests\OfflineGraphicsOptionsTests.cs')
+if($LASTEXITCODE -ne 0) { throw 'Offline graphics policy test compilation failed' }
+& (Join-Path $buildDir 'OfflineGraphicsOptionsTests.exe')
+if($LASTEXITCODE -ne 0) { throw 'Offline graphics policy checks failed' }
