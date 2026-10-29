@@ -10,9 +10,12 @@
 #include <atomic>
 #include "DlssD3D11.h"
 #include "RenderPassTrace.h"
+#include "TemporalCapture.h"
+#include "NativeNeuralPass.h"
 
-// First-party resource observer. It does not upscale, interpolate frames, or
-// claim that an observed depth/motion-format texture is a validated DLSS guide.
+// First-party resource observer with an opt-in, exact-build NR adapter.
+// SR and generated-frame presentation remain separate unfinished integrations.
+// A resource format alone never establishes a valid depth/motion guide.
 namespace {
 HANDLE output = INVALID_HANDLE_VALUE;
 SRWLOCK logLock = SRWLOCK_INIT;
@@ -48,6 +51,7 @@ unsigned contextCount = 0;
 SRWLOCK contextLock = SRWLOCK_INIT;
 volatile LONG realContextHooked = 0;
 volatile LONG frames = 0;
+volatile LONG nrLastSubmitted=-1;
 LARGE_INTEGER frequency{}, lastPresent{};
 struct Description { UINT width, height, format, bind, samples, role; };
 Description observed[256]{};
@@ -91,18 +95,24 @@ void TracePass(ID3D11DeviceContext* context, bool compute, void* caller) {
 }
 void STDMETHODCALLTYPE OnDraw(ID3D11DeviceContext* context, UINT a, UINT b) {
     if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).draw; if (original) original(context,a,b);
+    if(a<=6 && context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPixelPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnIndexed(ID3D11DeviceContext* context, UINT a, UINT b, INT c) {
     if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indexed; if (original) original(context,a,b,c);
+    if(a<=6 && context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPixelPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnInstances(ID3D11DeviceContext* context, UINT a, UINT b, UINT c, UINT d) {
     if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).instances; if (original) original(context,a,b,c,d);
+    if(a<=6 && context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPixelPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnIndexedInstances(ID3D11DeviceContext* context, UINT a, UINT b, UINT c, INT d, UINT e) {
     if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indexedInstances; if (original) original(context,a,b,c,d,e);
+    if(a<=6 && context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPixelPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnDispatch(ID3D11DeviceContext* context, UINT a, UINT b, UINT c) {
+    if(context==gameContext.load(std::memory_order_acquire)) TwinKartGraphics::CaptureTemporalInputs(context,static_cast<unsigned>(frames));
     TracePass(context, true, _ReturnAddress()); auto original = Hooks(context).dispatch; if (original) original(context,a,b,c);
+    if(context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnIndexedIndirect(ID3D11DeviceContext* context, ID3D11Buffer* args, UINT offset) {
     TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indexedIndirect; if (original) original(context,args,offset);
@@ -111,7 +121,9 @@ void STDMETHODCALLTYPE OnIndirect(ID3D11DeviceContext* context, ID3D11Buffer* ar
     TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indirect; if (original) original(context,args,offset);
 }
 void STDMETHODCALLTYPE OnDispatchIndirect(ID3D11DeviceContext* context, ID3D11Buffer* args, UINT offset) {
+    if(context==gameContext.load(std::memory_order_acquire)) TwinKartGraphics::CaptureTemporalInputs(context,static_cast<unsigned>(frames));
     TracePass(context, true, _ReturnAddress()); auto original = Hooks(context).dispatchIndirect; if (original) original(context,args,offset);
+    if(context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 DeviceHooks DeviceFunctions(ID3D11Device* device) {
     DeviceHooks result{}; void** table = *reinterpret_cast<void***>(device);
@@ -275,6 +287,13 @@ bool HookContext(ID3D11DeviceContext* context) {
     return installed;
 }
 HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT flags) {
+    bool nrBackbuffer=false;LONG nrRenderFrame=frames;
+    if(!(flags&DXGI_PRESENT_TEST) && nrLastSubmitted==nrRenderFrame) {
+        ID3D11Texture2D* texture=nullptr;
+        if(SUCCEEDED(swap->GetBuffer(0,__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&texture)))) {
+            nrBackbuffer=TwinKartGraphics::NativeNeuralOutputMatches(texture,static_cast<unsigned>(nrRenderFrame));texture->Release();
+        }
+    }
     if (!(flags & DXGI_PRESENT_TEST)) {
         if (InterlockedCompareExchange(&realContextHooked, 1, 0) == 0) {
             ID3D11Device* actualDevice = nullptr;
@@ -309,8 +328,8 @@ HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT fl
             DXGI_SWAP_CHAIN_DESC desc{}; swap->GetDesc(&desc);
             char line[512];
             double elapsed = lastPresent.QuadPart ? 1000.0*(now.QuadPart-lastPresent.QuadPart)/frequency.QuadPart : 0;
-            sprintf_s(line, "{\"event\":\"real_dxgi_present\",\"frame\":%ld,\"width\":%u,\"height\":%u,\"dxgi_format\":%u,\"last_interval_ms\":%.4f,\"dlss_sr_evaluated\":false,\"generated_frames\":0,\"nr_final_composite\":false}\r\n",
-                frame, desc.BufferDesc.Width, desc.BufferDesc.Height, desc.BufferDesc.Format, elapsed);
+            sprintf_s(line, "{\"event\":\"real_dxgi_present\",\"frame\":%ld,\"width\":%u,\"height\":%u,\"dxgi_format\":%u,\"last_interval_ms\":%.4f,\"dlss_sr_evaluated\":false,\"generated_frames\":0,\"nr_pre_hud_copy_render_frame\":%ld,\"nr_final_composite\":false}\r\n",
+                frame, desc.BufferDesc.Width, desc.BufferDesc.Height, desc.BufferDesc.Format, elapsed,nrLastSubmitted);
             Log(line);
             ID3D11Texture2D* back = nullptr;
             if (SUCCEEDED(swap->GetBuffer(0, __uuidof(ID3D11Texture2D), reinterpret_cast<void**>(&back)))) {
@@ -319,7 +338,12 @@ HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT fl
         }
         lastPresent = now;
     }
-    return present(swap, interval, flags);
+    HRESULT presented=present(swap, interval, flags);
+    if(!(flags&DXGI_PRESENT_TEST)) TwinKartGraphics::FinishNativeNeuralFrame(static_cast<unsigned>(nrRenderFrame));
+    if(nrBackbuffer && (nrRenderFrame%120==0 || FAILED(presented))) {
+        char line[320];sprintf_s(line,"{\"event\":\"nr_native_backbuffer_present\",\"render_frame\":%ld,\"present_hresult\":%ld,\"same_output_resource\":true,\"quality_verified\":false}\r\n",nrRenderFrame,presented);Log(line);
+    }
+    return presented;
 }
 bool Patch(void** table, unsigned slot, void* replacement, void** original) {
     DWORD old;
@@ -347,6 +371,19 @@ DWORD WINAPI Worker(void*) {
     traceInterval=EnvironmentNumber(L"TWIN_KART_RENDER_TRACE_INTERVAL",120,30,3600);
     traceLimit=EnvironmentNumber(L"TWIN_KART_RENDER_TRACE_LIMIT",1024,64,16384);
     tracePerFrame=EnvironmentNumber(L"TWIN_KART_RENDER_TRACE_PER_FRAME",64,8,256);
+    wchar_t capturePath[32768]{},captureHash[65]{}; char selectedHash[65]{};
+    DWORD captureLength=GetEnvironmentVariableW(L"TWIN_KART_TEMPORAL_CAPTURE",capturePath,ARRAYSIZE(capturePath));
+    DWORD hashLength=GetEnvironmentVariableW(L"TWIN_KART_TEMPORAL_SHADER",captureHash,ARRAYSIZE(captureHash));
+    if(captureLength && captureLength<ARRAYSIZE(capturePath) && hashLength==64) {
+        for(unsigned i=0;i<64;++i) selectedHash[i]=captureHash[i]<128?static_cast<char>(captureHash[i]):'!';
+        Log(TwinKartGraphics::ConfigureTemporalCapture(capturePath,selectedHash,2,true)?"{\"event\":\"temporal_capture_waiting_for_request\",\"guides_validated\":false}\r\n":"{\"event\":\"temporal_capture_rejected\"}\r\n");
+    }
+    wchar_t neuralModule[32768]{},neuralProvider[32768]{},neuralCache[32768]{};
+    DWORD neuralLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_MODULE",neuralModule,ARRAYSIZE(neuralModule));
+    DWORD providerLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_PROVIDER",neuralProvider,ARRAYSIZE(neuralProvider));
+    DWORD cacheLength=GetEnvironmentVariableW(L"TWIN_KART_DLSS_CACHE",neuralCache,ARRAYSIZE(neuralCache));
+    if(neuralLength && neuralLength<ARRAYSIZE(neuralModule) && providerLength && providerLength<ARRAYSIZE(neuralProvider) && cacheLength && cacheLength<ARRAYSIZE(neuralCache))
+        Log(TwinKartGraphics::ConfigureNativeNeuralPass(neuralModule,neuralProvider,neuralCache,Log)?"{\"event\":\"nr_native_pass_configured\",\"game_acceptance\":false}\r\n":"{\"event\":\"nr_native_pass_configuration_rejected\"}\r\n");
     wchar_t modulePath[32768]{};
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_MODULE", modulePath, ARRAYSIZE(modulePath));
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_CACHE", dlssCache, ARRAYSIZE(dlssCache));

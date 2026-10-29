@@ -5,6 +5,9 @@
 #include <cstring>
 #include <stdexcept>
 #include <wrl/client.h>
+#include <fstream>
+#include <iterator>
+#include <vector>
 #include "../native/DriftRenderProbe.cpp"
 using Microsoft::WRL::ComPtr;
 void Need(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
@@ -121,12 +124,45 @@ int main() {
         context->ClearUnorderedAccessViewUint(uav.Get(),clear); context->DispatchIndirect(dispatchArgs.Get(),0); readPixel(0);
         if (passRows!=8) fprintf(stderr,"Pass capture counters: rows=%ld sampled=%ld\n",passRows,sampledRows);
         Need(passRows==8,"Installed hooks did not produce eight sampled pass records");
+        // Exercise selected-pass GPU staging on actual initialized resources,
+        // check their bytes and leave every shader binding untouched.
+        wchar_t captureDirectory[96]; swprintf_s(captureDirectory,L"TemporalCaptureTests-%lu-%lu",GetCurrentProcessId(),GetTickCount());
+        Need(CreateDirectoryW(captureDirectory,nullptr)!=FALSE,"Capture directory creation failed");
+        char selectedHash[65]; Need(TwinKartRender::ShaderHash(compute.Get(),selectedHash),"Compute digest unavailable");
+        Need(!TwinKartGraphics::ConfigureTemporalCapture(captureDirectory,"invalid",1),"Malformed selector accepted");
+        Need(TwinKartGraphics::ConfigureTemporalCapture(captureDirectory,selectedHash,1),"Capture configuration rejected");
+        std::vector<BYTE> expected(32*16*4); for(size_t n=0;n<expected.size();++n) expected[n]=static_cast<BYTE>(n*37);
+        D3D11_TEXTURE2D_DESC captureDesc{}; captureDesc.Width=32; captureDesc.Height=16; captureDesc.MipLevels=1; captureDesc.ArraySize=1;
+        captureDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM; captureDesc.SampleDesc.Count=1; captureDesc.BindFlags=D3D11_BIND_SHADER_RESOURCE;
+        D3D11_SUBRESOURCE_DATA captureData{expected.data(),128,0};
+        ComPtr<ID3D11Texture2D> captureTexture; Check(device->CreateTexture2D(&captureDesc,&captureData,&captureTexture));
+        ComPtr<ID3D11ShaderResourceView> captureView; Check(device->CreateShaderResourceView(captureTexture.Get(),nullptr,&captureView));
+        ID3D11ShaderResourceView* captureBinding=captureView.Get(); context->CSSetShaderResources(0,1,&captureBinding);
+        D3D11_BUFFER_DESC constantDesc{}; constantDesc.ByteWidth=16; constantDesc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+        const UINT knownConstants[]{0x3f800000,0x40000000,0x40400000,0x40800000}; D3D11_SUBRESOURCE_DATA constantData{knownConstants,0,0};
+        ComPtr<ID3D11Buffer> knownBuffer; Check(device->CreateBuffer(&constantDesc,&constantData,&knownBuffer));
+        ID3D11Buffer* constantBinding=knownBuffer.Get(); context->CSSetConstantBuffers(0,1,&constantBinding);
+        ULONG beforeCapture=References(captureTexture.Get());
+        Need(TwinKartGraphics::CaptureTemporalInputs(context.Get(),240),"Real GPU temporal input capture failed");
+        Need(!TwinKartGraphics::CaptureTemporalInputs(context.Get(),360),"Capture limit not enforced");
+        wchar_t resourceFile[160],constantFile[160],metadataFile[160];
+        swprintf_s(resourceFile,L"%s\\frame-240-srv-0.bin",captureDirectory);
+        swprintf_s(constantFile,L"%s\\frame-240-cb-0.bin",captureDirectory);
+        swprintf_s(metadataFile,L"%s\\frame-240-capture-0.json",captureDirectory);
+        auto read=[&](const wchar_t* path) { std::ifstream file(path,std::ios::binary); return std::vector<BYTE>(std::istreambuf_iterator<char>(file),{}); };
+        Need(read(resourceFile)==expected,"Actual texture capture bytes differ");
+        auto constantBytes=read(constantFile); Need(constantBytes.size()==16 && !memcmp(constantBytes.data(),knownConstants,16),"Camera constant bytes differ");
+        auto metadataBytes=read(metadataFile); std::string metadata(metadataBytes.begin(),metadataBytes.end());
+        Need(metadata.find("\"guides_validated\":false")!=std::string::npos && metadata.find("\"final_composition\":false")!=std::string::npos,"Capture invented rendering acceptance");
+        ComPtr<ID3D11ShaderResourceView> captureAfter; context->CSGetShaderResources(0,1,&captureAfter);
+        Need(captureAfter.Get()==captureView.Get() && beforeCapture==References(captureTexture.Get()),"Capture changed binding or leaked resource references");
+        Need(DeleteFileW(resourceFile) && DeleteFileW(constantFile) && DeleteFileW(metadataFile) && RemoveDirectoryW(captureDirectory),"Capture fixture cleanup failed");
         tracePasses=false; gameContext.store(nullptr,std::memory_order_release);
         CloseHandle(output); output=INVALID_HANDLE_VALUE;
         ComPtr<ID3D11DeviceContext> deferred; Check(device->CreateDeferredContext(0,&deferred));
         Need(!TwinKartRender::DescribePass(deferred.Get(),false,1,0,json,sizeof(json)),"Deferred context incorrectly accepted");
         context->ClearState();
-        puts("PASS D3D11 WARP: eight installed draw/dispatch hooks preserve rendered pixels; shader creation hooks, pixel/compute bindings, mip/high-slot identity, unchanged pipeline, 1000 captures without COM leaks, truncation and deferred-context rejection. No game started.");
+        puts("PASS D3D11 WARP: eight installed render hooks; exact initialized texture/camera-constant readback; hash selector and bounded capture; unchanged pixels, bindings and references; 1000 pass observations. No game started.");
         return 0;
     } catch (const std::exception& error) { fprintf(stderr,"%s\n",error.what()); return 1; }
 }

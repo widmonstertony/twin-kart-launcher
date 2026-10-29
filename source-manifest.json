@@ -9,7 +9,7 @@
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "49aed5cb98da8c18814d8ed2d5aa4f4920636c2745a231b553d28f729ba5a5c8"
+    "sha256": "51503aed970f3529dff51bde45a21e399291c4062e9702c582af7e5f3399a29f"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -157,7 +157,7 @@
   },
   {
     "file": "native/build-render.ps1",
-    "sha256": "a37109d497dc80e12116380905cabd15f3b1488195e66843836af41f6b3d7f1a"
+    "sha256": "05df1485ff9ca9e8f53ee6b2a00782ba34463f1a99f1e1968632f6de4c3f6fe3"
   },
   {
     "file": "native/build-xinput.ps1",
@@ -197,7 +197,7 @@
   },
   {
     "file": "native/DriftRenderProbe.cpp",
-    "sha256": "2363e782b8a518b2dfdd5c9521e45a37260bcc24d74c9760ced0bb35ba0dec6e"
+    "sha256": "269e3f1a7b6f6563b17cd74d960f1e3e8aee3abe53166ea8c99ce12ecb4f75b4"
   },
   {
     "file": "native/FrameGenerationD3D12.cpp",
@@ -224,6 +224,14 @@
     "sha256": "153255837d0489ff35770f91152e78d2af3e6603be8cfe7af52710a4a0b60ce6"
   },
   {
+    "file": "native/NativeNeuralPass.cpp",
+    "sha256": "fb5f433234a6ac63fc9418ed8732196edc5a7ef810609cba7da01f856c88ca16"
+  },
+  {
+    "file": "native/NativeNeuralPass.h",
+    "sha256": "8afd29f96c4e7b12f2f42319dd21c536701764065b92a7b4c1b7c12a240e031b"
+  },
+  {
     "file": "native/NeuralD3D12.cpp",
     "sha256": "fd7af571bdb8c917d2ebb59c4fa6a9605fa69e7a6c2608f9accb0883912a0541"
   },
@@ -241,11 +249,11 @@
   },
   {
     "file": "native/RenderPassTrace.cpp",
-    "sha256": "1710cf2ec49d8f1294519ece4d0b423553705dcb9c2d5b61bb8992cb635b5d95"
+    "sha256": "f173135cad4c1115c79e038ef3c42e70cd7aef22d506bc17e8fdbdc7177af489"
   },
   {
     "file": "native/RenderPassTrace.h",
-    "sha256": "c431e7697c987709b00920fc32affe316fa362ccc20bffd271128e91aae620a0"
+    "sha256": "00ca6e6acc7184246372697cf7fc66a1634611d73897dd2431e6c2c33a5b415e"
   },
   {
     "file": "native/SharedTextureBridge.cpp",
@@ -254,6 +262,14 @@
   {
     "file": "native/SharedTextureBridge.h",
     "sha256": "70c5a3e2d55bfa430eb6e902f2c6c5c458605cddb43538b0737fdbb14259aba0"
+  },
+  {
+    "file": "native/TemporalCapture.cpp",
+    "sha256": "56e184504ee58415f815e6540be1a9536eb80c7aea7c363d20e99516409d0760"
+  },
+  {
+    "file": "native/TemporalCapture.h",
+    "sha256": "59dd6b6dcb14192e55531167d2efdc4f737d647a946668e68cb889b32688fe40"
   },
   {
     "file": "native/VirtualXInput.cpp",
@@ -265,15 +281,15 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "3fb9a19a6ac883277730817c57684a94b89f20da40c234f645196c1ea3bbb76e"
+    "sha256": "6432d2f08a018b3a867c6b14372279af7e2474c7ca0835d4058c25a82010ecfb"
   },
   {
     "file": "README.md",
-    "sha256": "a43f36288e3e22dc9d8911d2c848802ee740739acad3ed1f413d9f4da4c7b2c2"
+    "sha256": "3572da13155798796ee5c76a9d7d7bc0569ac1cc5f66b04a200252226071cf63"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
-    "sha256": "6359e479bf621ee6361f1317b6ee4ba11999b801ac07fc8ac4eeba19667288ce"
+    "sha256": "9664e4fb73a04a25e9b51a56447887414e41f160365117e6be67a2255a430abd"
   },
   {
     "file": "src/ClientDiscovery.cs",
@@ -385,7 +401,7 @@
   },
   {
     "file": "tests/RenderPassTraceTests.cpp",
-    "sha256": "d124bcc2085f02a461a7f38af0973f881d185e1f44675ed3fe5a6937f991eefa"
+    "sha256": "2426f2c18d70d582f14cea6acb4d20a0fef55b04de34098513e9638e38ed361e"
   },
   {
     "file": "tests/RoomStateTests.cs",

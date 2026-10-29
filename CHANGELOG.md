@@ -2,6 +2,8 @@
 
 ## Unreleased / 后续开发
 
+- Connect an opt-in exact-build native NR pass after tone mapping and before HUD rendering, with actual depth/velocity conversion, camera-layout checks, D3D11/D3D12 shared GPU fences, original target writeback, changed-pixel GPU readback and backbuffer/Present identity evidence. Earlier HDR placement failed visual checks and was replaced. NR quality, in-game SR and generated-frame presentation remain unverified. / 接通实验性原生 NR 画面链路，包含真实引导转换、相机布局校验、跨 API GPU 同步、原目标回写、像素读回和实际呈现身份检查；修正早期 HDR 接点颜色异常，画质、游戏超分与插帧仍未验收。
+- Add bounded opt-in temporal resource/camera capture with exact shader selection, deferred arming and a strict byte/frame budget; actual WARP texture and constant-buffer readbacks preserve bindings and references. Captures remain private. / 新增受限的时域资源与相机采集，限定着色器、触发时机、字节和帧数预算，真实 WARP 读回检查通过，采集数据不公开。
 - Replace time-attack preparation with the original local loading transition; a PC trial entered Village_I01 and spawned three real AI pawns. They remained stationary. / 改用原厂本地加载流程；PC 实机已进入 Village_I01 并生成三个 AI，但 AI 仍静止。
 - Add exact-build AI component registration, FollowTG preservation, native solo speed/item lobby routing, solo result-styler fallback and readiness responses. Software checks pass; real-game acceptance is pending. Native solo buttons reuse the last launcher track/AI/lap choice. / 新增构建限定的原厂 AI 组件、寻路保留、大厅个人竞速／道具转接、结算样式兜底和准备状态响应；软件检查通过，实机未验收，原生按钮沿用启动器上次赛道／AI／圈数选择。
 - Reuse existing exact-class AI components during the original registration routine; the old trial already contains movement components, so only missing components should be constructed. Real-game verification is pending. / 原厂注册流程复用 AI 已有同类型组件；旧试运行已有移动组件，仅补缺项，实机待验证。

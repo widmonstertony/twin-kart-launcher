@@ -18,10 +18,11 @@ try {
     $env:INCLUDE = $includeDirs -join ';'; $env:LIB = $libraryDirs -join ';'; $env:PATH = (Split-Path -Parent $compiler) + ';' + $oldPath
     Push-Location $build
     try {
-        & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /LD /Fo./ /FeTwinKartDriftRenderProbe.dll (Join-Path $PSScriptRoot 'DriftRenderProbe.cpp') (Join-Path $PSScriptRoot 'RenderPassTrace.cpp') /link bcrypt.lib user32.lib d3d11.lib dxgi.lib d3dcompiler.lib
+        $renderSources=@('RenderPassTrace.cpp','TemporalCapture.cpp','NativeNeuralPass.cpp','SharedTextureBridge.cpp') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+        & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /LD /Fo./ /FeTwinKartDriftRenderProbe.dll (Join-Path $PSScriptRoot 'DriftRenderProbe.cpp') $renderSources /link bcrypt.lib user32.lib d3d11.lib d3d12.lib dxgi.lib d3dcompiler.lib
         if ($LASTEXITCODE -ne 0) { throw 'Render observer build failed' }
         if ($Test) {
-            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeRenderPassTraceTests.exe (Join-Path $projectRoot 'tests\RenderPassTraceTests.cpp') (Join-Path $PSScriptRoot 'RenderPassTrace.cpp') /link bcrypt.lib user32.lib dxgi.lib d3d11.lib d3dcompiler.lib
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeRenderPassTraceTests.exe (Join-Path $projectRoot 'tests\RenderPassTraceTests.cpp') $renderSources /link bcrypt.lib user32.lib dxgi.lib d3d11.lib d3d12.lib d3dcompiler.lib
             if ($LASTEXITCODE -ne 0) { throw 'Render pass test build failed' }
             & (Join-Path $build 'RenderPassTraceTests.exe')
             if ($LASTEXITCODE -ne 0) { throw 'Render pass checks failed' }

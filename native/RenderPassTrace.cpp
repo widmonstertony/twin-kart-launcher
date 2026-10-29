@@ -183,6 +183,12 @@ bool TagShader(ID3D11DeviceChild* shader, const void* bytecode, size_t length) {
     if(stored) TagInterface(shader,bytecode,length);
     return stored;
 }
+bool ShaderHash(ID3D11DeviceChild* shader,char (&hex)[65]) {
+    hex[0]=0; Digest value{}; UINT length=sizeof(value);
+    if(!shader || FAILED(shader->GetPrivateData(ShaderDigest,&length,&value)) || length!=sizeof(value) || value.version!=1) return false;
+    for(unsigned i=0;i<32;++i) sprintf_s(hex+i*2,65-i*2,"%02x",value.hash[i]);
+    return true;
+}
 size_t DescribePass(ID3D11DeviceContext* context, bool compute, unsigned frame,
     uintptr_t callerRva, char* output, size_t capacity) {
     if (!context || !output || !capacity || context->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE) return 0;
