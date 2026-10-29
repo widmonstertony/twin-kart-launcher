@@ -9,7 +9,7 @@
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "2e491658f298f59697aa2b4c1d5cf1de232d3a49b12555ddeb2c59ed19c4aa4b"
+    "sha256": "4d9de0003f30d67bed0e0cf1f69075ece46f6f442b4d3ee70091bd91c01ba49c"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -137,7 +137,7 @@
   },
   {
     "file": "native/build-dlss.ps1",
-    "sha256": "8ccd55a0e27fbb88d1e1d83869e26dda61fd786daa001c6567c9bc8b5f39b04a"
+    "sha256": "84570cff1cede0feac18b1bc2014e9e760711ba5e6fbffd23a094861986b4ef1"
   },
   {
     "file": "native/build-frame-generation.ps1",
@@ -317,15 +317,15 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "f6db4ffb063537f57015e36cdb671f64ab6f98513bb5c04c92a9e3d92b364954"
+    "sha256": "b527c5c552bdbf9fe9feb662b3013922b611297ceb5d104968c8ef9e8cbc06df"
   },
   {
     "file": "README.md",
-    "sha256": "8008e8c2ab7dac1dfa4357199eb8d00a0c0e37b09cdd59bc0741042eb8af1654"
+    "sha256": "747a1ffed3025a6615bb01f81381fd82da84fc7232c48a2d71a0ba23135eb0fc"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
-    "sha256": "030797d0ad08499ddec0001a26e3e55de77cab8a6200f070e97e287520b2d2e5"
+    "sha256": "fe3b2907eb0d055adf0d4b043937efe62fda87d7dc6e0622da4f080f9b15c741"
   },
   {
     "file": "src/ClientDiscovery.cs",
@@ -526,6 +526,10 @@
   {
     "file": "tools/ProbeSharedTexture.cpp",
     "sha256": "b72af058eaec8e342d193aa9c8ed83f1be2ebc799e45431852942cb3ddc7a4ff"
+  },
+  {
+    "file": "tools/ProbeTemporalSR.cpp",
+    "sha256": "877f774de80731569c5eff34be77d8fb3d1ca04f9a8dad9a87c88e8552bf9128"
   },
   {
     "file": "tools/RunSession.cs",

@@ -103,6 +103,7 @@ tools/RunSession.cs
 tools/ProbeNeuralRuntime.cpp
 tools/ProbeFrameGeneration.cpp
 tools/ProbeSharedTexture.cpp
+tools/ProbeTemporalSR.cpp
 tests/*.cs
 tests/*.cpp
 tests/test_protocol_probe.py
@@ -115,6 +116,8 @@ Before any public push, review the staged file list and scan **that staged tree*
 ## Audit result on 2026-10-28
 
 The HDR temporal adapter, input/output rectangle and exposure validator, raw/resolved guide conversion, camera history revisions and WARP boundary fixtures are original code written in this project. Local captures were used only to inspect layouts and reject false 1:1 SR claims. No captured shader instructions, game textures, native function bodies or reference launcher code are published. The fixture consumer writes a known pattern; it is explicitly not NVIDIA output. Native shader hashes and interface addresses select the supported external build and are not a substitute for game acceptance.
+
+The separate original offscreen temporal SR probe dynamically calls our hash-checked D3D11 consumer with synthetic HDR/color/depth/motion resources. Real NVIDIA initialization/evaluation and GPU output readback passed. It does not create a window, swapchain or game and does not treat synthetic guides as native game evidence. The external SDK/runtime remains excluded.
 
 The new native presentation, camera-matrix decoder, owned suspended-startup loader, graphics INI policy and interoperation fixtures were independently authored here. PC interface addresses, mode-selection behavior and native setter layouts were derived from the owner's local client. The owner's iOS project is a behavioral reference, not imported launcher source. The Streamline/NGX headers and implementations remain separately supplied dependencies. Source fixtures create only their own tiny executable/DLL or hidden WARP resources; they do not launch vendor games or establish gameplay/visual acceptance.
 
