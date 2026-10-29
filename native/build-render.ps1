@@ -22,12 +22,16 @@ try {
     $env:INCLUDE = $includeDirs -join ';'; $env:LIB = $libraryDirs -join ';'; $env:PATH = (Split-Path -Parent $compiler) + ';' + $oldPath
     Push-Location $build
     try {
-        $renderSources=@('RenderPassTrace.cpp','TemporalCapture.cpp','NativeNeuralPass.cpp','NativeTemporalPass.cpp','SharedTextureBridge.cpp','NativePresentation.cpp') | ForEach-Object { Join-Path $PSScriptRoot $_ }
+        $renderSources=@('RenderPassTrace.cpp','TemporalCapture.cpp','NativeNeuralPass.cpp','NativeTemporalPass.cpp','NativeFrameMarkers.cpp','SharedTextureBridge.cpp','NativePresentation.cpp') | ForEach-Object { Join-Path $PSScriptRoot $_ }
         $features=@()
         if($StreamlineSdkRoot) { $renderSources+=Join-Path $PSScriptRoot 'FrameGenerationD3D12.cpp';$features+='/DTWIN_KART_FRAME_PRESENTATION=1' }
         & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT $features /LD /Fo./ /FeTwinKartDriftRenderProbe.dll (Join-Path $PSScriptRoot 'DriftRenderProbe.cpp') $renderSources /link bcrypt.lib user32.lib d3d11.lib d3d12.lib dxgi.lib d3dcompiler.lib wintrust.lib crypt32.lib
         if ($LASTEXITCODE -ne 0) { throw 'Render observer build failed' }
         if ($Test) {
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeNativeFrameMarkersTests.exe (Join-Path $projectRoot 'tests\NativeFrameMarkersTests.cpp')
+            if($LASTEXITCODE -ne 0) { throw 'Native frame marker test build failed' }
+            & (Join-Path $build 'NativeFrameMarkersTests.exe')
+            if($LASTEXITCODE -ne 0) { throw 'Native frame marker checks failed' }
             & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT $features /Fo./ /FeRenderPassTraceTests.exe (Join-Path $projectRoot 'tests\RenderPassTraceTests.cpp') $renderSources /link bcrypt.lib user32.lib dxgi.lib d3d11.lib d3d12.lib d3dcompiler.lib wintrust.lib crypt32.lib
             if ($LASTEXITCODE -ne 0) { throw 'Render pass test build failed' }
             & (Join-Path $build 'RenderPassTraceTests.exe')
@@ -58,6 +62,10 @@ try {
             & (Join-Path $build 'OwnedGameStartupTests.exe') (Join-Path $build 'StartupFixture.exe') (Join-Path $build 'StartupFixture.dll')
             if($LASTEXITCODE -ne 0) { throw 'Owned startup checks failed' }
             if($StreamlineSdkRoot) {
+                & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeFrameGenerationNativeTests.exe (Join-Path $projectRoot 'tests\FrameGenerationNativeTests.cpp') /link user32.lib wintrust.lib crypt32.lib
+                if($LASTEXITCODE -ne 0) { throw 'Native Streamline boundary test build failed' }
+                & (Join-Path $build 'FrameGenerationNativeTests.exe')
+                if($LASTEXITCODE -ne 0) { throw 'Native Streamline boundary checks failed' }
                 $interopSources=$renderSources | Where-Object { (Split-Path -Leaf $_) -ne 'NativePresentation.cpp' }
                 & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT $features /Fo./ /FePresentationInteropTests.exe (Join-Path $projectRoot 'tests\PresentationInteropTests.cpp') $interopSources /link bcrypt.lib user32.lib dxgi.lib d3d11.lib d3d12.lib d3dcompiler.lib wintrust.lib crypt32.lib
                 if($LASTEXITCODE -ne 0) { throw 'Native presentation boundary test build failed' }

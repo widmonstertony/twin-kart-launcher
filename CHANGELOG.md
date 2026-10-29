@@ -2,6 +2,10 @@
 
 ## Unreleased / 后续开发
 
+- Wire real native simulation/render/present markers, 64-bit frame correlation, simulation-thread Reflex pacing and provider tokens; defer packed-client slot installation until swapchain creation. / 接入真实原生模拟／渲染／呈现时序、64 位帧关联、模拟线程节奏及 NVIDIA token；原生接口在解包后创建显示链时安装。
+- A focused synthetic GPU fixture rendered 120 frames and presented 233 (113 extra-frame reports). No game was started, and game FG/quality acceptance remains pending. / 聚焦合成 GPU 测试渲染 120 帧、显示 233 帧（113 次报告额外生成帧）；没有启动游戏，游戏内效果待验收。
+- Scope local AI/result hooks to the original world's object identity; allow exact native variant definitions without suffix filtering; request lower native screen percentage in engine configuration as well as user settings. / AI／结算钩子限定原生世界身份；精确赛道定义不因后缀被过滤；引擎配置与用户设置同时请求低分辨率。
+
 - Fix the native FG race-state gate: CurrentPhase is a UPhase containing transition rules, not a UTransition_BeginRace instance. Compare the independently verified native BeginRace/RetireCountdown FNames and retain pause/stale-state rejection. Source regression only; no game or generated-frame acceptance. / 修复将比赛阶段误当转换规则的判断错误；使用已核对的原生阶段名称，保留暂停与过期快照保护，未启动游戏验收。
 - Add a hash-checked offscreen D3D11 SR probe. Two actual NVIDIA HDR evaluations and GPU readback pass at 640×360 → 1280×720, with 921,600 finite nonzero output pixels and preserved native pipeline state. Synthetic input only; no window/Present/game and no native temporal-source or quality acceptance. / 新增 NVIDIA D3D11 超分实际计算与离屏读回验证，合成输入检查通过，不冒充游戏验收。
 - Add an independently authored pre-AA HDR temporal SR candidate with exact shader selection, reflected compute-group validation, padded input/output rectangles, native jitter/pre-exposure and original D3D11 NGX evaluation. Actual WARP boundary tests cover cropped conversion, exact output writes, state restoration and failure fallback with a synthetic consumer; actual in-game upscaling remains unverified. / 新增抗锯齿前 HDR 时域超分候选与 GPU 接口测试，未将合成测试当作游戏验收。

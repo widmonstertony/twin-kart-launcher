@@ -9,6 +9,9 @@
 #include <cmath>
 #include <cstring>
 #include <string>
+#include <atomic>
+#include "NativeFrameMarkers.h"
+#include "NativeFrameTimeline.h"
 
 namespace TwinKartGraphics {
 namespace {
@@ -32,6 +35,32 @@ struct FrameGeneration::Impl {
     PFun_slDLSSGGetState* state=nullptr; PFun_slDLSSGSetOptions* setOptions=nullptr;
     PFun_slReflexSetOptions* reflex=nullptr; PFun_slReflexSleep* sleep=nullptr; PFun_slPCLSetMarker* marker=nullptr;
     GenerationState result{};
+    SRWLOCK nativeLock=SRWLOCK_INIT;
+    NativeFrameTimeline nativeFrames;
+    std::atomic<bool> acceptingNative{false};
+    std::atomic<unsigned> nativeCallbacks{0};
+    DWORD simulationThread=0;
+    unsigned long long lastNativeUsed=0;
+    bool haveNativeUsed=false;
+    std::shared_ptr<NativeFrameMarkerSink> nativeSink;
+    void NativeMarker(FrameStage,unsigned long long);
+    unsigned Camera(const CameraFrame&);
+    struct Sink final:NativeFrameMarkerSink {
+        std::weak_ptr<Impl> owner;
+        explicit Sink(const std::shared_ptr<Impl>& value):owner(value){}
+        void Observe(FrameStage stage,unsigned long long frame) override {
+            auto selected=owner.lock();if(!selected)return;
+            AcquireSRWLockExclusive(&selected->nativeLock);
+            bool admitted=selected->acceptingNative.load(std::memory_order_acquire);
+            if(admitted)selected->nativeCallbacks.fetch_add(1);
+            ReleaseSRWLockExclusive(&selected->nativeLock);if(!admitted)return;
+            struct Callback {
+                Impl* target;explicit Callback(Impl* value):target(value){}
+                ~Callback(){target->nativeCallbacks.fetch_sub(1);}
+            } callback(selected.get());
+            selected->NativeMarker(stage,frame);
+        }
+    };
     bool Owner() const { return thread==GetCurrentThreadId(); }
     template<class T> bool Import(T*& target,const char* name) { target=reinterpret_cast<T*>(GetProcAddress(module,name)); return target!=nullptr; }
     template<class T> bool Feature(T*& target,unsigned id,const char* name) {
@@ -43,8 +72,8 @@ struct FrameGeneration::Impl {
         if(parent) parent->Release(); return same;
     }
 };
-FrameGeneration::FrameGeneration():impl(new Impl) {}
-FrameGeneration::~FrameGeneration() { Shutdown(); delete impl; }
+FrameGeneration::FrameGeneration():impl(std::make_shared<Impl>()) {}
+FrameGeneration::~FrameGeneration() { Shutdown(); }
 unsigned FrameGeneration::Load(const wchar_t* directory,const wchar_t* logDirectory) {
     if(impl->module || !directory || !directory[0]) return Invalid;
     std::wstring path=std::wstring(directory)+L"\\sl.interposer.dll";
@@ -89,28 +118,76 @@ unsigned FrameGeneration::Configure(unsigned multiplier,unsigned width,unsigned 
     options.enableUserInterfaceRecomposition=sl::Boolean::eTrue;
     result=impl->setOptions(impl->viewport,options); impl->configured=result==sl::Result::eOk; return Code(result);
 }
-unsigned FrameGeneration::BeginFrame(unsigned index,const CameraFrame& camera) {
-    if(!impl->Owner()) return WrongThread;
-    if(!impl->configured || !Finite(camera.viewToClip,16) || !Finite(camera.clipToView,16) || !Finite(camera.clipToPrevious,16) || !Finite(camera.previousToClip,16) ||
+unsigned FrameGeneration::Impl::Camera(const CameraFrame& camera) {
+    if(!Owner()) return WrongThread;
+    if(!configured || !token || !Finite(camera.viewToClip,16) || !Finite(camera.clipToView,16) || !Finite(camera.clipToPrevious,16) || !Finite(camera.previousToClip,16) ||
        !Finite(camera.position,3) || !Finite(camera.up,3) || !Finite(camera.right,3) || !Finite(camera.forward,3) ||
        !std::isfinite(camera.jitterX) || !std::isfinite(camera.jitterY) || !std::isfinite(camera.motionScaleX) || !std::isfinite(camera.motionScaleY) ||
        !camera.motionScaleX || !camera.motionScaleY || !std::isfinite(camera.nearPlane) || !std::isfinite(camera.farPlane) || camera.nearPlane<=0 || camera.farPlane<=camera.nearPlane ||
        !std::isfinite(camera.fieldOfView) || camera.fieldOfView<=0 || camera.fieldOfView>=3.141593f || !std::isfinite(camera.aspect) || camera.aspect<=0) return Invalid;
-    auto result=impl->frameToken(impl->token,&index); if(result!=sl::Result::eOk) return Code(result); if(!impl->token) return Invalid;
-    result=impl->sleep(*impl->token); if(result!=sl::Result::eOk) return Code(result);
-    sl::Constants constants{};
+    sl::Constants values{};
     const float identity[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
-    memcpy(&constants.clipToLensClip,identity,sizeof(identity)); constants.cameraPinholeOffset={0,0};
-    memcpy(&constants.cameraViewToClip,camera.viewToClip,sizeof(camera.viewToClip)); memcpy(&constants.clipToCameraView,camera.clipToView,sizeof(camera.clipToView));
-    memcpy(&constants.clipToPrevClip,camera.clipToPrevious,sizeof(camera.clipToPrevious)); memcpy(&constants.prevClipToClip,camera.previousToClip,sizeof(camera.previousToClip));
-    memcpy(&constants.cameraPos,camera.position,sizeof(camera.position)); memcpy(&constants.cameraUp,camera.up,sizeof(camera.up));
-    memcpy(&constants.cameraRight,camera.right,sizeof(camera.right)); memcpy(&constants.cameraFwd,camera.forward,sizeof(camera.forward));
-    constants.jitterOffset={camera.jitterX,camera.jitterY}; constants.mvecScale={camera.motionScaleX,camera.motionScaleY};
-    constants.cameraNear=camera.nearPlane; constants.cameraFar=camera.farPlane; constants.cameraFOV=camera.fieldOfView; constants.cameraAspectRatio=camera.aspect;
-    constants.depthInverted=camera.invertedDepth?sl::Boolean::eTrue:sl::Boolean::eFalse; constants.reset=camera.reset?sl::Boolean::eTrue:sl::Boolean::eFalse;
-    constants.cameraMotionIncluded=sl::Boolean::eTrue; constants.motionVectors3D=sl::Boolean::eFalse;
-    constants.motionVectorsJittered=sl::Boolean::eFalse; constants.orthographicProjection=sl::Boolean::eFalse; constants.motionVectorsDilated=sl::Boolean::eFalse;
-    return Code(impl->constants(constants,*impl->token,impl->viewport));
+    memcpy(&values.clipToLensClip,identity,sizeof(identity)); values.cameraPinholeOffset={0,0};
+    memcpy(&values.cameraViewToClip,camera.viewToClip,sizeof(camera.viewToClip)); memcpy(&values.clipToCameraView,camera.clipToView,sizeof(camera.clipToView));
+    memcpy(&values.clipToPrevClip,camera.clipToPrevious,sizeof(camera.clipToPrevious)); memcpy(&values.prevClipToClip,camera.previousToClip,sizeof(camera.previousToClip));
+    memcpy(&values.cameraPos,camera.position,sizeof(camera.position)); memcpy(&values.cameraUp,camera.up,sizeof(camera.up));
+    memcpy(&values.cameraRight,camera.right,sizeof(camera.right)); memcpy(&values.cameraFwd,camera.forward,sizeof(camera.forward));
+    values.jitterOffset={camera.jitterX,camera.jitterY}; values.mvecScale={camera.motionScaleX,camera.motionScaleY};
+    values.cameraNear=camera.nearPlane; values.cameraFar=camera.farPlane; values.cameraFOV=camera.fieldOfView; values.cameraAspectRatio=camera.aspect;
+    values.depthInverted=camera.invertedDepth?sl::Boolean::eTrue:sl::Boolean::eFalse; values.reset=camera.reset?sl::Boolean::eTrue:sl::Boolean::eFalse;
+    values.cameraMotionIncluded=sl::Boolean::eTrue; values.motionVectors3D=sl::Boolean::eFalse;
+    values.motionVectorsJittered=sl::Boolean::eFalse; values.orthographicProjection=sl::Boolean::eFalse; values.motionVectorsDilated=sl::Boolean::eFalse;
+    return Code(constants(values,*token,viewport));
+}
+unsigned FrameGeneration::BeginFrame(unsigned index,const CameraFrame& camera) {
+    if(!impl->Owner())return WrongThread;if(!impl->configured || impl->acceptingNative.load())return Invalid;
+    auto result=impl->frameToken(impl->token,&index);if(result!=sl::Result::eOk)return Code(result);if(!impl->token)return Invalid;
+    result=impl->sleep(*impl->token);if(result!=sl::Result::eOk)return Code(result);
+    return impl->Camera(camera);
+}
+void FrameGeneration::Impl::NativeMarker(FrameStage stage,unsigned long long id) {
+    sl::FrameToken* selected=nullptr;bool valid=false;
+    AcquireSRWLockExclusive(&nativeLock);
+    if(stage==FrameStage::SimulationStart && !simulationThread)simulationThread=GetCurrentThreadId();
+    bool sim=stage==FrameStage::SimulationStart || stage==FrameStage::SimulationEnd;
+    auto ticket=(!sim || simulationThread==GetCurrentThreadId())?nativeFrames.Advance(stage,id,GetTickCount64()):nullptr;
+    if(ticket) {
+        if(stage==FrameStage::SimulationStart) {
+            auto tokenResult=frameToken(selected,&ticket->index);
+            if(tokenResult==sl::Result::eOk && selected)ticket->token=selected;else ticket->failed=true;
+        } else selected=static_cast<sl::FrameToken*>(ticket->token);
+        valid=selected && !ticket->failed;
+    }
+    ReleaseSRWLockExclusive(&nativeLock);
+    if(!ticket)return;
+    sl::Result markerResult=valid?sl::Result::eOk:static_cast<sl::Result>(Invalid);
+    // Pacing occurs on the actual native simulation thread before its start
+    // marker. Never sleep while holding the ledger lock needed by rendering.
+    if(valid && stage==FrameStage::SimulationStart)markerResult=sleep(*selected);
+    if(markerResult==sl::Result::eOk) {
+        const sl::PCLMarker stages[]{sl::PCLMarker::eSimulationStart,sl::PCLMarker::eSimulationEnd,
+            sl::PCLMarker::eRenderSubmitStart,sl::PCLMarker::eRenderSubmitEnd,sl::PCLMarker::ePresentStart,sl::PCLMarker::ePresentEnd};
+        markerResult=marker(stages[static_cast<unsigned>(stage)],*selected);
+    }
+    AcquireSRWLockExclusive(&nativeLock);nativeFrames.Complete(id,stage,markerResult==sl::Result::eOk);ReleaseSRWLockExclusive(&nativeLock);
+}
+bool FrameGeneration::AttachNativeMarkers() {
+    if(!impl->Owner() || !impl->configured || impl->nativeSink)return false;
+    auto selected=std::make_shared<Impl::Sink>(impl);
+    impl->acceptingNative.store(true,std::memory_order_release);
+    if(!BindNativeFrameMarkerSink(selected)){impl->acceptingNative.store(false);return false;}
+    impl->nativeSink=selected;return true;
+}
+unsigned FrameGeneration::BeginNativeFrame(unsigned long long nativeFrame,const CameraFrame& input) {
+    if(!impl->Owner())return WrongThread;if(!impl->configured || !impl->acceptingNative.load())return Invalid;
+    AcquireSRWLockExclusive(&impl->nativeLock);
+    auto ticket=impl->nativeFrames.ForPresent(nativeFrame,GetTickCount64());
+    impl->token=ticket?static_cast<sl::FrameToken*>(ticket->token):nullptr;
+    ReleaseSRWLockExclusive(&impl->nativeLock);if(!impl->token)return MissingGuides;
+    CameraFrame camera=input;camera.reset=camera.reset || !impl->haveNativeUsed || nativeFrame!=impl->lastNativeUsed+1;
+    unsigned result=impl->Camera(camera);
+    if(!result){impl->lastNativeUsed=nativeFrame;impl->haveNativeUsed=true;}
+    return result;
 }
 bool FrameGeneration::AdoptInitialRenderThread() {
     if(!impl->bound || impl->token)return impl->Owner();
@@ -173,7 +250,15 @@ GenerationState FrameGeneration::Presented() {
     return impl->result;
 }
 void FrameGeneration::Shutdown() {
-    if(!impl || !impl->Owner()) return;
+    if(!impl)return;
+    AcquireSRWLockExclusive(&impl->nativeLock);impl->acceptingNative.store(false,std::memory_order_release);ReleaseSRWLockExclusive(&impl->nativeLock);
+    if(impl->nativeSink)RemoveNativeFrameMarkerSink(impl->nativeSink);
+    ULONGLONG start=GetTickCount64();
+    while(impl->nativeCallbacks.load(std::memory_order_acquire) && GetTickCount64()-start<10000)Sleep(1);
+    // If a provider callback hangs, retain its raw device/runtime resources
+    // until process exit rather than free resources while it is executing.
+    if(impl->nativeCallbacks.load(std::memory_order_acquire))return;
+    impl->nativeSink.reset();
     if(impl->configured) { impl->options.mode=sl::DLSSGMode::eOff; impl->setOptions(impl->viewport,impl->options); impl->configured=false; }
     if(impl->initialized) { if(impl->bound) impl->freeResources(sl::kFeatureDLSS_G,impl->viewport); impl->shutdown(); impl->initialized=false; }
     if(impl->device) { impl->device->Release(); impl->device=nullptr; } impl->bound=false; impl->token=nullptr;

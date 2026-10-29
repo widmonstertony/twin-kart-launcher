@@ -1,6 +1,7 @@
 #pragma once
 #include <windows.h>
 #include <d3d12.h>
+#include <memory>
 namespace TwinKartGraphics {
 struct CameraFrame {
     float viewToClip[16],clipToView[16],clipToPrevious[16],previousToClip[16];
@@ -24,8 +25,11 @@ enum class FrameStage { SimulationStart,SimulationEnd,RenderSubmitStart,RenderSu
 // Original Streamline integration. Load BEFORE any graphics API/device or
 // factory creation. It neither identifies game passes nor invents camera data.
 class FrameGeneration {
+#ifdef TWIN_KART_FRAME_GENERATION_FIXTURE
+    friend struct FrameGenerationFixture;
+#endif
     struct Impl;
-    Impl* impl;
+    std::shared_ptr<Impl> impl;
 public:
     FrameGeneration();
     ~FrameGeneration();
@@ -39,6 +43,8 @@ public:
     bool AdoptInitialRenderThread();
     unsigned SetActive(bool);
     unsigned BeginFrame(unsigned index,const CameraFrame& camera);
+    bool AttachNativeMarkers();
+    unsigned BeginNativeFrame(unsigned long long nativeFrame,const CameraFrame& camera);
     unsigned Marker(FrameStage stage);
     unsigned Tag(const GenerationResources& resources);
     GenerationState Presented();

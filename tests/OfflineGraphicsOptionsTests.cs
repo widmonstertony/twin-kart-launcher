@@ -17,6 +17,15 @@ static class OfflineGraphicsOptionsTests
         Need(Encoding.UTF8.GetString(source)==ini,"Source configuration buffer changed.");
         Need(output.Contains("ScreenPercentage=66.666667,Gamma=1.250000,TextureQuality=3") && output.Contains("[Other]\r\nGraphicSetting=(ScreenPercentage=90)"),"Unrelated native graphics setting changed.");
         Need(output.Contains("bUseDynamicResolution=False"),"Dynamic resolution could override the requested input.");
+        string engine="[Other]\nr.ScreenPercentage=90\n[SystemSettings]\nr.ScreenPercentage=250\nr.ShadowQuality=3\n[Unchanged]\nKey=Value";
+        byte[] engineSource=Encoding.UTF8.GetBytes(engine);
+        string engineOutput=Encoding.UTF8.GetString(p.RouteEngineSettings(engineSource));
+        Need(Encoding.UTF8.GetString(engineSource)==engine && engineOutput.Contains("[Other]\r\nr.ScreenPercentage=90") &&
+            engineOutput.Contains("[SystemSettings]\r\nr.ScreenPercentage=66.666667\r\nr.ShadowQuality=3") &&
+            engineOutput.Contains("[Unchanged]\r\nKey=Value"),"Native engine cvar request changed unrelated settings");
+        Need(Encoding.UTF8.GetString(p.RouteEngineSettings(Encoding.UTF8.GetBytes(engineOutput)))==engineOutput,"Engine cvar request not idempotent");
+        Reject(()=>p.RouteEngineSettings(Encoding.UTF8.GetBytes("[SystemSettings]\nr.ScreenPercentage=50\nR.SCREENPERCENTAGE=60")));
+        Reject(()=>p.RouteEngineSettings(Encoding.UTF8.GetBytes("[SystemSettings]\n[SystemSettings]")));
         Need(Encoding.UTF8.GetString(p.RouteUserSettings(Encoding.UTF8.GetBytes(output)))==output,"Graphics routing is not idempotent.");
         Reject(()=>p.RouteUserSettings(Encoding.UTF8.GetBytes("[/Script/KartDrift.KartGameUserSettings]\nGraphicSetting=(ScreenPercentage=50,ScreenPercentage=60)")));
         Reject(()=>p.RouteUserSettings(Encoding.UTF8.GetBytes("[/Script/KartDrift.KartGameUserSettings]\n[/Script/KartDrift.KartGameUserSettings]")));
@@ -27,6 +36,7 @@ static class OfflineGraphicsOptionsTests
         string fgOnly=Encoding.UTF8.GetString(p.RouteUserSettings(Encoding.UTF8.GetBytes("[/Script/KartDrift.KartGameUserSettings]\nGraphicSetting=(ScreenPercentage=80,ReflexMode=1,Gamma=1.2)")));
         Need(fgOnly.Contains("ScreenPercentage=80,ReflexMode=0,Gamma=1.2"),"FG-only policy changed resolution or retained competing native Reflex.");
         p.FrameGeneration=false;Need(Object.ReferenceEquals(source,p.RouteUserSettings(source)),"Disabled policy rewrote user bytes.");
+        Need(Object.ReferenceEquals(source,p.RouteEngineSettings(source)),"Disabled SR policy rewrote engine bytes");
         string scratch=Path.Combine(Path.GetTempPath(),"TwinKartGraphicsPreflight-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(scratch);
         try {
             string module=Path.Combine(scratch,"original-fixture.bin");File.WriteAllText(module,"original fixture, never loaded");

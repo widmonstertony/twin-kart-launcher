@@ -1,6 +1,7 @@
 #pragma once
 #include "OwnedCodePatch.h"
 #include "DriftObjectIdentity.h"
+#include "LocalRaceWorld.h"
 
 namespace TwinKartLocalRace {
 using Spawn=bool(__fastcall*)(void*,void*,int,void*,void**,bool*);
@@ -20,6 +21,7 @@ inline AutoDrive autoDrive=nullptr;
 inline ResultInit resultInit=nullptr;
 inline Construct construct=nullptr;
 inline BYTE* registrationActor=nullptr;
+inline LocalRaceWorld raceWorld;
 inline TwinKartNative::OwnedCodePatch spawnPatch,statePatch,driverPatch,resultPatch;
 inline TwinKartNative::OwnedCodePatch constructionPatches[5];
 inline bool AiSlot(int slot,int players,int ais) {
@@ -36,9 +38,34 @@ inline BYTE* World(BYTE* component) {
     auto world=reinterpret_cast<Get>(image+0x3ddf4b0)(component);
     return Live(world) && !*reinterpret_cast<void**>(world+0x38)?world:nullptr;
 }
-inline bool Local(BYTE* rule) {
+inline bool Eligible(BYTE* rule) {
     return armed && GetCurrentThreadId()==owner && Live(rule) &&
         *reinterpret_cast<void**>(rule)==image+0x51dd410 && World(rule);
+}
+inline bool InRaceWorld(BYTE* component) {
+    if(!armed || GetCurrentThreadId()!=owner || !Live(component))return false;
+    return raceWorld.Matches(World(component),*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0),
+        *reinterpret_cast<int*>(image+0x69c28c4));
+}
+inline bool Local(BYTE* rule) {return Eligible(rule) && InRaceWorld(rule);}
+inline bool BindWorld(BYTE* rule) {
+    if(!Eligible(rule))return false;
+    if(*reinterpret_cast<int*>(rule+0x130)!=1 || *reinterpret_cast<int*>(rule+0x138)<1 ||
+       *reinterpret_cast<int*>(rule+0x138)>7)return false;
+    auto world=World(rule);
+    auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
+    int count=*reinterpret_cast<int*>(image+0x69c28c4);
+    TwinKartCamera::ObjectIdentity identity{};
+    if(!TwinKartCamera::Capture(world,chunks,count,&identity)) {
+        // Native FWeakObjectPtr assignment allocates a missing serial using
+        // the original engine, as in our existing cockpit lifecycle adapter.
+        struct Weak {int index,serial;} weak{-1,0};
+        using Assign=void(__fastcall*)(Weak*,void*);
+        reinterpret_cast<Assign>(image+0x2796c20)(&weak,world);
+        if(!TwinKartCamera::Capture(world,chunks,count,&identity) ||
+            identity.index!=weak.index || identity.serial!=weak.serial)return false;
+    }
+    return raceWorld.Bind(identity,chunks,count);
 }
 inline void Emit(const char* name,int slot,int value) { if(event) event(name,slot,value); }
 inline void* __fastcall OnConstruct(void* parameters) {
@@ -73,7 +100,7 @@ inline void RegisterMissing(BYTE* actor) {
 inline void RestoreConstruction() { for(auto& patch:constructionPatches) patch.Restore(); }
 inline bool __fastcall OnSpawn(void* raw,void* mode,int slot,void* start,void** pawn,bool* isAi) {
     auto rule=static_cast<BYTE*>(raw);
-    if(Local(rule) && isAi) {
+    if(BindWorld(rule) && isAi) {
         int players=*reinterpret_cast<int*>(rule+0x130),ais=*reinterpret_cast<int*>(rule+0x138);
         if(players==1 && ais>=1 && ais<=7 && slot>=0 && slot<players+ais) {
             *isAi=AiSlot(slot,players,ais);
@@ -146,7 +173,7 @@ inline void __fastcall OnUnknown(void* raw,void* rawPawn,int slot,bool flag) {
 }
 inline void __fastcall OnAutoDrive(void* raw,bool enabled) {
     auto movement=static_cast<BYTE*>(raw);
-    if(armed && GetCurrentThreadId()==owner && Live(movement) && World(movement)) {
+    if(InRaceWorld(movement)) {
         BYTE* path=*reinterpret_cast<BYTE**>(movement+0xf08);
         if(Live(path)) {
             using Type=void*(__fastcall*)();
@@ -161,7 +188,7 @@ inline void __fastcall OnAutoDrive(void* raw,bool enabled) {
 }
 inline void __fastcall OnResultInit(void* raw,const void* resultClass,const void* playerClass,const void* pointClass,void** provider,void** styler) {
     auto component=static_cast<BYTE*>(raw);
-    if(armed && (armedMode==1 || armedMode==4) && GetCurrentThreadId()==owner && Live(component) && World(component) && styler && !*styler) {
+    if((armedMode==1 || armedMode==4) && InRaceWorld(component) && styler && !*styler) {
         // Original solo factories return native-owned TUniquePtr storage in
         // RDX; RCX is unused by these exact two implementations. The original
         // Init consumes the pointer and owns all ranking/time data and UI.
@@ -199,5 +226,5 @@ inline bool Install(BYTE* base,Event callback) {
     }
     installed=true; Emit("native_local_ai_hooks_installed",-1,1); return true;
 }
-inline void Arm(int mode) { armedMode=mode; armed=true; }
+inline void Arm(int mode) {raceWorld.Reset();armedMode=mode;armed=mode==1 || mode==4;}
 }

@@ -17,6 +17,7 @@
 #include "NativeGuideShader.h"
 #include "TemporalHistory.h"
 #include "NativeTemporalPass.h"
+#include "NativeFrameMarkers.h"
 using Microsoft::WRL::ComPtr;
 namespace TwinKartGraphics {
 namespace {
@@ -80,6 +81,7 @@ struct Runtime {
     LARGE_INTEGER frequency{},lastTime{};
     CameraFrame camera{};bool cameraValid=false;unsigned cameraWidth=0,cameraHeight=0;
     TemporalHistory history;
+    unsigned long long nativeFrame=0;bool nativeFrameObserved=false;
     unsigned width=0,height=0,lastFrame=0; UINT64 nextFence=0,evaluations=0;
     HMODULE module=nullptr; HANDLE completion=nullptr; DWORD owner=0;
     // An address for same-frame identity comparison only, never dereferenced.
@@ -354,6 +356,7 @@ bool ProcessNativeNeuralPixelPass(ID3D11DeviceContext* context,unsigned frame) {
     if(!submitted || !returned || result!=1) {disabled=true;Event("nr_native_evaluate_failed",frame,result);return false;}
     ++r.evaluations;
     r.history.Commit(frame,revision,r.camera);
+    r.nativeFrameObserved=CurrentNativeRenderFrame(r.nativeFrame);
     if(useSr && srResult==1) {
         ++r.superEvaluations;r.lastSuperFrame=frame;
         if(r.superEvaluations<=3 || r.superEvaluations%120==0)Event("sr_native_output_submitted_to_nr",frame,srResult,target.Get());
@@ -379,6 +382,7 @@ bool GetNativePresentationInputs(unsigned frame,NativePresentationInputs& inputs
     if(!runtime || disabled || runtime->owner!=GetCurrentThreadId() || !runtime->cameraValid || runtime->lastOutputFrame!=frame)return false;
     inputs.depth=runtime->depth.Get();inputs.motion=runtime->motion.Get();inputs.hudless=runtime->outputBridge.Texture11();
     inputs.camera=ResolvedPresentationCamera(runtime->camera,runtime->width,runtime->height);
+    inputs.nativeFrame=runtime->nativeFrame;inputs.nativeFrameObserved=runtime->nativeFrameObserved;
     return inputs.depth && inputs.motion && inputs.hudless;
 }
 void FinishNativeNeuralFrame(unsigned frame) {

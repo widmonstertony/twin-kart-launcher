@@ -1,11 +1,12 @@
 # Source provenance and public package boundary
 
-This project is intended to become an **independent public repository, not a fork**. The code listed below was written for this launcher from scratch using documented Windows/.NET/Python APIs and facts observed from the installed clients and behavioral study of the reference project. It does not contain the original games, proprietary art, a copied launcher, or a reconstructed game implementation. The original launcher now starts the original profile backend and an externally supplied Drift client; real login/inventory/equipment traffic is accepted. Complete offline races, AI and final DLSS rendering remain unfinished.
+This project is an **independent public repository, not a fork**. The code listed below was written for this launcher from scratch using documented Windows/.NET/Python APIs and facts observed from the installed clients and behavioral study of the reference project. It does not contain the original games, proprietary art, a copied launcher, or a reconstructed game implementation. The original launcher now starts the original profile backend and an externally supplied Drift client; real login/inventory/equipment traffic is accepted. Complete offline races, AI and final DLSS rendering remain unfinished.
 
 ## First-party source modules
 
 | Module | Original work in this project | Standard dependencies |
 |---|---|---|
+| `native/NativeFrameMarkers.*`, `NativeFrameTimeline.h`, `LocalRaceWorld.h` | Independently mapped six-stage native marker observation, original provider-token correlation/pacing integration and serial-checked local-world lifetime scope. Original C++ fixtures cover forwarding, thread/failure behavior and recycled objects. No client instructions, shader bytecode, SDK implementation or game assets are distributed. | C++17, Windows SDK, separately supplied Streamline headers/runtime for FG. |
 | `src/MainForm.cs`, `Profiles.cs`, `ClientDiscovery.cs` | WinForms workflow, separate Classic/Drift profiles, calibration persistence, local Steam discovery and PE/SHA-256 inspection. | .NET Framework 4.8, Windows Registry/file APIs. |
 | `src/DeviceInput.cs`, `SharedPad.cs` | Managed DirectInput wrapper and session-scoped 64-byte input channel. | .NET interop and memory-mapped files. |
 | `src/CockpitForm.cs`, `native/CameraControl.h` | Original cockpit settings UI, persistent/live head/seat/FOV control contract, strict bounds and atomic file replacement handling. | .NET WinForms and Windows SDK. |

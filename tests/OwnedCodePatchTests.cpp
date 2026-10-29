@@ -12,6 +12,17 @@ int __fastcall EntryReplacement(int value) { return originalEntry(value)+10; }
 void Need(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
 int main() {
     try {
+        BYTE worldA[32]{},worldB[32]{};
+        *reinterpret_cast<int*>(worldA+0xc)=0;*reinterpret_cast<int*>(worldB+0xc)=1;
+        TwinKartCamera::ObjectSlot worldSlots[2]{};TwinKartCamera::ObjectSlot* worldChunks[]{worldSlots};
+        worldSlots[0].object=worldA;worldSlots[0].serial=11;worldSlots[1].object=worldB;worldSlots[1].serial=12;
+        TwinKartLocalRace::LocalRaceWorld scope;
+        Need(scope.Bind({worldA,0,11},worldChunks,2) && scope.Matches(worldA,worldChunks,2),"Local race world binding");
+        Need(!scope.Bind({worldB,1,12},worldChunks,2) && !scope.Matches(worldB,worldChunks,2),"Local overrides escaped to a different world");
+        worldSlots[0].serial=13;
+        Need(!scope.Matches(worldA,worldChunks,2) && !scope.Bind({worldA,0,13},worldChunks,2),"Recycled world address inherited local overrides");
+        scope.Reset();Need(scope.Bind({worldB,1,12},worldChunks,2),"New local request could not bind its new world");
+        worldSlots[1].flags=0x20000000;Need(!scope.Matches(worldB,worldChunks,2),"Destroyed world accepted");
         auto code=static_cast<BYTE*>(VirtualAlloc(nullptr,4096,MEM_COMMIT|MEM_RESERVE,PAGE_READWRITE));
         Need(code!=nullptr,"Fixture allocation");
         // Original Windows x64 call frame with mandatory home space/alignment.

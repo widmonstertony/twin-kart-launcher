@@ -19,6 +19,7 @@ HRESULT PresentNativePresentation(IDXGISwapChain*,UINT,UINT,unsigned){return E_N
 #include "FrameGenerationD3D12.h"
 #include "SharedTextureBridge.h"
 #include "NativeNeuralPass.h"
+#include "NativeFrameMarkers.h"
 using Microsoft::WRL::ComPtr;
 namespace TwinKartGraphics {
 namespace {
@@ -127,7 +128,7 @@ public:
 #endif
     ~PresentationChain(){
         Internal nested;
-        if(renderThread==GetCurrentThreadId())Wait();
+        if(renderThread)Wait();
         generation.Shutdown();buffers.reset();display.Reset();
         if(completed)CloseHandle(completed);
         AcquireSRWLockExclusive(&chainLock);if(activeChain==this)activeChain=nullptr;ReleaseSRWLockExclusive(&chainLock);
@@ -157,6 +158,7 @@ public:
         hr=factory->CreateSwapChainForHwnd(queue.Get(),desc.OutputWindow,&target,&fullscreen,nullptr,&chain);
         if(FAILED(hr) || FAILED(hr=chain.As(&display)))return hr;
         factory->MakeWindowAssociation(desc.OutputWindow,DXGI_MWA_NO_ALT_ENTER);
+        if(!generation.AttachNativeMarkers())return E_FAIL;
         return S_OK;
     }
     HRESULT DoPresent(UINT interval,UINT flags,unsigned renderFrame) {
@@ -179,7 +181,9 @@ public:
         }
         if(failed)return E_FAIL;
         unsigned w=nativeDesc.BufferDesc.Width,h=nativeDesc.BufferDesc.Height;
-        NativePresentationInputs guides;bool haveGuides=Racing() && GetNativePresentationInputs(frame,guides);
+        unsigned long long nativeFrame=0;
+        NativePresentationInputs guides;bool haveGuides=Racing() && GetNativePresentationInputs(frame,guides) && guides.nativeFrameObserved &&
+            CurrentNativeRenderFrame(nativeFrame) && nativeFrame==guides.nativeFrame;
         if(haveGuides && presentationReset)guides.camera.reset=true;
         // Missing/current-frame guide failures disable interpolation. A native
         // rendered frame is still copied and displayed through the same chain.
@@ -199,9 +203,8 @@ public:
         if(FAILED(hr=allocator->Reset()) || FAILED(hr=commands->Reset(allocator.Get(),nullptr)))return hr;
         bool guideStates=false;
         if(haveGuides) {
-            if(generation.BeginFrame(frame,guides.camera)!=0)haveGuides=false;
+            if(generation.BeginNativeFrame(nativeFrame,guides.camera)!=0)haveGuides=false;
             else {
-                generation.Marker(FrameStage::RenderSubmitStart);
                 ID3D12Resource* tagged[]{buffers->depth.Texture12(),buffers->motion.Texture12(),buffers->hudless.Texture12(),buffers->alpha.Texture12()};
                 for(auto p:tagged)Transition(commands.Get(),p,D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
                 GenerationResources inputs{commands.Get(),tagged[0],tagged[1],tagged[2],tagged[3],D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,true,true};
@@ -220,10 +223,8 @@ public:
         Transition(commands.Get(),buffers->finalColor.Texture12(),D3D12_RESOURCE_STATE_COPY_SOURCE,D3D12_RESOURCE_STATE_COMMON);
         if(FAILED(hr=commands->Close()))return hr;
         ID3D12CommandList* lists[]{commands.Get()};queue->ExecuteCommandLists(1,lists);
-        if(haveGuides){generation.Marker(FrameStage::RenderSubmitEnd);generation.Marker(FrameStage::PresentStart);}
         hr=display->Present(interval,flags);
         HRESULT displayResult=hr;
-        if(haveGuides)generation.Marker(FrameStage::PresentEnd);
         auto state=generation.Presented();
         if(state.inputCompletionFence && state.inputCompletionValue)queue->Wait(state.inputCompletionFence,state.inputCompletionValue);
         HRESULT waited=Wait();if(FAILED(waited)){failed=true;return waited;}
@@ -329,6 +330,10 @@ bool Supported(const DXGI_SWAP_CHAIN_DESC& d) {
 HRESULT Wrap(IUnknown* device,const DXGI_SWAP_CHAIN_DESC& desc,IDXGISwapChain** out) {
     if(internal || !out || !Supported(desc))return DXGI_ERROR_UNSUPPORTED;
     ComPtr<ID3D11Device> native;if(FAILED(device->QueryInterface(IID_PPV_ARGS(&native))))return DXGI_ERROR_UNSUPPORTED;
+    // The owned executable is packed: its native .rdata does not exist before
+    // primary entry. Install native marker slots at actual chain creation,
+    // after unpacking and before the engine's first simulation/render loop.
+    if(!ConfigureNativeFrameMarkers(logger))return DXGI_ERROR_UNSUPPORTED;
     AcquireSRWLockExclusive(&chainLock);bool busy=activeChain!=nullptr || creatingChain;if(!busy)creatingChain=true;ReleaseSRWLockExclusive(&chainLock);if(busy)return DXGI_ERROR_UNSUPPORTED;
     Internal nested;auto candidate=new PresentationChain;HRESULT hr=candidate->Initialize(native.Get(),desc);
     AcquireSRWLockExclusive(&chainLock);creatingChain=false;if(SUCCEEDED(hr))activeChain=candidate;ReleaseSRWLockExclusive(&chainLock);

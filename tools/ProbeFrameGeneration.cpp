@@ -11,12 +11,20 @@
 using Microsoft::WRL::ComPtr;
 void Need(HRESULT result) { if(FAILED(result)) throw std::runtime_error("Frame-generation fixture API failed"); }
 void Ok(unsigned result) { if(result) { fprintf(stderr,"Streamline result %u\n",result); throw std::runtime_error("Frame-generation fixture contract rejected"); } }
-unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFactory6* factory,ID3D12Device* device) {
+unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFactory6* factory,ID3D12Device* device,bool focused) {
     WNDCLASSW windowClass{}; windowClass.lpfnWndProc=DefWindowProcW; windowClass.hInstance=GetModuleHandleW(nullptr); windowClass.lpszClassName=L"TwinKartHiddenGraphicsFixture";
     if(!RegisterClassW(&windowClass)) throw std::runtime_error("Hidden graphics fixture window unavailable");
-    HWND window=CreateWindowExW(WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW,windowClass.lpszClassName,L"Twin Kart GPU fixture",WS_POPUP,0,0,1280,720,nullptr,nullptr,windowClass.hInstance,nullptr);
+    HWND previous=GetForegroundWindow();
+    HWND window=CreateWindowExW(focused?WS_EX_TOOLWINDOW:WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW,windowClass.lpszClassName,
+        L"Twin Kart GPU test (synthetic, no game)",focused?WS_OVERLAPPEDWINDOW:WS_POPUP,80,80,1280,720,nullptr,nullptr,windowClass.hInstance,nullptr);
     if(!window) throw std::runtime_error("Hidden graphics fixture creation failed");
-    struct WindowOwner { HWND window; ~WindowOwner() { DestroyWindow(window); UnregisterClassW(L"TwinKartHiddenGraphicsFixture",GetModuleHandleW(nullptr)); } } owner{window};
+    struct WindowOwner { HWND window,previous; ~WindowOwner() { bool restore=GetForegroundWindow()==window;if(IsWindow(window))DestroyWindow(window);
+        if(restore && IsWindow(previous))SetForegroundWindow(previous);UnregisterClassW(L"TwinKartHiddenGraphicsFixture",GetModuleHandleW(nullptr)); } } owner{window,previous};
+    if(focused) {
+        ShowWindow(window,SW_SHOWNORMAL);UpdateWindow(window);SetForegroundWindow(window);
+        MSG message;while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
+        if(GetForegroundWindow()!=window)throw std::runtime_error("Focused fixture could not obtain actual window focus; no generated frames claimed");
+    }
     ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC queueDesc{}; Need(device->CreateCommandQueue(&queueDesc,IID_PPV_ARGS(&queue)));
     ComPtr<ID3D12CommandAllocator> allocator; ComPtr<ID3D12GraphicsCommandList> commands; ComPtr<ID3D12Fence> fence;
     Need(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator)));
@@ -50,7 +58,13 @@ unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFacto
     memcpy(camera.viewToClip,projection,sizeof(projection)); memcpy(camera.clipToView,inverse,sizeof(inverse));
     camera.up[1]=camera.right[0]=camera.forward[2]=1; camera.motionScaleX=1.0f/1280; camera.motionScaleY=1.0f/720;
     unsigned framesWithGenerated=0; unsigned long long total=0;
-    for(unsigned frame=0;frame<32;++frame) {
+    unsigned frameCount=focused?120:32;
+    for(unsigned frame=0;frame<frameCount;++frame) {
+        if(focused) {
+            MSG message;while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
+            if(!IsWindow(window))throw std::runtime_error("Focused fixture was closed");
+            Sleep(16);
+        }
         MSG message; while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
         camera.reset=frame<2; Ok(generation.BeginFrame(frame,camera)); Ok(generation.Marker(TwinKartGraphics::FrameStage::SimulationStart));
         Need(allocator->Reset()); Need(commands->Reset(allocator.Get(),nullptr));
@@ -72,7 +86,7 @@ unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFacto
         barriers[0].Transition={backbuffer.Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_PRESENT,D3D12_RESOURCE_STATE_COPY_DEST};
         barriers[1].Transition={textures[2].Get(),D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COPY_SOURCE};
         commands->ResourceBarrier(2,barriers); commands->CopyResource(backbuffer.Get(),textures[2].Get());
-        for(auto& barrier:barriers) { auto previous=barrier.Transition.StateBefore; barrier.Transition.StateBefore=barrier.Transition.StateAfter; barrier.Transition.StateAfter=previous; } commands->ResourceBarrier(2,barriers);
+        for(auto& barrier:barriers) { auto previousState=barrier.Transition.StateBefore; barrier.Transition.StateBefore=barrier.Transition.StateAfter; barrier.Transition.StateAfter=previousState; } commands->ResourceBarrier(2,barriers);
         Need(commands->Close()); Ok(generation.Marker(TwinKartGraphics::FrameStage::RenderSubmitStart));
         ID3D12CommandList* lists[]={commands.Get()}; queue->ExecuteCommandLists(1,lists); Ok(generation.Marker(TwinKartGraphics::FrameStage::RenderSubmitEnd));
         Ok(generation.Marker(TwinKartGraphics::FrameStage::PresentStart)); HRESULT presented=swapchain->Present(0,0); Ok(generation.Marker(TwinKartGraphics::FrameStage::PresentEnd));
@@ -80,13 +94,13 @@ unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFacto
         if(state.inputCompletionFence && state.inputCompletionValue) Need(queue->Wait(state.inputCompletionFence,state.inputCompletionValue));
         Need(queue->Signal(fence.Get(),frame+1)); HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr); if(!event) throw std::runtime_error("FG fixture fence event failed");
         Need(fence->SetEventOnCompletion(frame+1,event)); DWORD waited=WaitForSingleObject(event,10000); CloseHandle(event); if(waited!=WAIT_OBJECT_0) throw std::runtime_error("FG fixture GPU wait timed out");
-        if(frame%8==0) { printf("{\"event\":\"fg_hidden_fixture_present\",\"frame\":%u,\"hresult\":%u,\"result\":%u,\"status\":%u,\"actually_presented\":%u,\"synthetic_inputs\":true,\"game_acceptance\":false}\n",frame,static_cast<unsigned>(presented),state.result,state.status,state.lastPresented); fflush(stdout); }
+        if(frame%8==0) { printf("{\"event\":\"fg_%s_fixture_present\",\"frame\":%u,\"hresult\":%u,\"result\":%u,\"status\":%u,\"actually_presented\":%u,\"window_focused\":%s,\"synthetic_inputs\":true,\"game_acceptance\":false}\n",focused?"focused":"hidden",frame,static_cast<unsigned>(presented),state.result,state.status,state.lastPresented,GetForegroundWindow()==window?"true":"false"); fflush(stdout); }
     }
-    printf("{\"event\":\"fg_hidden_fixture_complete\",\"real_frames\":32,\"frames_reporting_generation\":%u,\"presented_total\":%llu,\"game_started\":false,\"visible_quality_verified\":false}\n",framesWithGenerated,total); fflush(stdout);
+    printf("{\"event\":\"fg_%s_fixture_complete\",\"real_frames\":%u,\"frames_reporting_generation\":%u,\"presented_total\":%llu,\"game_started\":false,\"visible_quality_verified\":false}\n",focused?"focused":"hidden",frameCount,framesWithGenerated,total); fflush(stdout);
     return framesWithGenerated;
 }
 int wmain(int argc,wchar_t** argv) {
-    if(argc!=3 && !(argc==4 && !wcscmp(argv[3],L"--present-fixture"))) { puts("Usage: ProbeFrameGeneration.exe <external-Streamline-directory> <existing-private-log-directory> [--present-fixture]"); return 2; }
+    if(argc!=3 && !(argc==4 && (!wcscmp(argv[3],L"--present-fixture") || !wcscmp(argv[3],L"--focused-present-fixture")))) { puts("Usage: ProbeFrameGeneration.exe <external-Streamline-directory> <existing-private-log-directory> [--present-fixture | --focused-present-fixture]"); return 2; }
     TwinKartGraphics::FrameGeneration generation;
     unsigned loaded=generation.Load(argv[1],argv[2]); printf("{\"event\":\"fg_runtime_init\",\"result\":%u}\n",loaded); fflush(stdout);
     if(loaded) return 3;
@@ -109,7 +123,7 @@ int wmain(int argc,wchar_t** argv) {
     auto state=generation.Presented();
     printf("{\"event\":\"fg_runtime_state\",\"result\":%u,\"status\":%u,\"maximum_generated\":%u,\"actually_presented\":%u,\"game_started\":false,\"frame_generation_verified\":false}\n",state.result,state.status,state.maximumGeneratedFrames,state.lastPresented); fflush(stdout);
     if(!configured && argc==4) {
-        try { unsigned generated=PresentFixture(generation,factory.Get(),device.Get()); if(!generated) configured=1; }
+        try { unsigned generated=PresentFixture(generation,factory.Get(),device.Get(),!wcscmp(argv[3],L"--focused-present-fixture")); if(!generated) configured=1; }
         catch(const std::exception& error) { fprintf(stderr,"%s\n",error.what()); configured=1; }
     }
     generation.Shutdown(); device.Reset(); adapter.Reset(); factory.Reset();

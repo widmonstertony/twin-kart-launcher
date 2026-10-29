@@ -26,7 +26,7 @@ namespace TwinKartLauncher
             int available=0;
             foreach(var entry in (object[])report["Tracks"]) {
                 var row=(Dictionary<string,object>)entry; string status=row["NativeDefinitionStatus"] as string;
-                bool can=status=="native-definition-present" && Object.Equals(row["MirrorRequested"],false) && Object.Equals(row["ReverseRequested"],false);
+                bool can=status=="native-definition-present";
                 var choice=new TrackChoice { Id=(string)row["TrackId"],Status=can?"":status=="no-native-definition-in-client"?"本客户端无此定义":"变体待适配",CanRequest=can };
                 tracks.Items.Add(choice); if(can) ++available;
                 if(choice.Id==current.Track) tracks.SelectedItem=choice;

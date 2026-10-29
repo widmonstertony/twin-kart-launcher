@@ -13,6 +13,8 @@ bool NativeSuperResolutionOutputMatches(ID3D11Resource*,unsigned frame);
 struct NativePresentationInputs {
     ID3D11Texture2D *depth=nullptr,*motion=nullptr,*hudless=nullptr;
     CameraFrame camera{};
+    unsigned long long nativeFrame=0;
+    bool nativeFrameObserved=false;
 };
 // Borrowed resources are current-frame only; copy/consume before FinishFrame.
 bool GetNativePresentationInputs(unsigned frame,NativePresentationInputs&);

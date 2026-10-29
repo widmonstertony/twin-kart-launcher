@@ -88,7 +88,7 @@ void UpdateRenderActivity(void*) {
 }
 void CancelRenderActivity(void*){renderActivity.Publish(false,0);InterlockedExchange(&renderActivityPending,0);}
 // 0=model not ready; 1=native travel submitted; 2=definition absent;
-// -1=native fault; -2=unsupported transform; no value means race acceptance.
+// -1=native fault; no value means race acceptance.
 void RuntimeEvent(const char* name,int slot,int value) {
     char line[256]; int bytes=sprintf_s(line,"{\"event\":\"%s\",\"slot\":%d,\"value\":%d,\"race_verified\":false}\r\n",name,slot,value);
     DWORD written=0; if(bytes>0) WriteFile(output,line,static_cast<DWORD>(bytes),&written,nullptr);
@@ -153,7 +153,8 @@ int NativeStart(StartQuery& query) {
         BYTE* traveler=Traveler();
         using Model=void*(__fastcall*)(void*);
         if(!traveler || !reinterpret_cast<Model>(image+0x1ba3cf0)(traveler)) return 0;
-        if(wcsstr(track,L"_Mirror") || wcsstr(track,L"_rvs")) return -2;
+        // Resolve the exact requested alias. A suffix alone is not evidence
+        // that this native build lacks the variant; never strip or remap it.
         NativeString alias{track,static_cast<int>(wcslen(track)+1),static_cast<int>(wcslen(track)+1)};
         alignas(16) BYTE definition[0x160]{};
         using Get=void*(__fastcall*)(void*,const NativeString*);

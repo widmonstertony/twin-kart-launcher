@@ -125,5 +125,34 @@ namespace TwinKartLauncher
             if(inside)append();
             return new UTF8Encoding(false).GetBytes(String.Join("\r\n",output));
         }
+        public byte[] RouteEngineSettings(byte[] original)
+        {
+            if(!SuperResolution)return original;
+            if(Double.IsNaN(RenderPercentage) || Double.IsInfinity(RenderPercentage) || RenderPercentage<25 || RenderPercentage>=100)
+                throw new ArgumentException("Invalid lower rendering percentage.");
+            // The native user-settings structure can be replaced when the
+            // account's graphics options arrive. Use the engine's own cvar
+            // configuration as well; the render adapter still checks actual
+            // input/output dimensions and never infers SR from this request.
+            string text=new UTF8Encoding(false,true).GetString(original??new byte[0]).TrimStart('\ufeff');
+            var output=new List<string>();bool inside=false,found=false,written=false;
+            string value="r.ScreenPercentage="+RenderPercentage.ToString("0.######",CultureInfo.InvariantCulture);
+            foreach(string line in text.Replace("\r\n","\n").Split('\n')) {
+                string trimmed=line.Trim();
+                if(trimmed.StartsWith("[",StringComparison.Ordinal) && trimmed.EndsWith("]",StringComparison.Ordinal)) {
+                    if(inside && !written){output.Add(value);written=true;}
+                    inside=String.Equals(trimmed,"[SystemSettings]",StringComparison.OrdinalIgnoreCase);
+                    if(inside){if(found)throw new InvalidDataException("Duplicate engine system settings section.");found=true;}
+                }
+                int equal=trimmed.IndexOf('=');
+                if(inside && equal>=0 && String.Equals(trimmed.Substring(0,equal).Trim(),"r.ScreenPercentage",StringComparison.OrdinalIgnoreCase)) {
+                    if(written)throw new InvalidDataException("Duplicate engine rendering percentage.");
+                    output.Add(value);written=true;
+                } else output.Add(line);
+            }
+            if(!found)output.Add("[SystemSettings]");
+            if(!written)output.Add(value);
+            return new UTF8Encoding(false).GetBytes(String.Join("\r\n",output));
+        }
     }
 }

@@ -153,6 +153,10 @@ namespace TwinKartLauncher
                         if(manifest.Graphics!=null && (manifest.Graphics.SuperResolution || manifest.Graphics.FrameGeneration)) {
                             string userIni=Path.Combine(config,"GameUserSettings.ini");
                             File.WriteAllBytes(userIni,manifest.Graphics.RouteUserSettings(File.Exists(userIni)?File.ReadAllBytes(userIni):null));
+                            if(manifest.Graphics.SuperResolution) {
+                                string engineIni=Path.Combine(config,"Engine.ini");
+                                File.WriteAllBytes(engineIni,manifest.Graphics.RouteEngineSettings(File.Exists(engineIni)?File.ReadAllBytes(engineIni):null));
+                            }
                         }
                         var launch=new ProcessStartInfo(game,manifest.GameArguments??"") { UseShellExecute=false,WorkingDirectory=Path.GetDirectoryName(game) };
                         if(manifest.Environment!=null) foreach(var variable in manifest.Environment) launch.EnvironmentVariables[variable.Key]=variable.Value;
