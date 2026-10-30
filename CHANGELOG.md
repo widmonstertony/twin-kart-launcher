@@ -2,6 +2,16 @@
 
 ## Unreleased / 后续开发
 
+- No changes after the v0.2.0-alpha.1 publication checkpoint. / v0.2.0-alpha.1 发布检查点之后暂无变更。
+
+## v0.2.0-alpha.1 — 2026-10-30
+
+- Publish the independently authored native-room pipeline with create/join/leave, map/team selection, seven AI members, strict local start boundaries, and 13 supported mode identifiers. / 发布原创原生房间流程：创建／加入／退出、地图／队伍选择、7 个 AI、严格本地开赛边界和 13 个模式标识。
+- Record one completed seven-AI Spitem solo race and one Infinite Booster duo result with six AI finishers; retain explicit gaps for Flag AI, complete item effects, every mode rule, and all-track acceptance. / 记录一次 7 个 AI 全部完赛的 Spitem 单人赛，以及一次 6 个 AI 完赛的无限加速双人组结果；明确保留夺旗 AI、完整道具效果、全部模式规则和全赛道验收缺口。
+- Restrict randomized room previews to exact-client registered character/costume pairs and kart bodies, eliminating known blank AI appearances without publishing the private registration evidence. / 随机房间预览仅使用当前客户端已注册的角色／服装和车辆，修复已知 AI 空白，同时不发布私有注册证据。
+- Add phase-aware cockpit handling, right-Shift drift, WASD routing, in-game graphics preferences, simplified-Chinese routing, room exit/start repairs, and source-tested low-resolution double-NR → SR → FG ordering. / 增加按原生阶段切换的座舱、右 Shift 漂移、WASD、游戏内图形选项、简体中文路由、房间退出／开赛修复，以及通过源码检查的低分辨率双 NR → SR → FG 顺序。
+- Keep vendor assets, private client data, protocol secrets, SDKs, models, NVIDIA runtimes, and first-party game files outside the repository and Release. / 仓库与 Release 继续排除原厂资源、私有客户端数据、协议密钥、SDK、模型、NVIDIA 运行库和游戏文件。
+
 - Wire real native simulation/render/present markers, 64-bit frame correlation, simulation-thread Reflex pacing and provider tokens; defer packed-client slot installation until swapchain creation. / 接入真实原生模拟／渲染／呈现时序、64 位帧关联、模拟线程节奏及 NVIDIA token；原生接口在解包后创建显示链时安装。
 - A focused synthetic GPU fixture rendered 120 frames and presented 233 (113 extra-frame reports). No game was started, and game FG/quality acceptance remains pending. / 聚焦合成 GPU 测试渲染 120 帧、显示 233 帧（113 次报告额外生成帧）；没有启动游戏，游戏内效果待验收。
 - Scope local AI/result hooks to the original world's object identity; allow exact native variant definitions without suffix filtering; request lower native screen percentage in engine configuration as well as user settings. / AI／结算钩子限定原生世界身份；精确赛道定义不因后缀被过滤；引擎配置与用户设置同时请求低分辨率。

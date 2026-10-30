@@ -253,6 +253,7 @@ namespace TwinKartLauncher.Gateway
         // Only _type, track, gameMode and raceMode are required by this
         // independently observed subset. Optional fields are checked when
         // present; omitted values are not silently guessed.
+        public static bool LocalRaceMode(int mode) { return (mode>=1 && mode<=6) || (mode>=101 && mode<=107); }
         static bool TryReadRaceGame(Dictionary<string, object> source, out CsRaceGameContract race, out string error)
         {
             race = null; error = null;
@@ -264,7 +265,7 @@ namespace TwinKartLauncher.Gateway
             if (!RequiredString(source, "track", out track, false) ||
                 !Regex.IsMatch(track, "^[A-Za-z0-9_-]{1,80}\\z") ||
                 !RequiredObject(source, "gameMode", out mode) ||
-                !RequiredInt32(mode, "raceMode", out raceMode) || raceMode < 1 || raceMode > 6 ||
+                !RequiredInt32(mode, "raceMode", out raceMode) || !LocalRaceMode(raceMode) ||
                 !OptionalString(mode, "profile", out profile) ||
                 !OptionalInt32(source, "lap", out lap) ||
                 !OptionalString(source, "levelOption", out level) ||

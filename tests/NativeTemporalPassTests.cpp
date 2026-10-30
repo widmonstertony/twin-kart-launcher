@@ -1,9 +1,16 @@
 #include "../native/NativeTemporalPass.cpp"
 #include <stdexcept>
+#include <thread>
 using namespace TwinKartGraphics;
 void Need(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 unsigned evaluations=0;
 bool reject=false;
+bool refuseDrain=true;
+unsigned drains=0;
+bool FixtureDrain(unsigned owner,ID3D11DeviceContext* context) {
+    Need(owner==runtime.thread && context==runtime.context.Get(),"Retirement lost exact old owner/context");
+    ++drains;return !refuseDrain;
+}
 unsigned FixtureEvaluate(const TwinKartTemporalFrame* f) {
     ++evaluations;
     Need(f && f->hdr && f->invertedDepth && f->guidesValidated && f->hudlessValidated &&
@@ -27,16 +34,18 @@ int main(){try{
         Need(SUCCEEDED(device->CreateShaderResourceView(texture.Get(),&srv,&view)),"Temporal input view");
     };
     read(DXGI_FORMAT_R11G11B10_FLOAT,DXGI_FORMAT_R11G11B10_FLOAT,color,colorView);
+    desc.Width=768;desc.Height=416;
     read(DXGI_FORMAT_R32G8X24_TYPELESS,DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS,depth,depthView);
+    desc.Width=704;desc.Height=400;
     read(DXGI_FORMAT_R16G16B16A16_UNORM,DXGI_FORMAT_R16G16B16A16_UNORM,motion,motionView);
     desc.Width=1312;desc.Height=736;desc.Format=DXGI_FORMAT_R16G16B16A16_FLOAT;desc.BindFlags=D3D11_BIND_UNORDERED_ACCESS;
     ComPtr<ID3D11Texture2D> output;ComPtr<ID3D11UnorderedAccessView> outputView;
     Need(SUCCEEDED(device->CreateTexture2D(&desc,nullptr,&output)) && SUCCEEDED(device->CreateUnorderedAccessView(output.Get(),nullptr,&outputView)),"Padded native output");
     float black[4]{};context->ClearUnorderedAccessViewFloat(outputView.Get(),black);
-    float p[1024]{},v[2048]{};NativeRect in{8,16,648,376},out{4,2,1284,722};memcpy(p+4,&in,sizeof(in));memcpy(p+12,&out,sizeof(out));
-    p[8]=0.25f;p[9]=-0.125f;p[10]=2.0f/640;p[11]=2.0f/360;p[16]=1280;p[17]=720;
-    p[18]=1-1.0f/1280;p[19]=1-1.0f/720;p[20]=0.5f/1280;p[21]=0.5f/720;p[22]=1-0.5f/1280;p[23]=1-0.5f/720;
-    v[536]=640;v[537]=360;v[520]=0.5f/640;v[521]=0.25f/360;v[557]=2;v[558]=0.5f;
+    float p[1024]{},v[2048]{};NativeRect in{8,16,648,376},out{4,2,1284,722},inclusive{8,16,647,375};memcpy(p+80,&inclusive,sizeof(inclusive));
+    p[96]=4;p[97]=2;p[98]=1284;p[99]=722;p[60]=640.0f/672;p[61]=360.0f/384;p[62]=8.0f/672;p[63]=16.0f/384;
+    p[76]=672;p[77]=384;p[78]=1.0f/672;p[79]=1.0f/384;p[92]=1280;p[93]=720;p[94]=1.0f/1280;p[95]=1.0f/720;
+    v[536]=640;v[537]=360;v[538]=1.0f/640;v[539]=1.0f/360;v[520]=0.5f/640;v[521]=0.25f/360;v[557]=2;v[558]=0.5f;
     float projection[16]={1.125f,0,0,0,0,2,0,0,0,0,0,1,0,0,10,0};memcpy(v+144,projection,64);memcpy(v+32,projection,64);
     v[504]=v[509]=v[514]=v[519]=1;
     for(unsigned r=0;r<4;++r){v[32+r*4]+=v[35+r*4]*v[520];v[33+r*4]+=v[35+r*4]*v[521];}
@@ -67,6 +76,24 @@ int main(){try{
     context->Unmap(copy.Get(),0);Need(correct,"SR copy missed native output rectangle or overwrote padding");
     reject=true;Need(!ProcessQualifiedTemporalPass(context.Get(),shader.Get(),11,160,180,1) && evaluations==2 && !NativeTemporalSuperResolutionRan(11),"Consumer failure falsely suppressed native fallback");
     context->CSGetShader(&restored,nullptr,nullptr);Need(restored.Get()==shader.Get(),"Consumer failure did not restore native state");
+    runtime.shutdownDrained=FixtureDrain;
+    Need(RetireNativeTemporalForRenderThread(context.Get()) && drains==0 && runtime.device.Get()==device.Get(),"Same owner unnecessarily destroyed temporal feature");
+    ComPtr<ID3D11DeviceContext> deferred;Need(SUCCEEDED(device->CreateDeferredContext(0,&deferred)),"Deferred retirement fixture");
+    Need(!RetireNativeTemporalForRenderThread(deferred.Get()) && drains==0,"Deferred context permitted retirement");
+    bool ok=false;
+    std::thread foreign([&]{
+        ok=!ProcessQualifiedTemporalPass(context.Get(),shader.Get(),12,160,180,1) && evaluations==2 &&
+            !RetireNativeTemporalForRenderThread(context.Get()) && runtime.lastOutput==10;
+    });foreign.join();Need(ok && drains==1,"Foreign draw adopted ownership or failed retirement dropped history");
+    AcquireSRWLockExclusive(&runtimeLock);
+    std::thread busy([&]{ok=!RetireNativeTemporalForRenderThread(context.Get());});busy.join();
+    ReleaseSRWLockExclusive(&runtimeLock);Need(ok && drains==1,"Concurrent temporal operation permitted retirement");
+    refuseDrain=false;
+    std::thread retire([&]{ok=RetireNativeTemporalForRenderThread(context.Get());});retire.join();
+    Need(ok && drains==2 && !runtime.device && !runtime.context && !runtime.lastOutput && !failed,"Drained retirement retained stale temporal state");
+    reject=false;Need(InitializeContext(context.Get()),"New owner context rebuild failed");runtime.evaluate=FixtureEvaluate;
+    evaluations=0;
+    Need(ProcessQualifiedTemporalPass(context.Get(),shader.Get(),12,160,180,1) && evaluations==1,"Rebuilt temporal owner did not reset history");
     context->ClearState();
-    puts("PASS actual WARP temporal boundary: native group qualification, HDR/crop conversion, consumer request, exact output subrect/padding, full state restoration and failure fallback. Fixture consumer only; no DLSS or game acceptance.");return 0;
+    puts("PASS actual WARP temporal boundary: native group qualification, HDR/crop conversion, consumer request, exact output subrect/padding, full state restoration, failure fallback, foreign callback rejection, serialized drained retirement and history rebuild. Fixture consumer only; no DLSS or game acceptance.");return 0;
 }catch(const std::exception& e){fprintf(stderr,"%s\n",e.what());return 1;}}

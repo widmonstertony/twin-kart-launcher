@@ -27,6 +27,7 @@ namespace TwinKartLauncher.Gateway
                 OfflineProfileStore profile = null;
                 if (offline)
                 {
+                    var roomLaunch=NativeRoomLaunch.FromEnvironment();
                     string data = settings.ProfileDataDirectory;
                     if (!Directory.Exists(data) || String.IsNullOrEmpty(settings.ProfilePath)) throw new ArgumentException("Explicit external profile/data paths required");
                     profile = new OfflineProfileStore(settings.ProfilePath,
@@ -38,7 +39,9 @@ namespace TwinKartLauncher.Gateway
                         ProfileJson.Read(Path.Combine(data, "native-parameters.private.json")),
                         ProfileJson.Read(Path.Combine(data, "vehicle-parts.private.json")),
                         settings.LocalAccountId, ping.Port,
-                        String.IsNullOrEmpty(settings.TuningPlanPath) ? null : ProfileJson.Read(settings.TuningPlanPath));
+                        String.IsNullOrEmpty(settings.TuningPlanPath) ? null : ProfileJson.Read(settings.TuningPlanPath),
+                        String.IsNullOrEmpty(settings.VehicleAvailabilityPath) ? null : ProfileJson.Read(settings.VehicleAvailabilityPath),
+                        roomLaunch==null?(Func<RoomState,string>)null:roomLaunch.Start);
                 }
                 Func<Func<string, GatewayReply>> factory = () => {
                     Func<string, GatewayReply> handler = localAccount ?

@@ -23,5 +23,9 @@ public:
     // tagged textures, using the completion fence returned by DLSS-G.
     HRESULT WaitForConsumer(ID3D12Fence*,unsigned long long value);
     HRESULT Drain(unsigned milliseconds=10000);
+    // Only at an explicit, externally serialized immediate-context handoff.
+    // Does not change ownership or allow CopyTo12 from a foreign callback.
+    // A texture still held by D3D12 cannot be retired through this boundary.
+    HRESULT DrainForRetirement(unsigned expectedOwnerThread,ID3D11DeviceContext*,unsigned milliseconds=10000);
 };
 }

@@ -79,4 +79,7 @@ void RemoveNativeFrameMarkerSink(const std::shared_ptr<NativeFrameMarkerSink>& v
     std::atomic_compare_exchange_strong_explicit(&sink,&expected,empty,std::memory_order_acq_rel,std::memory_order_acquire);
 }
 bool CurrentNativeRenderFrame(unsigned long long& id){if(!haveRenderFrame)return false;id=renderFrame;return true;}
+#ifdef TWIN_KART_SYNTHETIC_MARKER_INPUT
+void ObserveSyntheticNativeMarker(FrameStage stage,unsigned long long id){Observe(stage,id);}
+#endif
 }

@@ -172,6 +172,27 @@ template<class T, size_t N> void WriteViews(Writer& writer, const char* label, T
 template<class T, size_t N> void ReleaseViews(T* (&views)[N], Binding (&bindings)[N]) {
     for (unsigned i = 0; i < N; ++i) { Drop(bindings[i].resource); Drop(views[i]); }
 }
+// Explicit local research only. Shipping shaders can have stripped reflection;
+// their DXBC register use is needed before treating loose-buffer gaps as live
+// parameters. Save only the exact requested hash, once, outside source packages.
+void CaptureSelectedShaderLayout(const void* bytecode,size_t length,const Digest& digest) {
+    wchar_t directory[32768]{},requested[65]{},hex[65]{};
+    DWORD size=GetEnvironmentVariableW(L"TWIN_KART_SHADER_LAYOUT_DIRECTORY",directory,ARRAYSIZE(directory));
+    if(!size || size>32000 || GetEnvironmentVariableW(L"TWIN_KART_SHADER_LAYOUT_HASH",requested,ARRAYSIZE(requested))!=64)return;
+    for(unsigned i=0;i<32;++i)swprintf_s(hex+i*2,65-i*2,L"%02x",digest.hash[i]);
+    if(wcscmp(requested,hex))return;
+    DWORD attributes=GetFileAttributesW(directory);
+    if(attributes==INVALID_FILE_ATTRIBUTES || !(attributes&FILE_ATTRIBUTE_DIRECTORY) || (attributes&FILE_ATTRIBUTE_REPARSE_POINT))return;
+    wchar_t path[32768];if(swprintf_s(path,L"%s\\layout-%s.txt",directory,hex)<0)return;
+    if(GetFileAttributesW(path)!=INVALID_FILE_ATTRIBUTES)return;
+    ID3DBlob* assembly=nullptr;
+    if(FAILED(D3DDisassemble(bytecode,length,0,nullptr,&assembly)) || !assembly)return;
+    if(assembly->GetBufferSize()<=2*1024*1024) {
+        HANDLE file=CreateFileW(path,GENERIC_WRITE,FILE_SHARE_READ,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if(file!=INVALID_HANDLE_VALUE){DWORD written=0;WriteFile(file,assembly->GetBufferPointer(),static_cast<DWORD>(assembly->GetBufferSize()),&written,nullptr);CloseHandle(file);}
+    }
+    assembly->Release();
+}
 }
 bool TagShader(ID3D11DeviceChild* shader, const void* bytecode, size_t length) {
     if (!shader || !bytecode || !length || length > 16 * 1024 * 1024) return false;
@@ -184,9 +205,10 @@ bool TagShader(ID3D11DeviceChild* shader, const void* bytecode, size_t length) {
     if (hash) BCryptDestroyHash(hash);
     if (algorithm) BCryptCloseAlgorithmProvider(algorithm, 0);
     bool stored=ok && SUCCEEDED(shader->SetPrivateData(ShaderDigest, sizeof(digest), &digest));
-    // Reflection metadata only: shader instructions and vendor bytecode are
-    // never retained or written to a file. Stripped reflection is optional.
+    // Bytecode is never retained. Optional exact-hash disassembly is private
+    // research evidence, excluded from published source/resources.
     if(stored) TagInterface(shader,bytecode,length);
+    if(stored) CaptureSelectedShaderLayout(bytecode,length,digest);
     return stored;
 }
 bool ShaderHash(ID3D11DeviceChild* shader,char (&hex)[65]) {

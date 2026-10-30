@@ -94,7 +94,7 @@ DWORD WINAPI Worker(void*) {
         for(int attempt=0;attempt<720 && !registry;++attempt) { if(SignaturesReady()) RegistryReady(&registry); if(!registry) Sleep(250); }
         if(!registry || !ReadSnapshot(registry)) throw std::runtime_error("native registry unavailable or incomplete");
         std::unordered_map<unsigned long long,std::string> classes;
-        unsigned worlds=0,paths=0;
+        unsigned worlds=0,paths=0,vehicleAssets=0;
         for(int index=0;index<snapshot.count;++index) {
             unsigned long long object=0,type=0;
             if(!AssetNames(index,&object,&type)) throw std::runtime_error("invalid native asset record");
@@ -102,16 +102,20 @@ DWORD WINAPI Worker(void*) {
             auto item=classes.find(type);
             if(item==classes.end()) item=classes.emplace(type,Name(type)).first;
             bool world=item->second=="World",ai=item->second.find("AI")!=std::string::npos && item->second.find("Path")!=std::string::npos;
-            if(!world && !ai) continue;
+            // Include mesh and native vehicle definitions for garage audits.
+            // A localized name or granted item ID is not proof of a model.
+            bool vehicle=item->second=="SkeletalMesh" || item->second.find("Kart")!=std::string::npos ||
+                item->second.find("Character")!=std::string::npos;
+            if(!world && !ai && !vehicle) continue;
             std::string objectPath=Name(object);
             if(objectPath.empty() || objectPath[0]!='/') throw std::runtime_error("unexpected native asset path");
             Log(std::string("{\"event\":\"native_asset\",\"class\":")+Json(item->second)+",\"object_path\":"+Json(objectPath)+"}");
-            if(world) ++worlds; else ++paths;
+            if(world) ++worlds; else if(ai) ++paths; else ++vehicleAssets;
         }
         if(!worlds) throw std::runtime_error("native snapshot did not contain world assets");
         char end[384];
-        sprintf_s(end,"{\"event\":\"asset_registry_complete\",\"assets\":%d,\"worlds\":%u,\"ai_path_assets\":%u,\"retained_snapshot_bytes\":%llu,\"all_tracks_driven\":false}",
-            snapshot.count,worlds,paths,static_cast<unsigned long long>(snapshot.capacity)*0x60);
+        sprintf_s(end,"{\"event\":\"asset_registry_complete\",\"assets\":%d,\"worlds\":%u,\"ai_path_assets\":%u,\"vehicle_assets\":%u,\"retained_snapshot_bytes\":%llu,\"all_tracks_driven\":false}",
+            snapshot.count,worlds,paths,vehicleAssets,static_cast<unsigned long long>(snapshot.capacity)*0x60);
         Log(end);
     } catch(const std::exception&) {
         const char failure[]="{\"event\":\"asset_registry_failed\",\"complete\":false}\r\n"; DWORD written; WriteFile(logFile,failure,sizeof(failure)-1,&written,nullptr);

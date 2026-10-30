@@ -17,6 +17,9 @@ struct TwinKartNeuralState {
     unsigned long long evaluations;
     bool initialized,featureCreated,privateProvider;
     unsigned privateInitializeResult,privatePopulateResult;
+    bool externalCoreLifetime;
+    unsigned requestedPasses,style,passResults[2];
+    unsigned long long passEvaluations[2];
 };
 struct TwinKartSuperResolutionFrame {
     unsigned size;
@@ -34,7 +37,14 @@ struct TwinKartSuperResolutionState {
 // successful evaluate records GPU work; it never proves final visible output.
 using TwinKartNeuralLogCallback=void(*)(const char*,unsigned,unsigned);
 TK_NEURAL unsigned TwinKartNeuralInitialize(ID3D12Device*,const wchar_t* cache,const wchar_t* provider,TwinKartNeuralLogCallback log=nullptr,bool allowPrivateAbi=false);
+// The caller has an already-initialized NGX instance on this exact native
+// device. Retiring our own features must not shut down its other features.
+// The external owner must outlive us and drain/retire us before its shutdown.
+TK_NEURAL unsigned TwinKartNeuralInitializeBorrowed(ID3D12Device*,const wchar_t* cache,const wchar_t* provider,TwinKartNeuralLogCallback log=nullptr,bool allowPrivateAbi=false);
 TK_NEURAL unsigned TwinKartNeuralCreate(ID3D12GraphicsCommandList*,unsigned width,unsigned height);
+// Configure before Create. Each pass owns a distinct temporal feature. Style
+// follows the pinned provider interface: 0 default, 1 natural, 2 cinematic.
+TK_NEURAL bool TwinKartNeuralConfigure(unsigned passes,unsigned style);
 TK_NEURAL unsigned TwinKartNeuralEvaluate(const TwinKartNeuralFrame*);
 TK_NEURAL bool TwinKartNeuralGetState(TwinKartNeuralState*);
 // Uses the same initialized NGX D3D12 device as the neural consumer. Dimensions
@@ -45,3 +55,8 @@ TK_NEURAL unsigned TwinKartSuperResolutionEvaluate(const TwinKartSuperResolution
 TK_NEURAL bool TwinKartSuperResolutionGetState(TwinKartSuperResolutionState*);
 // Call only after the caller's fence proves all submitted work has completed.
 TK_NEURAL void TwinKartNeuralShutdown();
+// Explicit renderer handoff only: caller has excluded all old CPU use and
+// drained its queues/bridges. The fence must belong to this exact device and
+// its nonzero value must actually be complete. Features are retired, never
+// transferred to a new thread with old temporal history.
+TK_NEURAL bool TwinKartNeuralShutdownDrained(unsigned expectedOwnerThread,ID3D12Fence*,unsigned long long completedValue);

@@ -9,9 +9,16 @@ namespace {
 HANDLE ready,pump,done;
 HWND window=nullptr;
 std::atomic<unsigned> executed{0},canceled{0},ordinary{0};
+std::atomic<unsigned> inputSeen{0},inputDelivered{0};
+DWORD inputThread=0;
+bool Input(const MSG& message) {
+    if(message.message!=WM_KEYDOWN || message.wParam!=VK_ESCAPE)return false;
+    inputThread=GetCurrentThreadId();++inputSeen;return true;
+}
 DWORD ownerThread=0;
 LRESULT CALLBACK WindowProc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
     if(message==WM_APP+77 && w==42 && l==123) ++ordinary;
+    if(message==WM_KEYDOWN && w==VK_ESCAPE)++inputDelivered;
     if(message==WM_CLOSE) { DestroyWindow(hwnd); PostQuitMessage(0); return 0; }
     return DefWindowProcW(hwnd,message,w,l);
 }
@@ -43,7 +50,11 @@ int main() {
         owner=CreateThread(nullptr,0,Owner,nullptr,0,nullptr);
         Need(WaitForSingleObject(ready,5000)==WAIT_OBJECT_0 && window,"Fixture window failed");
         Need(!queue.Install(GetDesktopWindow(),GetModuleHandleW(nullptr)),"Foreign-process desktop accepted");
-        Need(queue.Install(window,GetModuleHandleW(nullptr)),"Local hook installation failed");
+        Need(queue.InstallError()==ERROR_INVALID_WINDOW_HANDLE,"Foreign owner rejection lost diagnostic");
+        Need(queue.Install(window,nullptr,Input),"Same-process null-module hook installation failed");
+        Need(queue.InstallError()==ERROR_SUCCESS,"Successful installation retained old error");
+        GameThreadQueue duplicate;
+        Need(!duplicate.Install(window,nullptr) && duplicate.InstallError()==ERROR_ALREADY_EXISTS,"Duplicate dispatcher accepted");
         Need(queue.ThreadId()==ownerThread,"Wrong window owner thread");
         for(unsigned i=0;i<GameThreadQueue::Capacity;++i) { contexts[i].nested=i==0; Need(queue.Submit({Execute,&contexts[i],Canceled}),"Bounded task rejected"); }
         Need(!queue.Submit({Execute,&contexts[0],Canceled}),"Queue capacity not enforced");
@@ -53,6 +64,9 @@ int main() {
         Need(queue.Submit({Throw,nullptr,Canceled}),"Throwing fixture rejected");
         for(int i=0;i<500 && (!canceled || !ordinary);++i) Sleep(10);
         Need(canceled==1 && ordinary==1,"Task exception escaped or ordinary message changed");
+        PostMessageW(window,WM_KEYDOWN,VK_ESCAPE,1);
+        for(int i=0;i<500 && !inputSeen;++i)Sleep(10);
+        Need(inputSeen==1 && inputDelivered==0 && inputThread==ownerThread,"Owned Escape handler did not consume exactly once on the owner thread");
         queue.Stop(); Need(!queue.Submit({Execute,&contexts[0],Canceled}),"Task accepted after stop");
         PostMessageW(window,WM_CLOSE,0,0); Need(WaitForSingleObject(owner,5000)==WAIT_OBJECT_0,"Fixture owner did not stop");
         CloseHandle(owner); CloseHandle(ready); CloseHandle(pump); CloseHandle(done);

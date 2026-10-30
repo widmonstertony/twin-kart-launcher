@@ -18,17 +18,28 @@ TwinKartDlssState status{sizeof(TwinKartDlssState)};
 DWORD ownerThread = 0;
 bool initialized = false;
 int featureFlags = 0;
+SRWLOCK apiLock = SRWLOCK_INIT;
+struct ConsumerCall {
+    bool entered = TryAcquireSRWLockExclusive(&apiLock) != FALSE;
+    ~ConsumerCall() { if (entered) ReleaseSRWLockExclusive(&apiLock); }
+};
 constexpr unsigned InvalidFrame = 0xF0000001, WrongThread = 0xF0000002, MissingGuides = 0xF0000003;
 bool SameDevice(ID3D11DeviceChild* resource) {
     ID3D11Device* found = nullptr; resource->GetDevice(&found);
     bool same = found == device; if (found) found->Release(); return same;
 }
-void DropFeature() {
-    if (feature) { NVSDK_NGX_D3D11_ReleaseFeature(feature); feature = nullptr; }
+NVSDK_NGX_Result DropFeature() {
+    if (feature) {
+        auto result = NVSDK_NGX_D3D11_ReleaseFeature(feature);
+        if (NVSDK_NGX_FAILED(result)) return result;
+        feature = nullptr;
+    }
+    return NVSDK_NGX_Result_Success;
 }
 }
 
 unsigned TwinKartDlssInitialize(ID3D11Device* selected, const wchar_t* cache, const wchar_t* provider) {
+    ConsumerCall call; if (!call.entered) return InvalidFrame;
     if (device || !selected || !cache || !cache[0] || !provider || !provider[0]) return InvalidFrame;
     ownerThread = GetCurrentThreadId();
     device = selected; device->AddRef();
@@ -56,6 +67,7 @@ unsigned TwinKartDlssInitialize(ID3D11Device* selected, const wchar_t* cache, co
 }
 
 unsigned TwinKartDlssEvaluate(const TwinKartTemporalFrame* frame) {
+    ConsumerCall call; if (!call.entered) return InvalidFrame;
     if (GetCurrentThreadId() != ownerThread) return WrongThread;
     if (!frame || frame->size != sizeof(*frame) || !initialized || !status.srAvailable || !parameters || !isolatedState ||
         !frame->context || !frame->color || !frame->depth || !frame->motion || !frame->output) return InvalidFrame;
@@ -89,17 +101,18 @@ unsigned TwinKartDlssEvaluate(const TwinKartTemporalFrame* frame) {
     bool recreated = false;
     if (!feature || status.inputWidth != color.Width || status.inputHeight != color.Height ||
         status.outputWidth != output.Width || status.outputHeight != output.Height || flags != featureFlags) {
-        DropFeature();
+        result = DropFeature();
         NVSDK_NGX_DLSS_Create_Params create{};
         create.Feature.InWidth = color.Width; create.Feature.InHeight = color.Height;
         create.Feature.InTargetWidth = output.Width; create.Feature.InTargetHeight = output.Height;
         create.Feature.InPerfQualityValue = NVSDK_NGX_PerfQuality_Value_MaxQuality;
         create.InFeatureCreateFlags = flags;
-        result = NGX_D3D11_CREATE_DLSS_EXT(context, &feature, parameters, &create);
-        recreated = true;
-        featureFlags = flags;
-        status.inputWidth = color.Width; status.inputHeight = color.Height;
-        status.outputWidth = output.Width; status.outputHeight = output.Height;
+        if (NVSDK_NGX_SUCCEED(result)) result = NGX_D3D11_CREATE_DLSS_EXT(context, &feature, parameters, &create);
+        if (NVSDK_NGX_SUCCEED(result) && feature) {
+            recreated = true; featureFlags = flags;
+            status.inputWidth = color.Width; status.inputHeight = color.Height;
+            status.outputWidth = output.Width; status.outputHeight = output.Height;
+        }
     }
     if (NVSDK_NGX_SUCCEED(result) && feature) {
         NVSDK_NGX_D3D11_DLSS_Eval_Params evaluate{};
@@ -122,16 +135,44 @@ unsigned TwinKartDlssEvaluate(const TwinKartTemporalFrame* frame) {
     return status.lastEvaluateResult;
 }
 bool TwinKartDlssGetState(TwinKartDlssState* target) {
+    ConsumerCall call; if (!call.entered) return false;
     if (!target || target->size != sizeof(*target) || GetCurrentThreadId() != ownerThread) return false;
     *target = status; return true;
 }
-void TwinKartDlssShutdown() {
-    if (!device || GetCurrentThreadId() != ownerThread) return;
-    DropFeature();
-    if (parameters) { NVSDK_NGX_D3D11_DestroyParameters(parameters); parameters = nullptr; }
+namespace {
+bool ShutdownUnchecked() {
+    if (!device) return true;
+    if (NVSDK_NGX_FAILED(DropFeature())) return false;
+    if (parameters) { if (NVSDK_NGX_FAILED(NVSDK_NGX_D3D11_DestroyParameters(parameters))) return false; parameters = nullptr; }
+    if (initialized) { if (NVSDK_NGX_FAILED(NVSDK_NGX_D3D11_Shutdown1(device))) return false; initialized = false; }
     if (isolatedState) { isolatedState->Release(); isolatedState = nullptr; }
     if (device1) { device1->Release(); device1 = nullptr; }
-    if (initialized) NVSDK_NGX_D3D11_Shutdown1(device);
-    device->Release(); device = nullptr; initialized = false;
-    status = TwinKartDlssState{sizeof(TwinKartDlssState)}; ownerThread = 0;
+    device->Release(); device = nullptr;
+    status = TwinKartDlssState{sizeof(TwinKartDlssState)}; ownerThread = 0; featureFlags = 0;
+    return true;
+}
+}
+void TwinKartDlssShutdown() {
+    ConsumerCall call;
+    if (!call.entered || !device || GetCurrentThreadId() != ownerThread) return;
+    ShutdownUnchecked();
+}
+bool TwinKartDlssShutdownDrained(unsigned expectedOwnerThread, ID3D11DeviceContext* context) {
+    ConsumerCall call;
+    if (!call.entered || !device || !expectedOwnerThread || expectedOwnerThread != ownerThread || !context ||
+        context->GetType() != D3D11_DEVICE_CONTEXT_IMMEDIATE || !SameDevice(context) || FAILED(device->GetDeviceRemovedReason())) return false;
+    ID3D11DeviceContext* immediate = nullptr; device->GetImmediateContext(&immediate);
+    bool exact = immediate == context; if (immediate) immediate->Release(); if (!exact) return false;
+    D3D11_QUERY_DESC desc{D3D11_QUERY_EVENT, 0}; ID3D11Query* query = nullptr;
+    if (FAILED(device->CreateQuery(&desc, &query))) return false;
+    context->End(query); context->Flush();
+    ULONGLONG started = GetTickCount64(); BOOL complete = FALSE; HRESULT result;
+    do {
+        result = context->GetData(query, &complete, sizeof(complete), D3D11_ASYNC_GETDATA_DONOTFLUSH);
+        if (result != S_FALSE) break;
+        Sleep(1);
+    } while (GetTickCount64() - started < 10000);
+    query->Release();
+    if (result != S_OK || !complete || FAILED(device->GetDeviceRemovedReason())) return false;
+    return ShutdownUnchecked();
 }

@@ -14,6 +14,7 @@
 #include "NativeNeuralPass.h"
 #include "NativeTemporalPass.h"
 #include "NativePresentation.h"
+#include "NativeSceneRectangle.h"
 
 // First-party resource observer with an opt-in, exact-build NR adapter.
 // SR and generated-frame presentation remain separate unfinished integrations.
@@ -31,6 +32,21 @@ using DrawInstances = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT,
 using DrawIndexedInstances = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, UINT, INT, UINT);
 using Dispatch = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, UINT, UINT, UINT);
 using Indirect = void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*, ID3D11Buffer*, UINT);
+using DrawAuto=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*);
+using CopyRegion=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,UINT,UINT,UINT,ID3D11Resource*,UINT,const D3D11_BOX*);
+using Copy=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,ID3D11Resource*);
+using Update=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,const D3D11_BOX*,const void*,UINT,UINT);
+using Resolve=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,ID3D11Resource*,UINT,DXGI_FORMAT);
+using Execute=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11CommandList*,BOOL);
+using ClearTarget=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11RenderTargetView*,const FLOAT*);
+using ClearUint=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11UnorderedAccessView*,const UINT*);
+using ClearFloat=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11UnorderedAccessView*,const FLOAT*);
+using CopyRegion1=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,UINT,UINT,UINT,ID3D11Resource*,UINT,const D3D11_BOX*,UINT);
+using Update1=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*,UINT,const D3D11_BOX*,const void*,UINT,UINT,UINT);
+using DiscardResource=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11Resource*);
+using DiscardView=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11View*);
+using ClearView=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11View*,const FLOAT*,const D3D11_RECT*,UINT);
+using DiscardView1=void(STDMETHODCALLTYPE*)(ID3D11DeviceContext*,ID3D11View*,const D3D11_RECT*,UINT);
 using CreatePixel = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11PixelShader**);
 using CreateCompute = HRESULT(STDMETHODCALLTYPE*)(ID3D11Device*, const void*, SIZE_T, ID3D11ClassLinkage*, ID3D11ComputeShader**);
 Present present = nullptr;
@@ -39,6 +55,9 @@ struct ContextHooks {
     Targets targets; Resources pixel, compute; Unordered unordered;
     Draw draw; DrawIndexed indexed; DrawInstances instances; DrawIndexedInstances indexedInstances;
     Dispatch dispatch; Indirect indexedIndirect, indirect, dispatchIndirect;
+    DrawAuto automatic;CopyRegion copyRegion;Copy copy;Update update;Resolve resolve;Execute execute;
+    ClearTarget clearTarget;ClearUint clearUint;ClearFloat clearFloat;
+    CopyRegion1 copyRegion1;Update1 update1;DiscardResource discardResource;DiscardView discardView;ClearView clearView;DiscardView1 discardView1;
 };
 struct DeviceHooks { void** table; CreatePixel pixel; CreateCompute compute; };
 DeviceHooks devices[8]{};
@@ -95,39 +114,83 @@ void TracePass(ID3D11DeviceContext* context, bool compute, void* caller) {
         if (InterlockedIncrement(&passRows) <= static_cast<LONG>(traceLimit)) Log(line);
     }
 }
+void RecordSceneDraw(ID3D11DeviceContext* context) {
+    if(context==gameContext.load(std::memory_order_acquire))TwinKartGraphics::RecordNativeSceneDraw(context,static_cast<unsigned>(frames));
+}
+// Every resource-write API that can alter the supported default, non-tiled,
+// one-mip color textures invalidates producer geometry. Command-list writes
+// have no observable per-resource boundaries here, so invalidate the epoch.
+#define TK_NATIVE_WRITE(name,field,signature,arguments,invalidate) \
+void STDMETHODCALLTYPE name signature {invalidate;auto original=Hooks(context).field;if(original)original arguments;}
+TK_NATIVE_WRITE(OnCopyRegion,copyRegion,(ID3D11DeviceContext* context,ID3D11Resource* dst,UINT ds,UINT x,UINT y,UINT z,ID3D11Resource* src,UINT ss,const D3D11_BOX* box),
+    (context,dst,ds,x,y,z,src,ss,box),TwinKartGraphics::InvalidateNativeScene(dst))
+TK_NATIVE_WRITE(OnCopy,copy,(ID3D11DeviceContext* context,ID3D11Resource* dst,ID3D11Resource* src),(context,dst,src),TwinKartGraphics::InvalidateNativeScene(dst))
+TK_NATIVE_WRITE(OnUpdate,update,(ID3D11DeviceContext* context,ID3D11Resource* dst,UINT sub,const D3D11_BOX* box,const void* data,UINT row,UINT depth),
+    (context,dst,sub,box,data,row,depth),TwinKartGraphics::InvalidateNativeScene(dst))
+TK_NATIVE_WRITE(OnResolve,resolve,(ID3D11DeviceContext* context,ID3D11Resource* dst,UINT ds,ID3D11Resource* src,UINT ss,DXGI_FORMAT format),
+    (context,dst,ds,src,ss,format),TwinKartGraphics::InvalidateNativeScene(dst))
+TK_NATIVE_WRITE(OnExecute,execute,(ID3D11DeviceContext* context,ID3D11CommandList* list,BOOL restore),(context,list,restore),TwinKartGraphics::InvalidateNativeSceneCommandList())
+TK_NATIVE_WRITE(OnClearTarget,clearTarget,(ID3D11DeviceContext* context,ID3D11RenderTargetView* view,const FLOAT* color),(context,view,color),TwinKartGraphics::InvalidateNativeSceneView(view))
+TK_NATIVE_WRITE(OnClearUint,clearUint,(ID3D11DeviceContext* context,ID3D11UnorderedAccessView* view,const UINT* color),(context,view,color),TwinKartGraphics::InvalidateNativeSceneView(view))
+TK_NATIVE_WRITE(OnClearFloat,clearFloat,(ID3D11DeviceContext* context,ID3D11UnorderedAccessView* view,const FLOAT* color),(context,view,color),TwinKartGraphics::InvalidateNativeSceneView(view))
+TK_NATIVE_WRITE(OnCopyRegion1,copyRegion1,(ID3D11DeviceContext* context,ID3D11Resource* dst,UINT ds,UINT x,UINT y,UINT z,ID3D11Resource* src,UINT ss,const D3D11_BOX* box,UINT flags),
+    (context,dst,ds,x,y,z,src,ss,box,flags),TwinKartGraphics::InvalidateNativeScene(dst))
+TK_NATIVE_WRITE(OnUpdate1,update1,(ID3D11DeviceContext* context,ID3D11Resource* dst,UINT sub,const D3D11_BOX* box,const void* data,UINT row,UINT depth,UINT flags),
+    (context,dst,sub,box,data,row,depth,flags),TwinKartGraphics::InvalidateNativeScene(dst))
+TK_NATIVE_WRITE(OnDiscardResource,discardResource,(ID3D11DeviceContext* context,ID3D11Resource* resource),(context,resource),TwinKartGraphics::InvalidateNativeScene(resource))
+TK_NATIVE_WRITE(OnDiscardView,discardView,(ID3D11DeviceContext* context,ID3D11View* view),(context,view),TwinKartGraphics::InvalidateNativeSceneView(view))
+TK_NATIVE_WRITE(OnClearView,clearView,(ID3D11DeviceContext* context,ID3D11View* view,const FLOAT* color,const D3D11_RECT* rects,UINT count),
+    (context,view,color,rects,count),TwinKartGraphics::InvalidateNativeSceneView(view))
+TK_NATIVE_WRITE(OnDiscardView1,discardView1,(ID3D11DeviceContext* context,ID3D11View* view,const D3D11_RECT* rects,UINT count),
+    (context,view,rects,count),TwinKartGraphics::InvalidateNativeSceneView(view))
+#undef TK_NATIVE_WRITE
+void STDMETHODCALLTYPE OnAutomatic(ID3D11DeviceContext* context) {
+    auto original=Hooks(context).automatic;if(original)original(context);RecordSceneDraw(context);
+}
 void STDMETHODCALLTYPE OnDraw(ID3D11DeviceContext* context, UINT a, UINT b) {
     if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).draw; if (original) original(context,a,b);
+    RecordSceneDraw(context);
     if(a<=6 && context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPixelPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnIndexed(ID3D11DeviceContext* context, UINT a, UINT b, INT c) {
     if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indexed; if (original) original(context,a,b,c);
+    RecordSceneDraw(context);
     if(a<=6 && context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPixelPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnInstances(ID3D11DeviceContext* context, UINT a, UINT b, UINT c, UINT d) {
     if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).instances; if (original) original(context,a,b,c,d);
+    RecordSceneDraw(context);
     if(a<=6 && context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPixelPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnIndexedInstances(ID3D11DeviceContext* context, UINT a, UINT b, UINT c, INT d, UINT e) {
     if (a <= 6) TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indexedInstances; if (original) original(context,a,b,c,d,e);
+    RecordSceneDraw(context);
     if(a<=6 && context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPixelPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnDispatch(ID3D11DeviceContext* context, UINT a, UINT b, UINT c) {
     if(context==gameContext.load(std::memory_order_acquire)) TwinKartGraphics::CaptureTemporalInputs(context,static_cast<unsigned>(frames));
     TracePass(context, true, _ReturnAddress());
+    // Freeze the exact native dispatch inputs before another consumer or the
+    // original dispatch can alter its bindings. Private capture uses this same
+    // boundary; the pre-HUD pass must consume that view's immutable constants.
+    if(context==gameContext.load(std::memory_order_acquire)) TwinKartGraphics::ProcessNativeNeuralPass(context,static_cast<unsigned>(frames));
     bool replaced=context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeTemporalPass(context,static_cast<unsigned>(frames),a,b,c);
+    TwinKartGraphics::InvalidateNativeComputeTargets(context);
     auto original = Hooks(context).dispatch; if (original && !replaced) original(context,a,b,c);
-    if(context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 void STDMETHODCALLTYPE OnIndexedIndirect(ID3D11DeviceContext* context, ID3D11Buffer* args, UINT offset) {
     TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indexedIndirect; if (original) original(context,args,offset);
+    RecordSceneDraw(context);
 }
 void STDMETHODCALLTYPE OnIndirect(ID3D11DeviceContext* context, ID3D11Buffer* args, UINT offset) {
     TracePass(context, false, _ReturnAddress()); auto original = Hooks(context).indirect; if (original) original(context,args,offset);
+    RecordSceneDraw(context);
 }
 void STDMETHODCALLTYPE OnDispatchIndirect(ID3D11DeviceContext* context, ID3D11Buffer* args, UINT offset) {
     if(context==gameContext.load(std::memory_order_acquire)) TwinKartGraphics::CaptureTemporalInputs(context,static_cast<unsigned>(frames));
+    if(context==gameContext.load(std::memory_order_acquire)) TwinKartGraphics::ProcessNativeNeuralPass(context,static_cast<unsigned>(frames));
+    TwinKartGraphics::InvalidateNativeComputeTargets(context);
     TracePass(context, true, _ReturnAddress()); auto original = Hooks(context).dispatchIndirect; if (original) original(context,args,offset);
-    if(context==gameContext.load(std::memory_order_acquire) && TwinKartGraphics::ProcessNativeNeuralPass(context,static_cast<unsigned>(frames))) InterlockedExchange(&nrLastSubmitted,frames);
 }
 DeviceHooks DeviceFunctions(ID3D11Device* device) {
     DeviceHooks result{}; void** table = *reinterpret_cast<void***>(device);
@@ -277,8 +340,20 @@ bool HookContext(ID3D11DeviceContext* context) {
     bool j=Patch(table,40,reinterpret_cast<void*>(OnIndirect),reinterpret_cast<void**>(&hooks.indirect));
     bool k=Patch(table,41,reinterpret_cast<void*>(OnDispatch),reinterpret_cast<void**>(&hooks.dispatch));
     bool l=Patch(table,42,reinterpret_cast<void*>(OnDispatchIndirect),reinterpret_cast<void**>(&hooks.dispatchIndirect));
+    bool writes=true;
+#define TK_NATIVE_WRITE_SLOT(slot,name,field) writes=Patch(table,slot,reinterpret_cast<void*>(name),reinterpret_cast<void**>(&hooks.field)) && writes
+    TK_NATIVE_WRITE_SLOT(38,OnAutomatic,automatic);
+    TK_NATIVE_WRITE_SLOT(46,OnCopyRegion,copyRegion);TK_NATIVE_WRITE_SLOT(47,OnCopy,copy);TK_NATIVE_WRITE_SLOT(48,OnUpdate,update);
+    TK_NATIVE_WRITE_SLOT(50,OnClearTarget,clearTarget);TK_NATIVE_WRITE_SLOT(51,OnClearUint,clearUint);TK_NATIVE_WRITE_SLOT(52,OnClearFloat,clearFloat);
+    TK_NATIVE_WRITE_SLOT(57,OnResolve,resolve);TK_NATIVE_WRITE_SLOT(58,OnExecute,execute);
+    if(entries>=134) {
+        TK_NATIVE_WRITE_SLOT(115,OnCopyRegion1,copyRegion1);TK_NATIVE_WRITE_SLOT(116,OnUpdate1,update1);
+        TK_NATIVE_WRITE_SLOT(117,OnDiscardResource,discardResource);TK_NATIVE_WRITE_SLOT(118,OnDiscardView,discardView);
+        TK_NATIVE_WRITE_SLOT(132,OnClearView,clearView);TK_NATIVE_WRITE_SLOT(133,OnDiscardView1,discardView1);
+    }
+#undef TK_NATIVE_WRITE_SLOT
     bool installed = false;
-    if (a && b && c && d && e && f && g && h && i && j && k && l) {
+    if (a && b && c && d && e && f && g && h && i && j && k && l && writes) {
         DWORD previous;
         if (VirtualProtect(context,sizeof(void*),PAGE_READWRITE,&previous)) {
             installed = InterlockedCompareExchangePointer(reinterpret_cast<PVOID volatile*>(context),table,source) == source;
@@ -294,16 +369,29 @@ HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT fl
     // Streamline's private D3D12 chain can reach the shared native DXGI vtable.
     // Its nested Present must not increment the D3D11 frame or run hooks again.
     if(TwinKartGraphics::InsideNativePresentation())return present(swap,interval,flags);
+    // NVIDIA may present generated frames on its own thread, where our
+    // caller's thread-local recursion flag is absent. The shared DXGI vtable
+    // also sees that private D3D12 chain. Only the actual D3D11 renderer may
+    // advance native frame/history state or retire its current-frame guides.
+    ID3D11Device* rendererDevice=nullptr;
+    if(FAILED(swap->GetDevice(__uuidof(ID3D11Device),reinterpret_cast<void**>(&rendererDevice))))
+        return present(swap,interval,flags);
+    rendererDevice->Release();
     bool nrBackbuffer=false,srBackbuffer=false;LONG nrRenderFrame=frames;
     if(!(flags&DXGI_PRESENT_TEST) && nrLastSubmitted==nrRenderFrame) {
         ID3D11Texture2D* texture=nullptr;
-        if(SUCCEEDED(swap->GetBuffer(0,__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&texture)))) {
+        if(SUCCEEDED(swap->GetBuffer(TwinKartGraphics::NativePresentationBufferIndex(swap,static_cast<unsigned>(nrRenderFrame)),__uuidof(ID3D11Texture2D),reinterpret_cast<void**>(&texture)))) {
             nrBackbuffer=TwinKartGraphics::NativeNeuralOutputMatches(texture,static_cast<unsigned>(nrRenderFrame));
             srBackbuffer=TwinKartGraphics::NativeSuperResolutionOutputMatches(texture,static_cast<unsigned>(nrRenderFrame));texture->Release();
         }
     }
     if (!(flags & DXGI_PRESENT_TEST)) {
         if (InterlockedCompareExchange(&realContextHooked, 1, 0) == 0) {
+            DXGI_SWAP_CHAIN_DESC actual{};
+            if(SUCCEEDED(swap->GetDesc(&actual))) {
+                char row[512];sprintf_s(row,"{\"event\":\"real_swapchain_contract\",\"width\":%u,\"height\":%u,\"format\":%u,\"buffers\":%u,\"effect\":%u,\"flags\":%u,\"samples\":%u,\"quality\":%u,\"windowed\":%s,\"factory_hook_mask\":%u,\"game_acceptance\":false}\r\n",
+                    actual.BufferDesc.Width,actual.BufferDesc.Height,actual.BufferDesc.Format,actual.BufferCount,actual.SwapEffect,actual.Flags,actual.SampleDesc.Count,actual.SampleDesc.Quality,actual.Windowed?"true":"false",TwinKartGraphics::NativePresentationFactoryHookMask(swap));Log(row);
+            }
             ID3D11Device* actualDevice = nullptr;
             if (SUCCEEDED(swap->GetDevice(__uuidof(ID3D11Device), reinterpret_cast<void**>(&actualDevice)))) {
                 ID3D11DeviceContext* actualContext = nullptr;
@@ -346,7 +434,21 @@ HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT fl
         }
         lastPresent = now;
     }
-    HRESULT presented=TwinKartGraphics::IsNativePresentation(swap)?TwinKartGraphics::PresentNativePresentation(swap,interval,flags,static_cast<unsigned>(nrRenderFrame)):present(swap,interval,flags);
+    bool bridgedPresentation=TwinKartGraphics::IsNativePresentation(swap);
+    if(!bridgedPresentation && !(flags&DXGI_PRESENT_TEST)) {
+        // NR/SR without FG still has a real native Present/context boundary.
+        // Generated D3D12 worker chains were excluded above; the NR adapter
+        // verifies this exact immediate context before retiring any owner.
+        ID3D11Device* device=nullptr;
+        if(SUCCEEDED(swap->GetDevice(__uuidof(ID3D11Device),reinterpret_cast<void**>(&device)))) {
+            ID3D11DeviceContext* context=nullptr;device->GetImmediateContext(&context);device->Release();
+            if(context){TwinKartGraphics::RetireNativeTemporalForRenderThread(context);TwinKartGraphics::RetireNativeNeuralForRenderThread(context);context->Release();}
+        }
+    }
+    HRESULT presented=bridgedPresentation?TwinKartGraphics::PresentNativePresentation(swap,interval,flags,static_cast<unsigned>(nrRenderFrame)):present(swap,interval,flags);
+    if(FAILED(presented)) {
+        char row[192];sprintf_s(row,"{\"event\":\"native_present_failed\",\"frame\":%ld,\"thread\":%lu,\"hresult\":%ld}\r\n",nrRenderFrame,GetCurrentThreadId(),presented);Log(row);
+    }
     if(srBackbuffer && (nrRenderFrame%120==0 || FAILED(presented))) {
         char line[320];sprintf_s(line,"{\"event\":\"sr_native_backbuffer_present\",\"render_frame\":%ld,\"present_hresult\":%ld,\"same_output_resource\":true,\"quality_verified\":false}\r\n",nrRenderFrame,presented);Log(line);
     }
@@ -397,7 +499,10 @@ DWORD WINAPI Worker(void*) {
     DWORD providerLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_PROVIDER",neuralProvider,ARRAYSIZE(neuralProvider));
     DWORD cacheLength=GetEnvironmentVariableW(L"TWIN_KART_DLSS_CACHE",neuralCache,ARRAYSIZE(neuralCache));
     if(neuralLength && neuralLength<ARRAYSIZE(neuralModule) && providerLength && providerLength<ARRAYSIZE(neuralProvider) && cacheLength && cacheLength<ARRAYSIZE(neuralCache)) {
-        neuralReady=TwinKartGraphics::ConfigureNativeNeuralPass(neuralModule,neuralProvider,neuralCache,Log);
+        wchar_t expected[65]{};char sha[65]{};
+        DWORD neuralHashLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_MODULE_SHA256",expected,ARRAYSIZE(expected));
+        if(neuralHashLength==64)for(unsigned i=0;i<64;++i)sha[i]=expected[i]<128?static_cast<char>(expected[i]):'!';
+        neuralReady=TwinKartGraphics::ConfigureNativeNeuralPass(neuralModule,sha,neuralProvider,neuralCache,Log,TwinKartGraphics::NativePresentationOwnsNgxDevice);
         Log(neuralReady?"{\"event\":\"nr_native_pass_configured\",\"game_acceptance\":false}\r\n":"{\"event\":\"nr_native_pass_configuration_rejected\"}\r\n");
     }
     wchar_t modulePath[32768]{};

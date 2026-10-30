@@ -20,6 +20,22 @@ try {
         & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /LD /Fo./ /FeTwinKartDriftRaceBridge.dll (Join-Path $PSScriptRoot 'DriftRaceBridge.cpp') (Join-Path $PSScriptRoot 'GameThreadQueue.cpp') /link bcrypt.lib user32.lib
         if($LASTEXITCODE -ne 0) { throw 'Native race bridge build failed' }
         if($Test) {
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeNativeAiRosterTests.exe (Join-Path $projectRoot 'tests\NativeAiRosterTests.cpp') /link bcrypt.lib
+            if($LASTEXITCODE -ne 0) { throw 'AI roster test build failed' }
+            & (Join-Path $build 'NativeAiRosterTests.exe')
+            if($LASTEXITCODE -ne 0) { throw 'AI roster contract checks failed' }
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeNativeEquipmentPresetTests.exe (Join-Path $projectRoot 'tests\NativeEquipmentPresetTests.cpp')
+            if($LASTEXITCODE -ne 0) { throw 'Native equipment preset test build failed' }
+            & (Join-Path $build 'NativeEquipmentPresetTests.exe')
+            if($LASTEXITCODE -ne 0) { throw 'Native equipment preset checks failed' }
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeNativeTrackCatalogTests.exe (Join-Path $projectRoot 'tests\NativeTrackCatalogTests.cpp')
+            if($LASTEXITCODE -ne 0) { throw 'Native track catalog test build failed' }
+            & (Join-Path $build 'NativeTrackCatalogTests.exe')
+            if($LASTEXITCODE -ne 0) { throw 'Native track catalog checks failed' }
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeLocalAiLifecycleTests.exe (Join-Path $projectRoot 'tests\LocalAiLifecycleTests.cpp')
+            if($LASTEXITCODE -ne 0) { throw 'Local AI lifecycle test build failed' }
+            & (Join-Path $build 'LocalAiLifecycleTests.exe')
+            if($LASTEXITCODE -ne 0) { throw 'Local AI lifecycle checks failed' }
             & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeOwnedCodePatchTests.exe (Join-Path $projectRoot 'tests\OwnedCodePatchTests.cpp')
             if($LASTEXITCODE -ne 0) { throw 'Owned call adapter test build failed' }
             & (Join-Path $build 'OwnedCodePatchTests.exe')

@@ -15,11 +15,21 @@ namespace {
 ID3D12Device* device=nullptr;
 NVSDK_NGX_Parameter* parameters=nullptr;
 NVSDK_NGX_Handle* feature=nullptr;
+NVSDK_NGX_Handle* secondFeature=nullptr;
+NVSDK_NGX_Parameter* secondParameters=nullptr;
+ID3D12Resource* intermediate=nullptr;
+unsigned requestedPasses=1,requestedStyle=0;
+bool resetNeuralHistory=true;
 NVSDK_NGX_Handle* superResolution=nullptr;
 NVSDK_NGX_Parameter* superParameters=nullptr;
 TwinKartSuperResolutionState superState{sizeof(TwinKartSuperResolutionState)};
 TwinKartNeuralState state{sizeof(TwinKartNeuralState)};
 DWORD owner=0;
+SRWLOCK consumerLock=SRWLOCK_INIT;
+struct ConsumerCall {
+    bool entered=TryAcquireSRWLockExclusive(&consumerLock)!=FALSE;
+    ~ConsumerCall(){if(entered)ReleaseSRWLockExclusive(&consumerLock);}
+};
 TwinKartNeuralLogCallback logger=nullptr;
 bool allowPrivate=false;
 std::wstring providerDirectory,cacheDirectory;
@@ -79,7 +89,9 @@ bool Texture(ID3D12Resource* resource,DXGI_FORMAT first,DXGI_FORMAT second=DXGI_
         desc.DepthOrArraySize==1 && desc.MipLevels==1 && desc.SampleDesc.Count==1 && (desc.Format==first || desc.Format==second);
 }
 }
-unsigned TwinKartNeuralInitialize(ID3D12Device* selected,const wchar_t* cache,const wchar_t* provider,TwinKartNeuralLogCallback log,bool privateAbi) {
+namespace {
+unsigned InitializeConsumer(ID3D12Device* selected,const wchar_t* cache,const wchar_t* provider,TwinKartNeuralLogCallback log,bool privateAbi,bool borrowed) {
+    ConsumerCall call;if(!call.entered)return Invalid;
     if(device || !selected || !cache || !cache[0] || !provider || !provider[0]) return Invalid;
     device=selected; device->AddRef(); owner=GetCurrentThreadId();
     allowPrivate=privateAbi; providerDirectory=provider; cacheDirectory=cache;
@@ -87,14 +99,32 @@ unsigned TwinKartNeuralInitialize(ID3D12Device* selected,const wchar_t* cache,co
     common.PathListInfo.Path=paths; common.PathListInfo.Length=1;
     logger=log;
     if(logger) { common.LoggingInfo.LoggingCallback=RuntimeLog; common.LoggingInfo.MinimumLoggingLevel=NVSDK_NGX_LOGGING_LEVEL_VERBOSE; common.LoggingInfo.DisableOtherLoggingSinks=true; }
+    // Our SDK dispatcher still needs initialization even when Streamline owns
+    // the same device's core lifetime. Only device-wide shutdown is borrowed;
+    // omitting dispatcher initialization returns NGX NotInitialized.
     auto result=NVSDK_NGX_D3D12_Init_with_ProjectID("45d35067-277b-4e3f-b2f6-e7dd197c609e",NVSDK_NGX_ENGINE_TYPE_CUSTOM,"TwinKart-Original-Neural",cache,device,&common);
     state.initializeResult=static_cast<unsigned>(result);
     if(NVSDK_NGX_FAILED(result)) return state.initializeResult;
-    state.initialized=true;
+    state.initialized=true;state.externalCoreLifetime=borrowed;
     result=NVSDK_NGX_D3D12_AllocateParameters(&parameters);
     state.initializeResult=static_cast<unsigned>(result); return state.initializeResult;
 }
+}
+unsigned TwinKartNeuralInitialize(ID3D12Device* selected,const wchar_t* cache,const wchar_t* provider,TwinKartNeuralLogCallback log,bool privateAbi) {
+    return InitializeConsumer(selected,cache,provider,log,privateAbi,false);
+}
+unsigned TwinKartNeuralInitializeBorrowed(ID3D12Device* selected,const wchar_t* cache,const wchar_t* provider,TwinKartNeuralLogCallback log,bool privateAbi) {
+    return InitializeConsumer(selected,cache,provider,log,privateAbi,true);
+}
+bool TwinKartNeuralConfigure(unsigned passes,unsigned style) {
+    ConsumerCall call;
+    if(!call.entered || GetCurrentThreadId()!=owner || !state.initialized || feature || secondFeature ||
+       passes<1 || passes>2 || style>2)return false;
+    requestedPasses=passes;requestedStyle=style;
+    state.requestedPasses=passes;state.style=style;return true;
+}
 unsigned TwinKartNeuralCreate(ID3D12GraphicsCommandList* commands,unsigned width,unsigned height) {
+    ConsumerCall call;if(!call.entered)return Invalid;
     if(GetCurrentThreadId()!=owner) return WrongThread;
     if(!state.initialized || !parameters || feature || !SameDevice(commands) || width<32 || height<32 || width>8192 || height>8192) return Invalid;
     parameters->Set(NVSDK_NGX_Parameter_Width,width); parameters->Set(NVSDK_NGX_Parameter_Height,height);
@@ -102,15 +132,39 @@ unsigned TwinKartNeuralCreate(ID3D12GraphicsCommandList* commands,unsigned width
     parameters->Set("CreationNodeMask",1u); parameters->Set("VisibilityNodeMask",1u);
     parameters->Set("DLSSNR.Width",width); parameters->Set("DLSSNR.Height",height);
     parameters->Set("DLSSNR.Enabled",1); parameters->Set("DLSSNR.ScalingRatio",1.0f);
+    parameters->Set("DLSSNR.Style",requestedStyle);
     auto result=NVSDK_NGX_D3D12_CreateFeature(commands,NeuralFeature,parameters,&feature);
     if(NVSDK_NGX_FAILED(result) && !feature && InitializePrivateProvider()) result=privateCreate(commands,NeuralFeature,parameters,&feature);
     state.createResult=static_cast<unsigned>(result); state.featureCreated=NVSDK_NGX_SUCCEED(result) && feature;
     if(state.featureCreated) { state.width=width; state.height=height; }
+    state.requestedPasses=requestedPasses;state.style=requestedStyle;
+    if(state.featureCreated && requestedPasses==2) {
+        result=NVSDK_NGX_D3D12_AllocateParameters(&secondParameters);
+        if(NVSDK_NGX_SUCCEED(result) && state.privateProvider) {
+            auto populate=reinterpret_cast<SnippetPopulate>(GetProcAddress(privateModule,"NVSDK_NGX_D3D12_PopulateParameters_Impl"));
+            result=populate?populate(secondParameters):static_cast<NVSDK_NGX_Result>(Invalid);
+        }
+        if(NVSDK_NGX_SUCCEED(result)) {
+            secondParameters->Set(NVSDK_NGX_Parameter_Width,width);secondParameters->Set(NVSDK_NGX_Parameter_Height,height);
+            secondParameters->Set(NVSDK_NGX_Parameter_OutWidth,width);secondParameters->Set(NVSDK_NGX_Parameter_OutHeight,height);
+            secondParameters->Set("CreationNodeMask",1u);secondParameters->Set("VisibilityNodeMask",1u);
+            secondParameters->Set("DLSSNR.Width",width);secondParameters->Set("DLSSNR.Height",height);
+            secondParameters->Set("DLSSNR.Enabled",1);secondParameters->Set("DLSSNR.ScalingRatio",1.0f);
+            secondParameters->Set("DLSSNR.Style",requestedStyle);
+            result=state.privateProvider?privateCreate(commands,NeuralFeature,secondParameters,&secondFeature):
+                NVSDK_NGX_D3D12_CreateFeature(commands,NeuralFeature,secondParameters,&secondFeature);
+        }
+        state.createResult=static_cast<unsigned>(result);
+        if(secondFeature==feature)secondFeature=nullptr;
+        state.featureCreated=NVSDK_NGX_SUCCEED(result) && secondFeature;
+        if(!state.featureCreated && NVSDK_NGX_SUCCEED(result))state.createResult=Invalid;
+    }
     return state.createResult;
 }
 unsigned TwinKartNeuralEvaluate(const TwinKartNeuralFrame* frame) {
+    ConsumerCall call;if(!call.entered)return Invalid;
     if(GetCurrentThreadId()!=owner) return WrongThread;
-    if(!frame || frame->size!=sizeof(*frame) || !feature || !parameters || !SameDevice(frame->commands)) return Invalid;
+    if(!frame || frame->size!=sizeof(*frame) || !state.featureCreated || !feature || !parameters || !SameDevice(frame->commands)) return Invalid;
     if(!frame->guidesValidated) return MissingGuides;
     if(!Texture(frame->color,DXGI_FORMAT_R16G16B16A16_FLOAT,DXGI_FORMAT_R10G10B10A2_UNORM) ||
        !Texture(frame->output,DXGI_FORMAT_R16G16B16A16_FLOAT,DXGI_FORMAT_R10G10B10A2_UNORM) ||
@@ -119,10 +173,28 @@ unsigned TwinKartNeuralEvaluate(const TwinKartNeuralFrame* frame) {
        !(frame->output->GetDesc().Flags&D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS) ||
        !std::isfinite(frame->motionScaleX) || !std::isfinite(frame->motionScaleY) || !frame->motionScaleX || !frame->motionScaleY ||
        !std::isfinite(frame->intensity) || frame->intensity<0 || frame->intensity>1) return Invalid;
-    parameters->Set("DLSSNR.Color",frame->color); parameters->Set("DLSSNR.Depth",frame->depth);
-    parameters->Set("DLSSNR.MVec",frame->motion); parameters->Set("DLSSNR.Output",frame->output);
+    if(requestedPasses==2) {
+        if(!secondFeature || !secondParameters)return Invalid;
+        // Allocation is owned by this feature lifetime and retired only after
+        // the caller drains GPU work. A format change requires recreation.
+        auto desc=frame->output->GetDesc();
+        if(intermediate && intermediate->GetDesc().Format!=desc.Format)return Invalid;
+        if(!intermediate) {
+            D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;
+            if(FAILED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,
+                D3D12_RESOURCE_STATE_UNORDERED_ACCESS,nullptr,IID_PPV_ARGS(&intermediate))))return Invalid;
+        }
+    }
+    state.passResults[0]=state.passResults[1]=0;
+    NVSDK_NGX_Result result=static_cast<NVSDK_NGX_Result>(Invalid);
+    for(unsigned pass=0;pass<requestedPasses;++pass) {
+    auto parameters=pass?secondParameters: ::parameters;
+    auto activeFeature=pass?secondFeature:feature;
+    parameters->Set("DLSSNR.Color",pass?intermediate:frame->color); parameters->Set("DLSSNR.Depth",frame->depth);
+    parameters->Set("DLSSNR.MVec",frame->motion); parameters->Set("DLSSNR.Output",requestedPasses==2 && !pass?intermediate:frame->output);
+    parameters->Set("DLSSNR.Style",requestedStyle);
     parameters->Set("DLSSNR.MVecScaleX",frame->motionScaleX); parameters->Set("DLSSNR.MVecScaleY",frame->motionScaleY);
-    parameters->Set("DLSSNR.Intensity",frame->intensity); parameters->Set("DLSSNR.Reset",frame->reset?1:0);
+    parameters->Set("DLSSNR.Intensity",frame->intensity); parameters->Set("DLSSNR.Reset",frame->reset || resetNeuralHistory?1:0);
     parameters->Set("DLSSNR.DepthInverted",frame->invertedDepth?1:0);
     const char* prefixes[]={"DLSSNR.ColorSubrect","DLSSNR.DepthSubrect","DLSSNR.MVecSubrect","DLSSNR.OutputSubrect"};
     for(const char* prefix:prefixes) {
@@ -131,15 +203,35 @@ unsigned TwinKartNeuralEvaluate(const TwinKartNeuralFrame* frame) {
         sprintf_s(key,"%sWidth",prefix); parameters->Set(key,state.width);
         sprintf_s(key,"%sHeight",prefix); parameters->Set(key,state.height);
     }
-    auto result=state.privateProvider?privateEvaluate(frame->commands,feature,parameters,nullptr):NVSDK_NGX_D3D12_EvaluateFeature(frame->commands,feature,parameters,nullptr);
+    result=state.privateProvider?privateEvaluate(frame->commands,activeFeature,parameters,nullptr):NVSDK_NGX_D3D12_EvaluateFeature(frame->commands,activeFeature,parameters,nullptr);
+    state.passResults[pass]=static_cast<unsigned>(result);
+    if(NVSDK_NGX_SUCCEED(result))++state.passEvaluations[pass];
+    if(requestedPasses==2 && !pass) {
+        if(NVSDK_NGX_FAILED(result))break;
+        D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition={intermediate,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE};
+        frame->commands->ResourceBarrier(1,&barrier);
+    } else if(pass) {
+        D3D12_RESOURCE_BARRIER barrier{};barrier.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition={intermediate,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_UNORDERED_ACCESS};
+        frame->commands->ResourceBarrier(1,&barrier);
+    }
+    }
     state.evaluateResult=static_cast<unsigned>(result); if(NVSDK_NGX_SUCCEED(result)) ++state.evaluations;
+    // A partially completed chain cannot keep one pass one frame ahead of the
+    // other. Reset both independent temporal histories on the next attempt.
+    resetNeuralHistory=NVSDK_NGX_FAILED(result);
     return state.evaluateResult;
 }
 bool TwinKartNeuralGetState(TwinKartNeuralState* target) {
+    ConsumerCall call;if(!call.entered)return false;
     if(!target || target->size!=sizeof(*target) || GetCurrentThreadId()!=owner) return false;
     *target=state; return true;
 }
 unsigned TwinKartSuperResolutionCreate(ID3D12GraphicsCommandList* commands,unsigned iw,unsigned ih,unsigned ow,unsigned oh,int quality,bool hdr,bool invertedDepth) {
+    ConsumerCall call;if(!call.entered)return Invalid;
     if(GetCurrentThreadId()!=owner) return WrongThread;
     if(!state.initialized || superResolution || !SameDevice(commands) || iw<32 || ih<32 || ow<=iw || oh<=ih || ow>8192 || oh>8192 || quality<0 || quality>3) return Invalid;
     if(!superParameters) {
@@ -158,6 +250,7 @@ unsigned TwinKartSuperResolutionCreate(ID3D12GraphicsCommandList* commands,unsig
     return superState.createResult;
 }
 unsigned TwinKartSuperResolutionEvaluate(const TwinKartSuperResolutionFrame* frame) {
+    ConsumerCall call;if(!call.entered)return Invalid;
     if(GetCurrentThreadId()!=owner) return WrongThread;
     if(!frame || frame->size!=sizeof(*frame) || !superResolution || !superParameters || !SameDevice(frame->commands)) return Invalid;
     if(!frame->guidesValidated || !frame->hudlessValidated) return MissingGuides;
@@ -186,20 +279,46 @@ unsigned TwinKartSuperResolutionEvaluate(const TwinKartSuperResolutionFrame* fra
     return superState.evaluateResult;
 }
 bool TwinKartSuperResolutionGetState(TwinKartSuperResolutionState* target) {
+    ConsumerCall call;if(!call.entered)return false;
     if(!target || target->size!=sizeof(*target) || GetCurrentThreadId()!=owner) return false;
     *target=superState; return true;
 }
-void TwinKartNeuralShutdown() {
-    if(!device || GetCurrentThreadId()!=owner) return;
-    if(feature) { if(state.privateProvider) privateRelease(feature); else NVSDK_NGX_D3D12_ReleaseFeature(feature); feature=nullptr; }
-    if(state.privateProvider && privateShutdown) privateShutdown(device);
-    if(superResolution) { NVSDK_NGX_D3D12_ReleaseFeature(superResolution); superResolution=nullptr; }
-    if(superParameters) { NVSDK_NGX_D3D12_DestroyParameters(superParameters); superParameters=nullptr; }
+namespace {
+bool ShutdownUnchecked() {
+    if(!device)return true;
+    if(secondFeature) {
+        auto result=state.privateProvider?privateRelease(secondFeature):NVSDK_NGX_D3D12_ReleaseFeature(secondFeature);
+        if(NVSDK_NGX_FAILED(result))return false;secondFeature=nullptr;
+    }
+    if(intermediate){intermediate->Release();intermediate=nullptr;}
+    if(secondParameters){if(NVSDK_NGX_FAILED(NVSDK_NGX_D3D12_DestroyParameters(secondParameters)))return false;secondParameters=nullptr;}
+    if(feature) {
+        auto result=state.privateProvider?privateRelease(feature):NVSDK_NGX_D3D12_ReleaseFeature(feature);
+        if(NVSDK_NGX_FAILED(result))return false;feature=nullptr;state.featureCreated=false;
+    }
+    if(superResolution) {if(NVSDK_NGX_FAILED(NVSDK_NGX_D3D12_ReleaseFeature(superResolution)))return false;superResolution=nullptr;superState.featureCreated=false;}
+    if(superParameters) {if(NVSDK_NGX_FAILED(NVSDK_NGX_D3D12_DestroyParameters(superParameters)))return false;superParameters=nullptr;}
+    if(state.privateProvider && privateShutdown) {
+        if(NVSDK_NGX_FAILED(privateShutdown(device)))return false;state.privateProvider=false;
+    }
     superState=TwinKartSuperResolutionState{sizeof(TwinKartSuperResolutionState)};
-    if(parameters) { NVSDK_NGX_D3D12_DestroyParameters(parameters); parameters=nullptr; }
-    if(state.initialized) NVSDK_NGX_D3D12_Shutdown1(device);
+    if(parameters) {if(NVSDK_NGX_FAILED(NVSDK_NGX_D3D12_DestroyParameters(parameters)))return false;parameters=nullptr;}
+    if(state.initialized && !state.externalCoreLifetime) {if(NVSDK_NGX_FAILED(NVSDK_NGX_D3D12_Shutdown1(device)))return false;}
+    state.initialized=false;
     if(privateModule) FreeLibrary(privateModule);
     privateModule=nullptr; privateCreate=nullptr; privateEvaluate=nullptr; privateRelease=nullptr; privateShutdown=nullptr;
-    allowPrivate=false; providerDirectory.clear(); cacheDirectory.clear();
-    device->Release(); device=nullptr; owner=0; state=TwinKartNeuralState{sizeof(TwinKartNeuralState)}; logger=nullptr;
+    allowPrivate=false;requestedPasses=1;requestedStyle=0;resetNeuralHistory=true; providerDirectory.clear(); cacheDirectory.clear();
+    device->Release(); device=nullptr; owner=0; state=TwinKartNeuralState{sizeof(TwinKartNeuralState)}; logger=nullptr;return true;
+}
+}
+void TwinKartNeuralShutdown() {
+    ConsumerCall call;if(!call.entered || !device || GetCurrentThreadId()!=owner)return;
+    ShutdownUnchecked();
+}
+bool TwinKartNeuralShutdownDrained(unsigned expectedOwner,ID3D12Fence* fence,unsigned long long value) {
+    ConsumerCall call;
+    if(!call.entered || !device || !expectedOwner || owner!=expectedOwner || !value || !SameDevice(fence))return false;
+    auto completed=fence->GetCompletedValue();
+    if(completed==~0ull || completed<value)return false;
+    return ShutdownUnchecked();
 }

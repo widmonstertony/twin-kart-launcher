@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cfloat>
 #include <cstring>
+#include <limits>
 namespace TwinKartGraphics {
 inline bool InvertNativeMatrix(const float* source,float* target) {
     double a[4][8]{};
@@ -60,9 +61,10 @@ inline bool DecodeNativeCamera(const float* view,unsigned width,unsigned height,
     }
     if(camera.viewToClip[0]<=0 || camera.viewToClip[5]<=0 || camera.viewToClip[11]!=1 || camera.viewToClip[15]!=0)return false;
     // This supported native projection is inverted-Z with an infinite far
-    // plane. FLT_MAX represents that bound; a guessed finite distance does not.
+    // plane. Positive infinity preserves its bound. FLT_MAX is Streamline's
+    // INVALID_FLOAT sentinel, so it must not be submitted as cameraFar.
     if(camera.viewToClip[10]!=0 || camera.viewToClip[14]<=0)return false;
-    camera.nearPlane=camera.viewToClip[14];camera.farPlane=FLT_MAX;
+    camera.nearPlane=camera.viewToClip[14];camera.farPlane=std::numeric_limits<float>::infinity();
     camera.fieldOfView=2*atanf(1/camera.viewToClip[5]);
     camera.aspect=camera.viewToClip[5]/camera.viewToClip[0];
     camera.jitterX=-view[520]*width*0.5f;camera.jitterY=view[521]*height*0.5f;

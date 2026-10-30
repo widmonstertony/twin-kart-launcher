@@ -17,6 +17,7 @@ namespace TwinKartLauncher.Gateway
         bool playRequested;
         bool hostMode;
         bool observerMode, hideGameKey;
+        bool quickRoomPrepared;
         CsRaceGameContract setting;
 
         public string SessionId { get { return sessionId; } }
@@ -32,6 +33,23 @@ namespace TwinKartLauncher.Gateway
         public int[] AiSlots { get { var values = new List<int>(aiSlots); values.Sort(); return values.ToArray(); } }
         public int AiCount { get { return aiSlots.Count; } }
         public bool HasAiSlot(int slot) { return aiSlots.Contains(slot); }
+
+        // The main-lobby mode buttons enter the original room/setup surface.
+        // This prepares only its local state; the client still performs the
+        // normal join, map/mode edits and Play request through original packets.
+        internal void PrepareQuickRoom(int mode, string defaultTrack)
+        {
+            if (!PacketJsonCodec.LocalRaceMode(mode) || String.IsNullOrEmpty(defaultTrack))
+                throw new ArgumentException("Invalid quick-race setup.");
+            sessionId = Guid.NewGuid().ToString("N");
+            track = defaultTrack; raceMode = mode;
+            setting = new CsRaceGameContract { Track = defaultTrack, Lap = 999,
+                GameMode = new KtGameModeContract { RaceMode = mode, Profile = "" } };
+            joined = playRequested = hostMode = observerMode = hideGameKey = false;
+            quickRoomPrepared = true;
+            readyState = 0; aiSlots.Clear();
+            for (int slot=1; slot<=7; ++slot) aiSlots.Add(slot);
+        }
 
         public GatewayTransition Apply(string requestJson)
         {
@@ -70,9 +88,12 @@ namespace TwinKartLauncher.Gateway
             }
             if (request is ExitCustomGameContract)
             {
-                if (sessionId == null) return GatewayTransition.Reject("No room exists.", request.PacketType, request.RequestId);
+                // Leaving is idempotent. The client may retry while its local
+                // platform-session cleanup is still completing; a prior
+                // successful leave must not turn that retry into an error.
+                if (sessionId == null) return GatewayTransition.Accept(request.PacketType, request.RequestId, "Local room was already cleared.");
                 sessionId = null; setting = null; track = null; raceMode = readyState = 0;
-                joined = playRequested = hostMode = observerMode = hideGameKey = false; aiSlots.Clear();
+                joined = playRequested = hostMode = observerMode = hideGameKey = quickRoomPrepared = false; aiSlots.Clear();
                 return GatewayTransition.Accept(request.PacketType, request.RequestId, "Local room cleared.");
             }
             return GatewayTransition.Reject("Operation is not yet modeled.");
@@ -88,7 +109,11 @@ namespace TwinKartLauncher.Gateway
         {
             // The local enum table establishes modes 1..6. It does not prove a
             // selected track's packaged assets or a server's acceptance.
-            sessionId = Guid.NewGuid().ToString("N");
+            // RegisterMatch prepares the original quick-room surface before
+            // some client paths send their ordinary create request.  Keep the
+            // issued ticket and seven preview members across that continuation.
+            bool preserveQuickRoom=quickRoomPrepared && sessionId!=null;
+            if(!preserveQuickRoom)sessionId = Guid.NewGuid().ToString("N");
             track = packet.Setting.Track;
             raceMode = packet.Setting.GameMode.RaceMode;
             setting = Copy(packet.Setting); observerMode = packet.ObserverMode; hideGameKey = packet.HideGameKey ?? false;
@@ -96,7 +121,7 @@ namespace TwinKartLauncher.Gateway
             playRequested = false;
             hostMode = false;
             readyState = 0;
-            aiSlots.Clear();
+            if(!preserveQuickRoom)aiSlots.Clear();
             return GatewayTransition.Accept(packet.PacketType, packet.RequestId, "Room draft created locally; no client reply sent.");
         }
 

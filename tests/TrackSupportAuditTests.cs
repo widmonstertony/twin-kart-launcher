@@ -29,6 +29,17 @@ static class TrackSupportAuditTests
             TrackSupportAudit.AttachDefinitions(report,definitions);
             Need(report.NativeDefinitionsComplete && report.NativeDefinitionsAvailable==1 && report.Tracks[0].NativeLevelName=="Test_R01" &&
                 report.Tracks[1].NativeDefinitionStatus=="variant-definition-unresolved" && report.Tracks[3].NativeDefinitionStatus=="no-native-definition-in-client" && !report.AllTracksDriven,"Native lookup evidence mislabeled transforms or driving");
+            Need(!report.Tracks[0].NativeModeMask.HasValue && !report.Tracks[0].NativeLaps.HasValue,"Historical capture fabricated native modes");
+            string modes=definitions.Replace("\"game_thread\":42}","\"game_thread\":42,\"native_mode_mask\":0,\"native_laps\":0}")
+                .Replace("\"native_level_name\":\"Test_R01\",\"game_thread\":42,\"native_mode_mask\":0,\"native_laps\":0","\"native_level_name\":\"Test_R01\",\"game_thread\":42,\"native_mode_mask\":6,\"native_laps\":3");
+            var modeReport=TrackSupportAudit.Read(Begin+World+Ai+End,Catalog,Hash);TrackSupportAudit.AttachDefinitions(modeReport,modes);
+            Need(modeReport.Tracks[0].NativeModeMask==6 && modeReport.Tracks[0].NativeLaps==3 && modeReport.Tracks[1].NativeModeMask==0,"Native mode/lap metadata lost");
+            foreach(string bad in new[]{modes.Replace("\"native_mode_mask\":6","\"native_mode_mask\":32"),modes.Replace("\"native_laps\":3","\"native_laps\":100"),
+                modes.Replace(",\"native_laps\":3",""),modes.Replace("\"native_mode_mask\":0","\"native_mode_mask\":2")}) {
+                var clean=TrackSupportAudit.Read(Begin+World+Ai+End,Catalog,Hash);bool rejected=false;
+                try{TrackSupportAudit.AttachDefinitions(clean,bad);}catch(FormatException){rejected=true;}
+                Need(rejected && !clean.NativeDefinitionsComplete && !clean.Tracks[0].NativeModeMask.HasValue,"Malformed native mode capture partially committed");
+            }
             foreach(string bad in new[]{definitions.Replace("\"game_thread\":42}","\"game_thread\":43}").Replace("\"game_thread\":43}\n{\"event\":\"native_track_definition\"","\"game_thread\":42}\n{\"event\":\"native_track_definition\""),
                 definitions.Replace("\"empty\":3","\"empty\":2"),definitions.Replace(Definition("Test_R02",2,""),Definition("Test_R01",2,"")),definitions.Replace("\"status\":2,\"native_level_name\":\"\"","\"status\":2,\"native_level_name\":\"Other\""),definitions.Replace(Hash,new string('b',64))}) {
                 var clean=TrackSupportAudit.Read(Begin+World+Ai+End,Catalog,Hash); bool invalid=false;

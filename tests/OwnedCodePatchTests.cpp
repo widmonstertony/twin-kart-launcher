@@ -5,6 +5,13 @@
 #include "../native/LocalRaceRuntime.h"
 #include "../native/RenderActivity.h"
 #include "../native/NativeRacePhase.h"
+#include "../native/NativeRenderScale.h"
+float scaleFraction=2.5f;unsigned scaleWrites=0;bool refuseScale=false;int scaleVariable=0;
+void __fastcall SetScale(void* variable,float value,unsigned priority) {
+    if(variable!=&scaleVariable || priority!=0x08000000)throw std::runtime_error("Native cvar interface/priority changed");
+    ++scaleWrites;if(!refuseScale)scaleFraction=value/100;
+}
+float __fastcall ReadScale(){return scaleFraction;}
 using Function=int(__fastcall*)(int);
 Function originalEntry=nullptr;
 int __fastcall Replacement(int value) { return value+10; }
@@ -12,6 +19,17 @@ int __fastcall EntryReplacement(int value) { return originalEntry(value)+10; }
 void Need(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
 int main() {
     try {
+        TwinKartGraphics::NativeRenderScale scale;float observed=0;
+        using ScaleResult=TwinKartGraphics::NativeRenderScale::Result;
+        Need(scale.Apply(&scaleVariable,SetScale,ReadScale,observed)==ScaleResult::Disabled,"Disabled SR changed native scale");
+        Need(!scale.Configure(L"100") && !scale.Configure(L"24.99") && !scale.Configure(L"nan") &&
+            !scale.Configure(L"66.6 trailing") && !scale.Configure(L"66.6.6") && !scale.Configure(L"66,6"),"Invalid native scale accepted");
+        Need(scale.Configure(L"66.666667"),"Valid native scale rejected");
+        Need(scale.Apply(nullptr,SetScale,ReadScale,observed)==ScaleResult::NotReady && !scaleWrites,"Missing cvar was written");
+        Need(scale.Apply(&scaleVariable,SetScale,ReadScale,observed)==ScaleResult::Applied && scaleWrites==1 && observed<1,"Native request failed to replace supersampled scene fraction");
+        Need(scale.Apply(&scaleVariable,SetScale,ReadScale,observed)==ScaleResult::AlreadyApplied && scaleWrites==1,"Native cvar was rewritten unnecessarily");
+        scaleFraction=2.5f;refuseScale=true;
+        Need(scale.Apply(&scaleVariable,SetScale,ReadScale,observed)==ScaleResult::Overridden && scaleWrites==2 && observed==2.5f,"Higher-priority native override reported as applied");
         BYTE worldA[32]{},worldB[32]{};
         *reinterpret_cast<int*>(worldA+0xc)=0;*reinterpret_cast<int*>(worldB+0xc)=1;
         TwinKartCamera::ObjectSlot worldSlots[2]{};TwinKartCamera::ObjectSlot* worldChunks[]{worldSlots};
@@ -59,8 +77,12 @@ int main() {
         Need(!phase(&phaseClass,300) && !phase(&phaseClass,0) && !phase(&phaseClass,100,true) && !phase(nullptr,100),"Menu/countdown/result/invalid/paused scene accepted");
         Need(!TwinKartGraphics::ClassifyNativeRacePhase(&phaseClass,&phaseClass,100,100,100,false) &&
              !TwinKartGraphics::ClassifyNativeRacePhase(&phaseClass,&phaseClass,100,100,0,false),"Uninitialized/aliased native FName globals accepted");
+        Need(TwinKartGraphics::ClassifyNativeDrivingPhase(&phaseClass,&phaseClass,100,100,false),"BeginRace rejected as cockpit driving phase");
+        Need(!TwinKartGraphics::ClassifyNativeDrivingPhase(&phaseClass,&phaseClass,200,100,false) &&
+             !TwinKartGraphics::ClassifyNativeDrivingPhase(&phaseClass,&phaseClass,100,100,true) &&
+             !TwinKartGraphics::ClassifyNativeDrivingPhase(&transitionClass,&phaseClass,100,100,false),"Retirement/paused/transition phase accepted for cockpit");
         VirtualFree(code,0,MEM_RELEASE);
-        puts("PASS real x64 call redirection, trampoline/rollback, AI slot boundaries, native phase-name versus transition-class regression, paused/menu/countdown/result rejection and stale activity expiry. No game started.");
+        puts("PASS real x64 call redirection/trampoline, local-world serial lifetime, native scale setter/readback contract and override rejection, AI slots, native phase gating and expiry. No game started.");
         return 0;
     } catch(const std::exception& error) { fprintf(stderr,"%s\n",error.what()); return 1; }
 }

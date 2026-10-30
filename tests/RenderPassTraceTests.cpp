@@ -8,15 +8,52 @@
 #include <fstream>
 #include <iterator>
 #include <vector>
+#include <thread>
 #include "../native/DriftRenderProbe.cpp"
 using Microsoft::WRL::ComPtr;
 void Need(bool value, const char* message) { if (!value) throw std::runtime_error(message); }
 void Check(HRESULT result) { Need(SUCCEEDED(result), "D3D11 fixture creation failed"); }
 ULONG References(IUnknown* object) { object->AddRef(); return object->Release(); }
+// The native DXGI vtable can be shared by a private generated-frame chain.
+// Its worker thread must forward Present without touching D3D11 frame state.
+struct PresentFixture final:IDXGISwapChain {
+    ID3D11Device* device=nullptr;
+    explicit PresentFixture(ID3D11Device* value):device(value){}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID,void**) override{return E_NOINTERFACE;}
+    ULONG STDMETHODCALLTYPE AddRef() override{return 1;}ULONG STDMETHODCALLTYPE Release() override{return 1;}
+    HRESULT STDMETHODCALLTYPE SetPrivateData(REFGUID,UINT,const void*) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE SetPrivateDataInterface(REFGUID,const IUnknown*) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetPrivateData(REFGUID,UINT*,void*) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetParent(REFIID,void**) override{return E_NOINTERFACE;}
+    HRESULT STDMETHODCALLTYPE GetDevice(REFIID id,void** out) override{if(!out)return E_POINTER;*out=nullptr;return device?device->QueryInterface(id,out):E_NOINTERFACE;}
+    HRESULT STDMETHODCALLTYPE Present(UINT,UINT) override{return E_UNEXPECTED;}
+    HRESULT STDMETHODCALLTYPE GetBuffer(UINT,REFIID,void** out) override{if(out)*out=nullptr;return E_NOINTERFACE;}
+    HRESULT STDMETHODCALLTYPE SetFullscreenState(BOOL,IDXGIOutput*) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetFullscreenState(BOOL*,IDXGIOutput**) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetDesc(DXGI_SWAP_CHAIN_DESC*) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE ResizeBuffers(UINT,UINT,UINT,DXGI_FORMAT,UINT) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE ResizeTarget(const DXGI_MODE_DESC*) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetContainingOutput(IDXGIOutput**) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetFrameStatistics(DXGI_FRAME_STATISTICS*) override{return E_NOTIMPL;}
+    HRESULT STDMETHODCALLTYPE GetLastPresentCount(UINT*) override{return E_NOTIMPL;}
+};
+volatile LONG fixturePresents=0;
+HRESULT STDMETHODCALLTYPE ForwardFixturePresent(IDXGISwapChain*,UINT,UINT){InterlockedIncrement(&fixturePresents);return S_OK;}
+void CheckNativePresentIsolation(ID3D11Device* device) {
+    auto savedPresent=present;LONG savedFrames=frames,savedHook=realContextHooked,savedSubmitted=nrLastSubmitted;
+    present=ForwardFixturePresent;frames=41;realContextHooked=1;nrLastSubmitted=-1;
+    PresentFixture foreign(nullptr),native(device);
+    std::thread worker([&]{for(unsigned n=0;n<240;++n)OnPresent(&foreign,0,0);});worker.join();
+    Need(frames==41 && fixturePresents==240,"Generated-frame worker Present changed native frame/history state");
+    Need(OnPresent(&native,0,0)==S_OK && frames==42 && fixturePresents==241,"Native D3D11 Present was incorrectly filtered");
+    Need(OnPresent(&native,0,DXGI_PRESENT_TEST)==S_OK && frames==42 && fixturePresents==242,"DXGI test presentation advanced native frame state");
+    present=savedPresent;frames=savedFrames;realContextHooked=savedHook;nrLastSubmitted=savedSubmitted;
+}
 int main() {
     try {
         ComPtr<ID3D11Device> device; ComPtr<ID3D11DeviceContext> context;
         Check(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&context));
+        CheckNativePresentIsolation(device.Get());
         Need(HookDevice(device.Get()) && HookContext(context.Get()),"Real WARP vtable hook installation failed");
         D3D11_TEXTURE2D_DESC desc{};
         desc.Width=512; desc.Height=256; desc.ArraySize=1; desc.MipLevels=2;
@@ -159,12 +196,61 @@ int main() {
         ComPtr<ID3D11ShaderResourceView> captureAfter; context->CSGetShaderResources(0,1,&captureAfter);
         Need(captureAfter.Get()==captureView.Get() && beforeCapture==References(captureTexture.Get()),"Capture changed binding or leaked resource references");
         Need(DeleteFileW(resourceFile) && DeleteFileW(constantFile) && DeleteFileW(metadataFile) && RemoveDirectoryW(captureDirectory),"Capture fixture cleanup failed");
-        tracePasses=false; gameContext.store(nullptr,std::memory_order_release);
+        tracePasses=false;
+        // Same-frame geometry comes from actual draws into pooled targets,
+        // never from allocation dimensions. Exercise installed write hooks,
+        // including the context1 aliases, before allowing a padded SR crop.
+        context->ClearState();
+        D3D11_TEXTURE2D_DESC pooledDesc{};pooledDesc.Width=512;pooledDesc.Height=256;
+        pooledDesc.MipLevels=pooledDesc.ArraySize=pooledDesc.SampleDesc.Count=1;pooledDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
+        pooledDesc.BindFlags=D3D11_BIND_RENDER_TARGET|D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS;
+        ComPtr<ID3D11Texture2D> pooled,copySource;Check(device->CreateTexture2D(&pooledDesc,nullptr,&pooled));Check(device->CreateTexture2D(&pooledDesc,nullptr,&copySource));
+        ComPtr<ID3D11RenderTargetView> pooledTarget;ComPtr<ID3D11UnorderedAccessView> pooledWrite;
+        Check(device->CreateRenderTargetView(pooled.Get(),nullptr,&pooledTarget));Check(device->CreateUnorderedAccessView(pooled.Get(),nullptr,&pooledWrite));
+        TwinKartGraphics::NativeRect rectangle{};
+        auto hasRectangle=[&](){return TwinKartGraphics::NativeSceneRectangle(pooled.Get(),context.Get(),120,320,180,rectangle);};
+        Need(!hasRectangle(),"Allocation size invented native scene geometry");
+        auto drawPooled=[&](){
+            context->ClearState();ID3D11RenderTargetView* targetView=pooledTarget.Get();context->OMSetRenderTargets(1,&targetView,nullptr);
+            context->VSSetShader(vertex.Get(),nullptr,0);context->PSSetShader(pixel.Get(),nullptr,0);context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            D3D11_VIEWPORT area{16,8,320,180,0,1};context->RSSetViewports(1,&area);context->Draw(3,0);
+            Need(hasRectangle() && rectangle.left==16 && rectangle.top==8 && rectangle.right==336 && rectangle.bottom==188,"Actual native producer viewport was not retained");
+        };
+        drawPooled();
+        Need(!TwinKartGraphics::NativeSceneRectangle(pooled.Get(),context.Get(),121,320,180,rectangle) &&
+            !TwinKartGraphics::NativeSceneRectangle(pooled.Get(),context.Get(),120,512,256,rectangle),"Stale frame or allocation dimensions accepted as native scene");
+        context->ClearRenderTargetView(pooledTarget.Get(),black);Need(!hasRectangle(),"Clear retained stale producer geometry");
+        drawPooled();context->CopyResource(pooled.Get(),copySource.Get());Need(!hasRectangle(),"Copy retained stale producer geometry");
+        drawPooled();context->CopySubresourceRegion(pooled.Get(),0,0,0,0,copySource.Get(),0,nullptr);Need(!hasRectangle(),"Subresource copy retained stale geometry");
+        std::vector<unsigned> replaced(512*256,0xff00ff00);
+        drawPooled();context->UpdateSubresource(pooled.Get(),0,nullptr,replaced.data(),512*4,0);Need(!hasRectangle(),"Update retained stale producer geometry");
+        drawPooled();context->ClearUnorderedAccessViewUint(pooledWrite.Get(),clear);Need(!hasRectangle(),"Integer UAV clear retained stale geometry");
+        drawPooled();context->ClearUnorderedAccessViewFloat(pooledWrite.Get(),black);Need(!hasRectangle(),"Float UAV clear retained stale geometry");
+        drawPooled();context->OMSetRenderTargets(0,nullptr,nullptr);ID3D11UnorderedAccessView* writeView=pooledWrite.Get();context->CSSetUnorderedAccessViews(0,1,&writeView,nullptr);
+        context->CSSetShader(compute.Get(),nullptr,0);context->Dispatch(1,1,1);Need(!hasRectangle(),"Compute write retained stale producer geometry");
+        ComPtr<ID3D11DeviceContext> commandContext;Check(device->CreateDeferredContext(0,&commandContext));
+        commandContext->CopyResource(copySource.Get(),pooled.Get());ComPtr<ID3D11CommandList> commandList;Check(commandContext->FinishCommandList(FALSE,&commandList));
+        drawPooled();context->ExecuteCommandList(commandList.Get(),TRUE);Need(!hasRectangle(),"Unobserved command list retained producer geometry");
+        ComPtr<ID3D11DeviceContext1> context1;Check(context.As(&context1));
+        drawPooled();context1->CopySubresourceRegion1(pooled.Get(),0,0,0,0,copySource.Get(),0,nullptr,0);Need(!hasRectangle(),"Context1 copy retained geometry");
+        drawPooled();context1->UpdateSubresource1(pooled.Get(),0,nullptr,replaced.data(),512*4,0,0);Need(!hasRectangle(),"Context1 update retained geometry");
+        drawPooled();context1->DiscardResource(pooled.Get());Need(!hasRectangle(),"DiscardResource retained geometry");
+        drawPooled();context1->DiscardView(pooledTarget.Get());Need(!hasRectangle(),"DiscardView retained geometry");
+        drawPooled();context1->ClearView(pooledTarget.Get(),black,nullptr,0);Need(!hasRectangle(),"ClearView retained geometry");
+        drawPooled();context1->DiscardView1(pooledTarget.Get(),nullptr,0);Need(!hasRectangle(),"DiscardView1 retained geometry");
+        drawPooled();
+        pooledDesc.Usage=D3D11_USAGE_STAGING;pooledDesc.BindFlags=0;pooledDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+        ComPtr<ID3D11Texture2D> pooledReadback;Check(device->CreateTexture2D(&pooledDesc,nullptr,&pooledReadback));context->CopyResource(pooledReadback.Get(),pooled.Get());
+        D3D11_MAPPED_SUBRESOURCE actual{};Check(context->Map(pooledReadback.Get(),0,D3D11_MAP_READ,0,&actual));
+        auto nativePixel=static_cast<const BYTE*>(actual.pData)+8*actual.RowPitch+16*4;
+        bool red=nativePixel[0]==255 && nativePixel[1]==0 && nativePixel[2]==0 && nativePixel[3]==255;
+        context->Unmap(pooledReadback.Get(),0);Need(red && hasRectangle(),"Write tracking corrupted real GPU pixels or invalidated a read-only copy source");
+        gameContext.store(nullptr,std::memory_order_release);
         CloseHandle(output); output=INVALID_HANDLE_VALUE;
         ComPtr<ID3D11DeviceContext> deferred; Check(device->CreateDeferredContext(0,&deferred));
         Need(!TwinKartRender::DescribePass(deferred.Get(),false,1,0,json,sizeof(json)),"Deferred context incorrectly accepted");
         context->ClearState();
-        puts("PASS D3D11 WARP: eight installed render hooks; exact initialized texture/camera-constant readback; hash selector and bounded capture; unchanged pixels, bindings and references; 1000 pass observations. No game started.");
+        puts("PASS D3D11 WARP: native versus generated-worker Present isolation, eight rendering paths and mutation hooks; native producer viewport/crop, frame/dimension rejection, resource-write/command-list invalidation, unchanged GPU pixels/bindings/references, bounded capture and 1000 observations. No game started.");
         return 0;
     } catch (const std::exception& error) { fprintf(stderr,"%s\n",error.what()); return 1; }
 }

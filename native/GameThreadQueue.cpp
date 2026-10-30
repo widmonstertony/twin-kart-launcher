@@ -9,14 +9,21 @@ std::atomic<GameThreadQueue*> installed{nullptr};
 thread_local bool dispatching=false;
 void Cancel(ThreadTask task) noexcept { if(task.cancel) { try { task.cancel(task.context); } catch(...) {} } }
 }
-bool GameThreadQueue::Install(HWND ownedWindow,HINSTANCE callbackModule) {
+bool GameThreadQueue::Install(HWND ownedWindow,HINSTANCE callbackModule,bool (*input)(const MSG&)) {
+    (void)callbackModule; // The callback stays in this process; no DLL injection by USER32.
+    installError=ERROR_SUCCESS;
     DWORD process=0; DWORD owner=GetWindowThreadProcessId(ownedWindow,&process);
-    if(!ownedWindow || !owner || process!=GetCurrentProcessId()) return false;
+    if(!ownedWindow || !owner || process!=GetCurrentProcessId()) { installError=ERROR_INVALID_WINDOW_HANDLE; return false; }
     AcquireSRWLockExclusive(&dispatchLock);
-    if(installed.load() || hook) { ReleaseSRWLockExclusive(&dispatchLock); return false; }
+    if(installed.load() || hook) { installError=ERROR_ALREADY_EXISTS; ReleaseSRWLockExclusive(&dispatchLock); return false; }
     window=ownedWindow; thread=owner;
+    inputHandler=input;
     installed.store(this,std::memory_order_release);
-    hook=SetWindowsHookExW(WH_GETMESSAGE,MessageHook,callbackModule,owner);
+    // MSDN's same-process thread contract uses a null hMod. The DLL is already
+    // loaded and pinned by the owned session, including early-loader startup.
+    SetLastError(ERROR_SUCCESS);
+    hook=SetWindowsHookExW(WH_GETMESSAGE,MessageHook,nullptr,owner);
+    if(!hook)installError=GetLastError();
     AcquireSRWLockExclusive(&tasksLock); accepting=hook!=nullptr; ReleaseSRWLockExclusive(&tasksLock);
     if(!hook) { installed.store(nullptr); window=nullptr; thread=0; }
     bool result=hook!=nullptr; ReleaseSRWLockExclusive(&dispatchLock); return result;
@@ -47,7 +54,17 @@ LRESULT CALLBACK GameThreadQueue::MessageHook(int code,WPARAM parameter,LPARAM m
     if(code==HC_ACTION && parameter==PM_REMOVE && !dispatching) {
         AcquireSRWLockShared(&dispatchLock);
         GameThreadQueue* queue=installed.load(std::memory_order_acquire);
-        if(queue) { dispatching=true; queue->ExecuteOne(); dispatching=false; }
+        if(queue) {
+            dispatching=true;
+            if(message && queue->inputHandler) {
+                auto& msg=*reinterpret_cast<MSG*>(message);
+                // Never let an observer consume another window's messages.
+                if(msg.hwnd==queue->window)try {
+                    if(queue->inputHandler(msg)){msg.message=WM_NULL;msg.wParam=0;msg.lParam=0;}
+                }catch(...){}
+            }
+            queue->ExecuteOne();dispatching=false;
+        }
         ReleaseSRWLockShared(&dispatchLock);
     }
     return CallNextHookEx(nullptr,code,parameter,message);

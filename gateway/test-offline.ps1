@@ -1,4 +1,4 @@
-param([string]$ExternalData)
+param([string]$ExternalData,[string]$AppearanceAvailability)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 $build=Join-Path $root 'build'
@@ -9,5 +9,7 @@ $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $target=Join-Path $build 'OfflineBackendTests.exe'
 & $compiler /nologo /langversion:5 /target:exe /platform:x64 /r:System.Web.Extensions.dll "/out:$target" $sources
 if($LASTEXITCODE -ne 0) { throw 'Original offline backend test build failed' }
-if($ExternalData) { & $target $ExternalData } else { & $target }
+if($ExternalData -and $AppearanceAvailability) { & $target $ExternalData $AppearanceAvailability }
+elseif($ExternalData) { & $target $ExternalData }
+else { & $target }
 if($LASTEXITCODE -ne 0) { throw 'Original offline backend checks failed' }

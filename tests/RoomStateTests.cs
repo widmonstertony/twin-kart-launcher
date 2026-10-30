@@ -27,6 +27,8 @@ internal static class RoomStateTests
             string oldSession = room.SessionId;
             Check(room.Apply("{\"_type\":\"PqCreateCustomGame\",\"reqId\":13,\"observerMode\":false,\"setting\":{\"_type\":\"CsRaceGame\",\"track\":\"Village_R01\",\"gameMode\":{\"raceMode\":1}}}").Accepted, "second room create");
             Check(room.SessionId != oldSession && !room.Joined && !room.PlayRequested && room.AiCount == 0, "new room did not reset state");
+            Check(room.Apply("{\"_type\":\"PqLeaveCustomGame\",\"reqId\":14}").Accepted && room.SessionId == null, "room leave did not clear state");
+            Check(room.Apply("{\"_type\":\"PqLeaveCustomGame\",\"reqId\":15}").Accepted && room.SessionId == null, "repeated room leave was not idempotent");
             PacketContractTests.Run();
             Console.WriteLine("PASS room state transitions and strict input validation");
             return 0;

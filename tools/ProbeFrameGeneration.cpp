@@ -8,6 +8,7 @@
 #include <cstring>
 #include <stdexcept>
 #include "../native/FrameGenerationD3D12.h"
+#include "../native/NativeViewMath.h"
 using Microsoft::WRL::ComPtr;
 void Need(HRESULT result) { if(FAILED(result)) throw std::runtime_error("Frame-generation fixture API failed"); }
 void Ok(unsigned result) { if(result) { fprintf(stderr,"Streamline result %u\n",result); throw std::runtime_error("Frame-generation fixture contract rejected"); } }
@@ -100,7 +101,8 @@ unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFacto
     return framesWithGenerated;
 }
 int wmain(int argc,wchar_t** argv) {
-    if(argc!=3 && !(argc==4 && (!wcscmp(argv[3],L"--present-fixture") || !wcscmp(argv[3],L"--focused-present-fixture")))) { puts("Usage: ProbeFrameGeneration.exe <external-Streamline-directory> <existing-private-log-directory> [--present-fixture | --focused-present-fixture]"); return 2; }
+    bool cameraOnly=argc==4 && !wcscmp(argv[3],L"--camera-contract");
+    if(argc!=3 && !(argc==4 && (cameraOnly || !wcscmp(argv[3],L"--present-fixture") || !wcscmp(argv[3],L"--focused-present-fixture")))) { puts("Usage: ProbeFrameGeneration.exe <external-Streamline-directory> <existing-private-log-directory> [--camera-contract | --present-fixture | --focused-present-fixture]"); return 2; }
     TwinKartGraphics::FrameGeneration generation;
     unsigned loaded=generation.Load(argv[1],argv[2]); printf("{\"event\":\"fg_runtime_init\",\"result\":%u}\n",loaded); fflush(stdout);
     if(loaded) return 3;
@@ -122,7 +124,24 @@ int wmain(int argc,wchar_t** argv) {
     printf("{\"event\":\"fg_configure\",\"result\":%u,\"requested_multiplier\":2}\n",configured);
     auto state=generation.Presented();
     printf("{\"event\":\"fg_runtime_state\",\"result\":%u,\"status\":%u,\"maximum_generated\":%u,\"actually_presented\":%u,\"game_started\":false,\"frame_generation_verified\":false}\n",state.result,state.status,state.maximumGeneratedFrames,state.lastPresented); fflush(stdout);
-    if(!configured && argc==4) {
+    if(!configured && cameraOnly) {
+        try {
+            float view[576]{};view[536]=640;view[537]=360;
+            const float projection[16]={1.125f,0,0,0,0,2,0,0,0,0,0,1,0,0,10,0};
+            memcpy(view+32,projection,64);memcpy(view+144,projection,64);
+            view[504]=view[509]=view[514]=view[519]=1;
+            TwinKartGraphics::CameraFrame camera{};
+            if(!TwinKartGraphics::DecodeNativeCamera(view,640,360,true,camera))throw std::runtime_error("Infinite native camera fixture decode failed");
+            Ok(generation.BeginFrame(1,camera));
+            Ok(generation.Marker(TwinKartGraphics::FrameStage::SimulationStart));
+            Ok(generation.Marker(TwinKartGraphics::FrameStage::SimulationEnd));
+            auto sentinel=camera;sentinel.farPlane=FLT_MAX;
+            if(generation.BeginFrame(2,sentinel)==0)throw std::runtime_error("Uninitialized cameraFar sentinel accepted");
+            auto mismatch=camera;mismatch.invertedDepth=false;
+            if(generation.BeginFrame(3,mismatch)==0)throw std::runtime_error("Inconsistent infinite camera contract accepted");
+            printf("{\"event\":\"fg_infinite_camera_constants_accepted\",\"infinite_reversed_z\":true,\"invalid_sentinel_rejected\":true,\"inconsistent_depth_rejected\":true,\"window_created\":false,\"game_started\":false,\"generated_frames_verified\":false,\"quality_verified\":false}\n");
+        } catch(const std::exception& error) {fprintf(stderr,"%s\n",error.what());configured=1;}
+    } else if(!configured && argc==4) {
         try { unsigned generated=PresentFixture(generation,factory.Get(),device.Get(),!wcscmp(argv[3],L"--focused-present-fixture")); if(!generated) configured=1; }
         catch(const std::exception& error) { fprintf(stderr,"%s\n",error.what()); configured=1; }
     }

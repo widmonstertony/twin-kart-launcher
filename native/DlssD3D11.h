@@ -31,3 +31,7 @@ TK_DLSS unsigned TwinKartDlssInitialize(ID3D11Device* device, const wchar_t* cac
 TK_DLSS unsigned TwinKartDlssEvaluate(const TwinKartTemporalFrame* frame);
 TK_DLSS bool TwinKartDlssGetState(TwinKartDlssState* state);
 TK_DLSS void TwinKartDlssShutdown();
+// Called only at a serialized native Present handoff. Retires the old owner;
+// it does not transfer a live feature or its temporal history to another thread.
+// The consumer verifies and drains its exact immediate context before teardown.
+TK_DLSS bool TwinKartDlssShutdownDrained(unsigned expectedOwnerThread, ID3D11DeviceContext* context);

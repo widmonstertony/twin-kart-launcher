@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <vector>
 #include <stdexcept>
+#include <thread>
 #include "../native/DlssD3D11.h"
 #include "../native/ClientBuildGuard.h"
 using Microsoft::WRL::ComPtr;
@@ -20,7 +21,8 @@ try {
     auto evaluate=reinterpret_cast<decltype(&TwinKartDlssEvaluate)>(GetProcAddress(module,"TwinKartDlssEvaluate"));
     auto getState=reinterpret_cast<decltype(&TwinKartDlssGetState)>(GetProcAddress(module,"TwinKartDlssGetState"));
     shutdown=reinterpret_cast<decltype(&TwinKartDlssShutdown)>(GetProcAddress(module,"TwinKartDlssShutdown"));
-    Need(init && evaluate && getState && shutdown,"Original SR exports unavailable");
+    auto drained=reinterpret_cast<decltype(&TwinKartDlssShutdownDrained)>(GetProcAddress(module,"TwinKartDlssShutdownDrained"));
+    Need(init && evaluate && getState && shutdown && drained,"Original SR exports unavailable");
     ComPtr<ID3D11Device> device;ComPtr<ID3D11DeviceContext> context;
     Need(SUCCEEDED(D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_HARDWARE,nullptr,0,nullptr,0,D3D11_SDK_VERSION,&device,nullptr,&context)),"Hardware D3D11 device failed");
     unsigned initialized=init(device.Get(),argv[4],argv[3]);
@@ -65,5 +67,23 @@ try {
     context->Unmap(copy.Get(),0);Need(changed==ow*oh && nonfinite==0,"SR did not produce complete finite HDR output");
     TwinKartDlssState state{sizeof(TwinKartDlssState)};Need(getState(&state) && state.successfulEvaluations==2,"Actual SR evaluation state mismatch");
     printf("{\"event\":\"offscreen_temporal_sr_readback\",\"render_width\":640,\"render_height\":360,\"output_width\":1280,\"output_height\":720,\"changed_pixels\":%u,\"nonfinite_channels\":%u,\"output_digest\":\"%016llx\",\"hardware_gpu_completed\":true,\"native_state_restored\":true,\"synthetic_guides\":true,\"game_started\":false,\"in_game_sr_verified\":false}\n",changed,nonfinite,digest);
-    context->ClearState();shutdown();shutdown=nullptr;FreeLibrary(module);return 0;
+    DWORD firstOwner=GetCurrentThreadId();
+    ComPtr<ID3D11DeviceContext> deferred;Need(SUCCEEDED(device->CreateDeferredContext(0,&deferred)),"Deferred context negative fixture");
+    Need(!drained(0,context.Get()) && !drained(firstOwner+1,context.Get()) && !drained(firstOwner,nullptr) && !drained(firstOwner,deferred.Get()),"Invalid temporal retirement accepted");
+    bool workerOk=false;DWORD workerOwner=0;
+    std::thread worker([&]{
+        workerOwner=GetCurrentThreadId();
+        TwinKartTemporalFrame request{sizeof(TwinKartTemporalFrame),context.Get(),color.Get(),depth.Get(),motion.Get(),output.Get(),
+            0,0,1,1,16.666667f,1,1,true,true,true,true,true};
+        TwinKartDlssState other{sizeof(TwinKartDlssState)};
+        workerOk=evaluate(&request)==0xf0000002 && !getState(&other) && drained(firstOwner,context.Get()) &&
+            init(device.Get(),argv[4],argv[3])==1 && evaluate(&request)==1 && getState(&other) && other.successfulEvaluations==1;
+    });worker.join();Need(workerOk && workerOwner!=firstOwner,"Explicit drained temporal ownership rebuild failed");
+    Need(drained(workerOwner,context.Get()) && init(device.Get(),argv[4],argv[3])==1,"Return to original temporal render owner failed");
+    TwinKartTemporalFrame rebuilt{sizeof(TwinKartTemporalFrame),context.Get(),color.Get(),depth.Get(),motion.Get(),output.Get(),
+        0,0,1,1,16.666667f,1,1,true,true,true,true,true};
+    Need(evaluate(&rebuilt)==1 && getState(&state) && state.successfulEvaluations==1,"Returned owner temporal feature failed");
+    printf("{\"event\":\"offscreen_temporal_sr_drained_rebuild\",\"first_owner\":%lu,\"new_owner\":%lu,\"rebuilds\":2,\"evaluations\":4,\"invalid_retirement_rejected\":true,\"foreign_evaluate_rejected\":true,\"game_started\":false}\n",firstOwner,workerOwner);
+    Need(drained(firstOwner,context.Get()),"Final temporal GPU drain failed");
+    context->ClearState();shutdown=nullptr;FreeLibrary(module);return 0;
 }catch(const std::exception& e){if(shutdown)shutdown();if(module)FreeLibrary(module);fprintf(stderr,"%s\n",e.what());return 1;}}

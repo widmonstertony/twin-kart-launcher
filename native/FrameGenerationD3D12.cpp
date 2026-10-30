@@ -40,6 +40,9 @@ struct FrameGeneration::Impl {
     std::atomic<bool> acceptingNative{false};
     std::atomic<unsigned> nativeCallbacks{0};
     DWORD simulationThread=0;
+    unsigned long long nativeStageIds[6]{};
+    DWORD nativeStageThreads[6]{};
+    unsigned nativeRejected[6]{},nativeMarkerResults[6]{},nativeTokenResult=0;
     unsigned long long lastNativeUsed=0;
     bool haveNativeUsed=false;
     std::shared_ptr<NativeFrameMarkerSink> nativeSink;
@@ -120,10 +123,17 @@ unsigned FrameGeneration::Configure(unsigned multiplier,unsigned width,unsigned 
 }
 unsigned FrameGeneration::Impl::Camera(const CameraFrame& camera) {
     if(!Owner()) return WrongThread;
+    // An infinite far bound is allowed only for the exact infinite reversed-Z
+    // perspective it describes. Reject SL's uninitialized finite sentinel,
+    // NaN, negative infinity and inconsistent finite/infinite projections.
+    bool infiniteFar=std::isinf(camera.farPlane) && camera.farPlane>0 && camera.invertedDepth &&
+        camera.viewToClip[10]==0 && camera.viewToClip[11]==1 && camera.viewToClip[15]==0 &&
+        camera.viewToClip[14]==camera.nearPlane;
+    bool finiteFar=std::isfinite(camera.farPlane) && camera.farPlane!=sl::INVALID_FLOAT && camera.farPlane>camera.nearPlane;
     if(!configured || !token || !Finite(camera.viewToClip,16) || !Finite(camera.clipToView,16) || !Finite(camera.clipToPrevious,16) || !Finite(camera.previousToClip,16) ||
        !Finite(camera.position,3) || !Finite(camera.up,3) || !Finite(camera.right,3) || !Finite(camera.forward,3) ||
        !std::isfinite(camera.jitterX) || !std::isfinite(camera.jitterY) || !std::isfinite(camera.motionScaleX) || !std::isfinite(camera.motionScaleY) ||
-       !camera.motionScaleX || !camera.motionScaleY || !std::isfinite(camera.nearPlane) || !std::isfinite(camera.farPlane) || camera.nearPlane<=0 || camera.farPlane<=camera.nearPlane ||
+       !camera.motionScaleX || !camera.motionScaleY || !std::isfinite(camera.nearPlane) || camera.nearPlane<=0 || (!finiteFar && !infiniteFar) ||
        !std::isfinite(camera.fieldOfView) || camera.fieldOfView<=0 || camera.fieldOfView>=3.141593f || !std::isfinite(camera.aspect) || camera.aspect<=0) return Invalid;
     sl::Constants values{};
     const float identity[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
@@ -146,18 +156,22 @@ unsigned FrameGeneration::BeginFrame(unsigned index,const CameraFrame& camera) {
     return impl->Camera(camera);
 }
 void FrameGeneration::Impl::NativeMarker(FrameStage stage,unsigned long long id) {
+    unsigned stageIndex=static_cast<unsigned>(stage);if(stageIndex>5)return;
     sl::FrameToken* selected=nullptr;bool valid=false;
     AcquireSRWLockExclusive(&nativeLock);
+    nativeStageIds[stageIndex]=id;nativeStageThreads[stageIndex]=GetCurrentThreadId();
     if(stage==FrameStage::SimulationStart && !simulationThread)simulationThread=GetCurrentThreadId();
     bool sim=stage==FrameStage::SimulationStart || stage==FrameStage::SimulationEnd;
     auto ticket=(!sim || simulationThread==GetCurrentThreadId())?nativeFrames.Advance(stage,id,GetTickCount64()):nullptr;
     if(ticket) {
         if(stage==FrameStage::SimulationStart) {
             auto tokenResult=frameToken(selected,&ticket->index);
+            nativeTokenResult=Code(tokenResult);
             if(tokenResult==sl::Result::eOk && selected)ticket->token=selected;else ticket->failed=true;
         } else selected=static_cast<sl::FrameToken*>(ticket->token);
         valid=selected && !ticket->failed;
     }
+    if(!ticket)++nativeRejected[stageIndex];
     ReleaseSRWLockExclusive(&nativeLock);
     if(!ticket)return;
     sl::Result markerResult=valid?sl::Result::eOk:static_cast<sl::Result>(Invalid);
@@ -169,7 +183,7 @@ void FrameGeneration::Impl::NativeMarker(FrameStage stage,unsigned long long id)
             sl::PCLMarker::eRenderSubmitStart,sl::PCLMarker::eRenderSubmitEnd,sl::PCLMarker::ePresentStart,sl::PCLMarker::ePresentEnd};
         markerResult=marker(stages[static_cast<unsigned>(stage)],*selected);
     }
-    AcquireSRWLockExclusive(&nativeLock);nativeFrames.Complete(id,stage,markerResult==sl::Result::eOk);ReleaseSRWLockExclusive(&nativeLock);
+    AcquireSRWLockExclusive(&nativeLock);nativeMarkerResults[stageIndex]=Code(markerResult);nativeFrames.Complete(id,stage,markerResult==sl::Result::eOk);ReleaseSRWLockExclusive(&nativeLock);
 }
 bool FrameGeneration::AttachNativeMarkers() {
     if(!impl->Owner() || !impl->configured || impl->nativeSink)return false;
@@ -189,8 +203,24 @@ unsigned FrameGeneration::BeginNativeFrame(unsigned long long nativeFrame,const 
     if(!result){impl->lastNativeUsed=nativeFrame;impl->haveNativeUsed=true;}
     return result;
 }
+NativeFrameDiagnostic FrameGeneration::InspectNativeFrame(unsigned long long id) {
+    NativeFrameDiagnostic result;
+    AcquireSRWLockExclusive(&impl->nativeLock);auto ticket=impl->nativeFrames.Inspect(id);
+    result.seen=ticket.seen;result.completed=ticket.completed;result.live=ticket.live;result.failed=ticket.failed;result.hasToken=ticket.token!=nullptr;
+    result.nativeId=ticket.nativeId;result.time=ticket.time;result.simulationThread=impl->simulationThread;result.tokenResult=impl->nativeTokenResult;
+    memcpy(result.stageIds,impl->nativeStageIds,sizeof(result.stageIds));memcpy(result.stageThreads,impl->nativeStageThreads,sizeof(result.stageThreads));
+    memcpy(result.rejected,impl->nativeRejected,sizeof(result.rejected));memcpy(result.markerResults,impl->nativeMarkerResults,sizeof(result.markerResults));
+    ReleaseSRWLockExclusive(&impl->nativeLock);return result;
+}
 bool FrameGeneration::AdoptInitialRenderThread() {
     if(!impl->bound || impl->token)return impl->Owner();
+    impl->thread=GetCurrentThreadId();return true;
+}
+bool FrameGeneration::AdoptDrainedRenderThread() {
+    if(!impl->bound || !impl->configured)return false;if(impl->Owner())return true;
+    auto paused=impl->options;paused.mode=sl::DLSSGMode::eOff;
+    if(impl->setOptions(impl->viewport,paused)!=sl::Result::eOk)return false;
+    impl->options=paused;impl->token=nullptr;impl->haveNativeUsed=false;
     impl->thread=GetCurrentThreadId();return true;
 }
 unsigned FrameGeneration::SetActive(bool enabled) {

@@ -14,4 +14,9 @@ inline bool ClassifyNativeRacePhase(const void* actualClass,const void* phaseCla
        !currentName || !beginRaceName || !retireName || beginRaceName==retireName)return false;
     return currentName==beginRaceName || currentName==retireName;
 }
+inline bool ClassifyNativeDrivingPhase(const void* actualClass,const void* phaseClass,
+    std::uint64_t currentName,std::uint64_t beginRaceName,bool paused) {
+    return !paused && actualClass && phaseClass && actualClass==phaseClass &&
+        currentName && beginRaceName && currentName==beginRaceName;
+}
 }

@@ -11,10 +11,13 @@
 // from the supported client; no client function bodies or assets are included.
 namespace {
 constexpr wchar_t ExpectedSha[] = L"5041d9f5d45adb4b1c932d8056a89f70db7fa98f93614ac30685cd1adeb9d9c2";
-constexpr size_t DriveVtable = 0x51086c8, ViewSlot = 0x548, ViewFunction = 0x1539ce0;
+constexpr size_t DriveVtable = 0x51086c8, ThirdPersonVtable = 0x5108d00;
+constexpr size_t ViewSlot = 0x548, ViewFunction = 0x1539ce0, ThirdPersonViewFunction = 0x1539ff0;
 using CameraView = void(__fastcall*)(void*, float, void*);
 CameraView originalView = nullptr;
+CameraView originalThirdPersonView = nullptr;
 PVOID volatile* viewSlot = nullptr;
+PVOID volatile* thirdPersonViewSlot = nullptr;
 volatile LONG enabled = 0;
 alignas(8) volatile LONG64 historyRevision = 1;
 void InvalidateHistory() { InterlockedIncrement64(&historyRevision); }
@@ -22,6 +25,8 @@ volatile LONG calls = 0, applied = 0, rejected = 0;
 volatile LONG lastThread = 0;
 HANDLE logFile = INVALID_HANDLE_VALUE;
 HANDLE toggleEvent = nullptr;
+HHOOK cameraInputHook = nullptr;
+volatile LONG inputHookReady = 0;
 BYTE* image = nullptr;
 struct Vec { float x, y, z; };
 struct Quat { float x, y, z, w; };
@@ -36,12 +41,18 @@ SRWLOCK settingsLock = SRWLOCK_INIT;
 wchar_t controlPath[32768]{};
 bool meshAudit = false;
 bool cockpitHead = false;
+void* viewKartAsset=nullptr;
+unsigned long long viewKartName=0;
+bool tallKartFront=false;
 void* auditedMesh = nullptr;
 void* auditedAsset = nullptr;
 int auditedIndex = -1;
 TwinKartCamera::ObjectIdentity auditedIdentity{};
 unsigned long long headName = 0;
 bool headWasHidden = false, headHiddenByUs = false;
+TwinKartCamera::CockpitGate cockpitGate{};
+using RaceRenderingActive=BOOL(WINAPI*)();
+RaceRenderingActive raceRenderingActive=nullptr;
 void Log(const char* event);
 // PC preparation consumer indexes the same object array at RVA 0x1ac0dcf.
 TwinKartCamera::ObjectSlot** ObjectChunks() { return *reinterpret_cast<TwinKartCamera::ObjectSlot***>(image + 0x69c28b0); }
@@ -63,7 +74,7 @@ void RestoreDriver() {
         } else if (headHiddenByUs) Log("previous_driver_expired_no_write");
     } __except (EXCEPTION_EXECUTE_HANDLER) { Log("previous_driver_unavailable_no_write"); }
     ClearDriver();
-    if(hadDriver)InvalidateHistory();
+    if(hadDriver){cockpitGate.Suspend();InvalidateHistory();}
 }
 
 bool DriverSignatures() {
@@ -84,10 +95,54 @@ bool DriverSignatures() {
     return true;
 }
 
+void UpdateKartView(void* component) {
+    bool next=false;void* asset=nullptr;unsigned long long name=0;
+    __try {
+        const BYTE signature[]{0x4c,0x8b,0xdc,0x48,0x81,0xec,0x88,0x00};
+        if(memcmp(image+0x22fef20,signature,sizeof(signature)))return;
+        BYTE* pawn=*reinterpret_cast<BYTE**>(static_cast<BYTE*>(component)+0xf20);
+        if(pawn && !(*reinterpret_cast<unsigned*>(pawn+8)&0x18000)) {
+            using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
+            auto type=reinterpret_cast<Type>(image+0x22fef20)();
+            auto find=reinterpret_cast<Find>((*reinterpret_cast<BYTE***>(pawn))[0x620/8]);
+            BYTE* mesh=find(pawn,type);
+            if(mesh && *reinterpret_cast<void**>(mesh+0xa0)==pawn && !(*reinterpret_cast<unsigned*>(mesh+8)&0x18000))
+                asset=*reinterpret_cast<void**>(mesh+0x4c0);
+            if(asset && !(*reinterpret_cast<unsigned*>(static_cast<BYTE*>(asset)+8)&0x18000))
+                name=*reinterpret_cast<unsigned long long*>(static_cast<BYTE*>(asset)+0x18);
+        }
+        if(asset==viewKartAsset && name==viewKartName)return;
+        if(name) {
+            struct String{wchar_t* data;int count,capacity;};String text{};
+            using NameText=String*(__fastcall*)(String*,unsigned long long);
+            reinterpret_cast<NameText>(image+0x3bcd370)(&text,name);
+            if(text.data && text.count>1 && text.count<=96 && text.capacity>=text.count && !text.data[text.count-1]) {
+                next=!_wcsicmp(text.data,L"Mesh_Rudolph_Pro");
+                char label[96]{};bool safe=true;
+                for(int i=0;i<text.count-1;++i) {
+                    wchar_t c=text.data[i];
+                    if(!((c>=L'A' && c<=L'Z') || (c>=L'a' && c<=L'z') || (c>=L'0' && c<=L'9') || c==L'_')){safe=false;break;}
+                    label[i]=static_cast<char>(c);
+                }
+                if(safe && logFile!=INVALID_HANDLE_VALUE) {
+                    char row[180];DWORD written=0;int size=sprintf_s(row,"{\"event\":\"cockpit_kart_mesh\",\"asset\":\"%s\"}\r\n",label);
+                    if(size>0)WriteFile(logFile,row,size,&written,nullptr);
+                }
+            }
+            if(text.data)reinterpret_cast<void(__fastcall*)(void*)>(image+0x248b950)(text.data);
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {asset=nullptr;name=0;}
+    viewKartAsset=asset;viewKartName=name;
+    if(tallKartFront!=next) {
+        tallKartFront=next;InvalidateHistory();
+        Log(next?"cockpit_rudolph_view_selected":"cockpit_default_view_selected");
+    }
+}
+
 // All engine calls in this diagnostic run inside GetCameraView on its thread.
 // Bone names are discovered on the active driver's component. Only the head
 // branch is suppressed, using the engine's visibility API with no physics change.
-void UpdateDriver(void* component, bool cameraApplied) {
+void UpdateDriver(void* component, bool cameraApplied, bool visibility=true) {
     if (!meshAudit && !cockpitHead) return;
     __try {
         static bool verified = false;
@@ -158,7 +213,7 @@ void UpdateDriver(void* component, bool cameraApplied) {
         if (headName) headWasHidden = reinterpret_cast<IsHidden>(image + 0x3e74d80)(mesh, headName);
         Log(headName ? "driver_head_identified" : "driver_head_unavailable");
         }
-        if (!cockpitHead || !headName) return;
+        if (!visibility || !cockpitHead || !headName) return;
         if (cameraApplied && !headWasHidden && !headHiddenByUs) {
             reinterpret_cast<Hide>(image + 0x3e73710)(mesh, headName, 0);
             headHiddenByUs = reinterpret_cast<IsHidden>(image + 0x3e74d80)(mesh, headName);
@@ -168,7 +223,31 @@ void UpdateDriver(void* component, bool cameraApplied) {
             headHiddenByUs = reinterpret_cast<IsHidden>(image + 0x3e74d80)(mesh, headName);
             Log(headHiddenByUs ? "driver_head_restore_failed" : "driver_head_restored");
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) { RestoreDriver(); meshAudit = false; cockpitHead = false; Log("mesh_adapter_failed"); }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        // Destruction/replacement during travel is transient. Only a verified
+        // ABI mismatch disables the adapter; a new live driver must recover.
+        RestoreDriver(); Log("mesh_adapter_retry_after_lifecycle_change");
+    }
+}
+
+void ToggleCamera() {
+    LONG before=InterlockedCompareExchange(&enabled,0,0);
+    while(InterlockedCompareExchange(&enabled,!before,before)!=before)
+        before=InterlockedCompareExchange(&enabled,0,0);
+    cockpitGate.Reset();
+    InvalidateHistory();Log("camera_toggled");
+}
+bool CameraKey(const MSG& message) {
+    return message.message==WM_KEYDOWN && message.wParam==VK_F6 && !(message.lParam&(1LL<<30));
+}
+LRESULT CALLBACK CameraInput(int code,WPARAM removed,LPARAM raw) {
+    if(code==HC_ACTION && removed==PM_REMOVE && raw) {
+        auto& message=*reinterpret_cast<MSG*>(raw);
+        DWORD process=0;GetWindowThreadProcessId(message.hwnd,&process);
+        DWORD foreground=0;GetWindowThreadProcessId(GetForegroundWindow(),&foreground);
+        if(process==GetCurrentProcessId() && foreground==process && CameraKey(message))ToggleCamera();
+    }
+    return CallNextHookEx(nullptr,code,removed,raw);
 }
 
 void ReadSettings() {
@@ -257,11 +336,40 @@ bool ReadPose(void* component, Pose* pose, View* before) {
     } __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
 
+float NormalizeAngle(float value) {
+    while(value>180.0f)value-=360.0f;
+    while(value<-180.0f)value+=360.0f;
+    return value;
+}
+
+bool CockpitEligible(void* component,View* view,Pose* pose) {
+    if(!ReadPose(component,pose,view)) { cockpitGate.Suspend();return false; }
+    Quat q=pose->rotation;
+    Vec forward{1-2*(q.y*q.y+q.z*q.z),2*(q.x*q.y+q.w*q.z),2*(q.x*q.z-q.w*q.y)};
+    Vec right{2*(q.x*q.y-q.w*q.z),1-2*(q.x*q.x+q.z*q.z),2*(q.y*q.z+q.w*q.x)};
+    Vec up{2*(q.x*q.z+q.w*q.y),2*(q.y*q.z-q.w*q.x),1-2*(q.x*q.x+q.y*q.y)};
+    Vec relative{view->location.x-pose->position.x,view->location.y-pose->position.y,view->location.z-pose->position.z};
+    constexpr float Degrees=57.29577951308232f;
+    float pawnYaw=std::atan2(forward.y,forward.x)*Degrees;
+    TwinKartCamera::CockpitSample sample{
+        relative.x*forward.x+relative.y*forward.y+relative.z*forward.z,
+        relative.x*right.x+relative.y*right.y+relative.z*right.z,
+        relative.x*up.x+relative.y*up.y+relative.z*up.z,
+        view->fov,NormalizeAngle(view->rotation.y-pawnYaw)};
+    if(!raceRenderingActive) {
+        HMODULE bridge=GetModuleHandleW(L"TwinKartDriftRaceBridge.dll");
+        if(bridge)raceRenderingActive=reinterpret_cast<RaceRenderingActive>(GetProcAddress(bridge,"TwinKartCockpitDrivingActive"));
+    }
+    bool nativeRace=raceRenderingActive && raceRenderingActive()!=FALSE;
+    return cockpitGate.Observe(sample,InterlockedCompareExchange(&enabled,0,0)!=0 && nativeRace);
+}
+
 bool ApplyView(void* component, void* output) {
     __try {
         View* view = static_cast<View*>(output); Pose pose;
-        if (!ReadPose(component, &pose, view)) return false;
+        if (!CockpitEligible(component,view,&pose)) return false;
         AcquireSRWLockShared(&settingsLock); Settings current = settings; ReleaseSRWLockShared(&settingsLock);
+        current=TwinKartCamera::VehicleSettings(current,tallKartFront);
         Quat q = pose.rotation;
         Vec forward{ 1 - 2 * (q.y*q.y + q.z*q.z), 2 * (q.x*q.y + q.w*q.z), 2 * (q.x*q.z - q.w*q.y) };
         Vec up{ 2 * (q.x*q.z + q.w*q.y), 2 * (q.y*q.z - q.w*q.x), 1 - 2 * (q.x*q.x + q.y*q.y) };
@@ -299,8 +407,18 @@ bool ApplyView(void* component, void* output) {
 
 void __fastcall ViewHook(void* component, float delta, void* output) {
     originalView(component, delta, output);
+    // Observe actual window messages on the native camera/game thread. Polling
+    // remains a fallback only if this same-process hook cannot be installed.
+    if(!cameraInputHook) {
+        cameraInputHook=SetWindowsHookExW(WH_GETMESSAGE,CameraInput,nullptr,GetCurrentThreadId());
+        if(cameraInputHook){InterlockedExchange(&inputHookReady,1);Log("camera_input_hook_installed");}
+    }
     InterlockedIncrement(&calls); InterlockedExchange(&lastThread, static_cast<LONG>(GetCurrentThreadId()));
     bool modified = false;
+    UpdateKartView(component);
+    // Resolve the CURRENT driver before reading its head, including the very
+    // first frame after kart/character replacement and respawn.
+    UpdateDriver(component,false,false);
     if (enabled) {
         if (ApplyView(component, output)) { InterlockedIncrement(&applied); modified = true; }
         else InterlockedIncrement(&rejected);
@@ -314,6 +432,16 @@ void __fastcall ViewHook(void* component, float delta, void* output) {
     wasModified=modified;lastComponent=component;
 }
 
+// Item-hit, finish, replay and other panoramic presentation paths use the
+// supported build's stock third-person component. This runs on the same
+// camera/game thread as ViewHook, so restoring the cached local mesh here is
+// safe and happens before that camera calculates its frame.
+void __fastcall ThirdPersonViewHook(void* component,float delta,void* output) {
+    cockpitGate.Suspend();
+    RestoreDriver();
+    originalThirdPersonView(component,delta,output);
+}
+
 DWORD WINAPI Worker(void*) {
     wchar_t logPath[32768], initial[8]{};
     DWORD n = GetEnvironmentVariableW(L"TWIN_KART_CAMERA_LOG", logPath, ARRAYSIZE(logPath));
@@ -325,12 +453,15 @@ DWORD WINAPI Worker(void*) {
     bool ready = false;
     for (int attempt = 0; attempt < 1200; ++attempt) {
         if (!memcmp(image + ViewFunction, signature, sizeof(signature)) &&
-            *reinterpret_cast<void**>(image + DriveVtable + ViewSlot) == image + ViewFunction) { ready = true; break; }
+            *reinterpret_cast<void**>(image + DriveVtable + ViewSlot) == image + ViewFunction &&
+            *reinterpret_cast<void**>(image + ThirdPersonVtable + ViewSlot) == image + ThirdPersonViewFunction) { ready = true; break; }
         Sleep(50);
     }
     if (!ready) { Log("unsupported_runtime_signature"); CloseHandle(logFile); return 3; }
     originalView = reinterpret_cast<CameraView>(image + ViewFunction);
+    originalThirdPersonView = reinterpret_cast<CameraView>(image + ThirdPersonViewFunction);
     viewSlot = reinterpret_cast<PVOID volatile*>(image + DriveVtable + ViewSlot);
+    thirdPersonViewSlot = reinterpret_cast<PVOID volatile*>(image + ThirdPersonVtable + ViewSlot);
     GetEnvironmentVariableW(L"TWIN_KART_FIRST_PERSON", initial, ARRAYSIZE(initial));
     enabled = initial[0] == L'1';
     GetEnvironmentVariableW(L"TWIN_KART_CAMERA_CONTROL", controlPath, ARRAYSIZE(controlPath));
@@ -340,11 +471,23 @@ DWORD WINAPI Worker(void*) {
     GetEnvironmentVariableW(L"TWIN_KART_COCKPIT_HEAD", auditFlag, ARRAYSIZE(auditFlag));
     cockpitHead = auditFlag[0] == L'1';
     ReadSettings();
-    DWORD previous;
+    DWORD previous,thirdPrevious;
     if (!VirtualProtect(const_cast<PVOID*>(viewSlot), sizeof(void*), PAGE_READWRITE, &previous)) { Log("slot_protection_failed"); return 4; }
+    if (!VirtualProtect(const_cast<PVOID*>(thirdPersonViewSlot), sizeof(void*), PAGE_READWRITE, &thirdPrevious)) {
+        DWORD ignored;VirtualProtect(const_cast<PVOID*>(viewSlot),sizeof(void*),previous,&ignored);
+        Log("third_person_slot_protection_failed");return 4;
+    }
     PVOID old = InterlockedCompareExchangePointer(viewSlot, reinterpret_cast<void*>(ViewHook), reinterpret_cast<void*>(originalView));
+    PVOID thirdOld=InterlockedCompareExchangePointer(thirdPersonViewSlot,reinterpret_cast<void*>(ThirdPersonViewHook),reinterpret_cast<void*>(originalThirdPersonView));
+    if(old!=reinterpret_cast<void*>(originalView) && thirdOld==reinterpret_cast<void*>(originalThirdPersonView))
+        InterlockedCompareExchangePointer(thirdPersonViewSlot,reinterpret_cast<void*>(originalThirdPersonView),reinterpret_cast<void*>(ThirdPersonViewHook));
+    if(thirdOld!=reinterpret_cast<void*>(originalThirdPersonView) && old==reinterpret_cast<void*>(originalView))
+        InterlockedCompareExchangePointer(viewSlot,reinterpret_cast<void*>(originalView),reinterpret_cast<void*>(ViewHook));
     DWORD ignored; VirtualProtect(const_cast<PVOID*>(viewSlot), sizeof(void*), previous, &ignored);
-    if (old != reinterpret_cast<void*>(originalView)) { Log("slot_changed_before_install"); return 5; }
+    VirtualProtect(const_cast<PVOID*>(thirdPersonViewSlot),sizeof(void*),thirdPrevious,&ignored);
+    if (old != reinterpret_cast<void*>(originalView) || thirdOld != reinterpret_cast<void*>(originalThirdPersonView)) {
+        Log("camera_slot_changed_before_install"); return 5;
+    }
     Log("camera_hook_installed");
     wchar_t eventName[96];
     swprintf_s(eventName, L"Local\\TwinKartCameraToggle-%lu", GetCurrentProcessId());
@@ -358,9 +501,7 @@ DWORD WINAPI Worker(void*) {
         GetWindowThreadProcessId(GetForegroundWindow(), &foregroundPid);
         // The transition bit also catches taps shorter than the sampling period.
         bool requested = toggleEvent && WaitForSingleObject(toggleEvent, 0) == WAIT_OBJECT_0;
-        if (requested || (foregroundPid == GetCurrentProcessId() && !wasDown && (down || (key & 1)))) {
-            InterlockedExchange(&enabled, !enabled); InvalidateHistory(); Log("camera_toggled");
-        }
+        if (requested || (!InterlockedCompareExchange(&inputHookReady,0,0) && foregroundPid == GetCurrentProcessId() && !wasDown && (down || (key & 1)))) ToggleCamera();
         wasDown = down;
         if (tick % 200 == 0) Log("camera_sample");
         Sleep(10);

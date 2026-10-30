@@ -5,11 +5,11 @@
   },
   {
     "file": "build.ps1",
-    "sha256": "ac841f7a128078641994d0e7624bc21e2cd2932fd0a67ea3c6fc0accdcad2c6a"
+    "sha256": "f66fd9c3805edb3f63f72da364ec172f6cc90dd6dec17460833761209add0027"
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "589043dcb5d3b2cb1f292a39b47f0f7807af27006d524112544236f67cef2d3b"
+    "sha256": "89a483b9432cd26e77c1fb203379582034ee823cb6fc60c8f2c0afd1116e642a"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -21,15 +21,15 @@
   },
   {
     "file": "gateway/GatewayHost.cs",
-    "sha256": "5f2c95801033a039fbcad3dbca4a079373c92167c0a331ab9e6cc5719874d45a"
+    "sha256": "df805dbac927175ea2f09bef42181f8cbc454399472f293a2862fe1dc3c94b76"
   },
   {
     "file": "gateway/InventoryUnlocks.cs",
-    "sha256": "144298c4b48b2b5b94ec66d83933887b2524d794ba307882693279b64f93b6c6"
+    "sha256": "78261440a27b8f348363d7999883306b6b9512ad483e7a9b1238a98249e113af"
   },
   {
     "file": "gateway/LocalAccountSession.cs",
-    "sha256": "704e0aa9a99a0511ae4a78493a6e1ddac775a94ab8d56781bd24c9733934555a"
+    "sha256": "ae3aaca81df5c558d019d310cffb74016b3e145af1f43f7521c91636c4781c01"
   },
   {
     "file": "gateway/LocalPingServer.cs",
@@ -49,11 +49,11 @@
   },
   {
     "file": "gateway/OfflineProfileStore.cs",
-    "sha256": "e7446a51b0bc11252a5e4f51a9988a12d8b7ed59f38c3c833a45c34ba8da92ea"
+    "sha256": "d100253af180cecea4cf03e9cdab014a2bb43345862f2d5bb1b83dd964dbba4d"
   },
   {
     "file": "gateway/OfflineRoomService.cs",
-    "sha256": "bb3c0c063940498c9db92df48d29bba97fa4885aa8ba5ac3cd393137ef86e580"
+    "sha256": "e2d939545d3f660e358748d901880a749e5bdf81949088be6d20b8cabb7ba007"
   },
   {
     "file": "gateway/OfflineTuning.cs",
@@ -65,7 +65,7 @@
   },
   {
     "file": "gateway/PacketContracts.cs",
-    "sha256": "34665eff11fd61211bcd1cedabe7756194657af218e38b6288fc3c90daf8340f"
+    "sha256": "1180553723521015352844318811765daf01abadc180723aaa81ecbc7a3ec936"
   },
   {
     "file": "gateway/PreAuthSession.cs",
@@ -81,7 +81,7 @@
   },
   {
     "file": "gateway/RoomState.cs",
-    "sha256": "f51f9e3a836d846984754c1c5b146331be74cece8b9591a0b32000d55b2c0f9e"
+    "sha256": "107a75a5a01fbeed5bafaf1d70bbf45271a10c59397bdaa2be8f906dd5ec0934"
   },
   {
     "file": "gateway/test-body-layout.ps1",
@@ -93,7 +93,7 @@
   },
   {
     "file": "gateway/test-offline.ps1",
-    "sha256": "24603a0d2485f39b5b2729be8f650f0cf307bb225c2b4d5209df82a6296951c2"
+    "sha256": "3699442ad5ba81a149f796a8f70015b582128cf71298550f2ef8568d7425a66d"
   },
   {
     "file": "gateway/test-room.ps1",
@@ -101,7 +101,7 @@
   },
   {
     "file": "gateway/test-tracks.ps1",
-    "sha256": "f10940cdef7fe7a23b6aa7b58c1b9450cbc5b3a6b97cdb4b5e811e5ee7d44577"
+    "sha256": "9cc8e3bd9b8177b0704ea93d565e51f97db95693cd7a2259b1130dc31dbec192"
   },
   {
     "file": "gateway/test-unlocks.ps1",
@@ -117,7 +117,7 @@
   },
   {
     "file": "gateway/TrackSupportAudit.cs",
-    "sha256": "636d3b32f18201fedd9c27f0fffc4a5f6934afe556eb6836cbb7a80ceace3409"
+    "sha256": "e28f44a815c9c4b27cd5aea6be878a67e315adb364bc6b6ec0e890e4a27753b3"
   },
   {
     "file": "gateway/WireCodec.cs",
@@ -153,7 +153,11 @@
   },
   {
     "file": "native/build-race-bridge.ps1",
-    "sha256": "4a6468a28ada45b8f0f125159086d580f43dad1ee176e9535d8ded6e10c12da9"
+    "sha256": "6617d362de17e4c0ec063e0fd8d2661bbe00bb78397dd5b3e410f96f2cd81c10"
+  },
+  {
+    "file": "native/build-reconstruction-probe.ps1",
+    "sha256": "3e374b5ef0bf3be343fc7bd4562d9d8fff20c680baadb710cd8701f47802e1e7"
   },
   {
     "file": "native/build-render.ps1",
@@ -165,7 +169,7 @@
   },
   {
     "file": "native/CameraControl.h",
-    "sha256": "c77deb3f020d28fd5c2c1198b014215f1bfa17171681ab2a76e2a78941984d8e"
+    "sha256": "82d8b6974c2bcd5bb8aa4691609c1310a0e4d50ced41df3a25746955f24edbd9"
   },
   {
     "file": "native/ClientBuildGuard.h",
@@ -173,19 +177,19 @@
   },
   {
     "file": "native/DlssD3D11.cpp",
-    "sha256": "62a861bfc3939921ef9e14df5e39d0b6cc0b2e81110a8152f6ac40ce04bded57"
+    "sha256": "e25286ba6becd0acff888b6ad0fdd774467d83bba5cb49ce222db76c02af8927"
   },
   {
     "file": "native/DlssD3D11.h",
-    "sha256": "3c75b1fd33cee375f393c701baff0336f451f547040539245ebe124bf7560ca4"
+    "sha256": "0a36deff3afe0ff376553fda3b44943b5c9ea3178b6480c54e8008694f5f438a"
   },
   {
     "file": "native/DriftAssetInventory.cpp",
-    "sha256": "b50ab2476891d4e776b71dbaf032704645f821bc66ba10273206407a7e2a691d"
+    "sha256": "14ede86064f5caf3ab41f40910f35fdf05adc76a71bf563eb3d71a5198cd638d"
   },
   {
     "file": "native/DriftCamera.cpp",
-    "sha256": "f0e02950210927413bb984c2b75437d7f7df117401c07050e735f0537806d903"
+    "sha256": "6e78aa179ac6f40399a7be9a8158379a95f742be35bda08e890c388bec9781ae"
   },
   {
     "file": "native/DriftObjectIdentity.h",
@@ -193,27 +197,27 @@
   },
   {
     "file": "native/DriftRaceBridge.cpp",
-    "sha256": "47ecaeab7073d83bdac6533433ffe17eb273b7c726798ce1431bc6c0bc4030a0"
+    "sha256": "bbf800f7e2aec18f898b054cc693fc3fe61dac869bda725da723c78282b46c13"
   },
   {
     "file": "native/DriftRenderProbe.cpp",
-    "sha256": "2d51aa2a0a42ae5abc8440497bd4541b7b70605fe0be6fccf2b8e305565e7041"
+    "sha256": "a35e40d36167b173ce36afe7e27f93603e00d828a4450c3bc0e5942651a6889b"
   },
   {
     "file": "native/FrameGenerationD3D12.cpp",
-    "sha256": "f08c1c0bf5c833da27b116dc3cd56dc96d9ed182fa05334def9bdd913346cfd0"
+    "sha256": "21fdb7b4c96c5222fb8afd1a7673eb3ea79744789fe742ad467d31516abd6540"
   },
   {
     "file": "native/FrameGenerationD3D12.h",
-    "sha256": "c70660b831ec643af7ee24def6acc5f44bae35d808fbd3942fee004b17acb667"
+    "sha256": "0b6b9b45fc573603ba9bc08cae9090bdd04a2be9820ab187368cd1ccd4dd662d"
   },
   {
     "file": "native/GameThreadQueue.cpp",
-    "sha256": "dd1bbfc84842ccff55f662e72c5fa1d9bb7fcaf7385e51d03d2a3e976b80b4cd"
+    "sha256": "c009a20888537e76612fa297762acb6108b4a4a4b9ab1a28c3bc1001b15d3fdd"
   },
   {
     "file": "native/GameThreadQueue.h",
-    "sha256": "2920c2577d794ac69d14fb96af6bfd4540a68f5d8638fd2f1756accb74802b23"
+    "sha256": "fd2d8cb9f1e66e464700242f1eb155099b017775512d21fe02fab2cba4d50516"
   },
   {
     "file": "native/InputDevice.cpp",
@@ -221,71 +225,119 @@
   },
   {
     "file": "native/LocalRaceRuntime.h",
-    "sha256": "c082f27620aaeca43a0a441e1d533d48418ae82f579c4b62701d0841ade2e428"
+    "sha256": "b098b3dcea670a0f4c6e932d83bd7bfba423f2672c7f469a66abba33e941d750"
   },
   {
     "file": "native/LocalRaceWorld.h",
     "sha256": "50bfc922851644239c20a3793d78563270987875e0eff35f54ff81a14b01cc15"
   },
   {
+    "file": "native/NativeAiAssets.h",
+    "sha256": "3a071e02c56b2d6de968f937b0f5e195b7ab4b21a864833f2832ed054781879f"
+  },
+  {
+    "file": "native/NativeAiRoster.h",
+    "sha256": "c8fd2a5f02502b61739ed3b2445e8808866e16caef23af84a78ff276f8b22d71"
+  },
+  {
+    "file": "native/NativeDeviceIdentity.h",
+    "sha256": "e05183d84f04f2b32cb5ce436c61cf75ef198dc77c400fb0e8b09db1a2fa2625"
+  },
+  {
+    "file": "native/NativeEquipmentPreset.h",
+    "sha256": "9ac8f9ced84f7e07918a4dfd0eb1908008a80cf4a6b06ee616163408ad8fccfc"
+  },
+  {
     "file": "native/NativeFrameMarkers.cpp",
-    "sha256": "e5451907a24a6f7aab81c7571f5247b5f3fb7af0acbc237ad0b0132e81888efa"
+    "sha256": "4a861e8f2c0c8a508c4a0b81878706d4cf7e14f152d0607463ae1f8fe5fda6bc"
   },
   {
     "file": "native/NativeFrameMarkers.h",
-    "sha256": "f68b7a035b00ef1e85927272302b1bd079cdb9f0454eb8c4dff549a6b57e84b5"
+    "sha256": "2dfd30c22a8ed0693648909dc3f25aa22e4a634f5be0f1e720e6207a7707cbef"
   },
   {
     "file": "native/NativeFrameTimeline.h",
-    "sha256": "af4c7a6df42941e3cdd31d7951ad3cfd186583100fa2d759b5ebe2788f7716e8"
+    "sha256": "4a220be9f251819112a84f62a7de672b7973aec759d27eeef943c222626c7bff"
   },
   {
     "file": "native/NativeGuideShader.h",
-    "sha256": "f482d35cb3d5f5a446dcea0ea670b645ff6d21b8f8f5148b5d3248275c96c288"
+    "sha256": "e399c5578c7f5581d20a4ccff052633f15455af543f7276c6bb6040d8d3138af"
+  },
+  {
+    "file": "native/NativeGuideSnapshot.h",
+    "sha256": "ff9a76876330c7fdeaf8e387e049e6255a49519dcde065dec652844244faceba"
   },
   {
     "file": "native/NativeNeuralPass.cpp",
-    "sha256": "dc7ce45f98d15561b8913a536ecdd785a080ab93fc5b01c46348edece11f7dfb"
+    "sha256": "349e62cb32a5840b521551e8d1cb3e6d2ad297038850a7e5d0cd960bc9d42bf5"
   },
   {
     "file": "native/NativeNeuralPass.h",
-    "sha256": "4bb10c84192b01765d3a3df46ce97cd2e82f89750f8af7011fcff05a47132c6c"
+    "sha256": "12f4702df624c661e8e00e6cb6c41f1197e68370573a20efb587fcf44940b79f"
   },
   {
     "file": "native/NativePresentation.cpp",
-    "sha256": "9fb85dfa4bb112191662e699f57dee044c5b52374eda4fd51785e94ca0249d6b"
+    "sha256": "97a604cb42f57eefb8d7ea712c7383ec1e263eb8962ab9b1cbb5bc6861f777a4"
   },
   {
     "file": "native/NativePresentation.h",
-    "sha256": "a873e745e801d063c01ff87b4c747aa6a56a90ea9ea26acd0863df74de3ae229"
+    "sha256": "7f9cea5c7298cec67d6b4d257e7ac094bfea40b0e0f49770987741c3a42cef47"
+  },
+  {
+    "file": "native/NativeRaceModes.h",
+    "sha256": "51ec9d394a5bfa1166769d9cb070e7947d4c431d9ff71fddb268c32124ee2595"
   },
   {
     "file": "native/NativeRacePhase.h",
-    "sha256": "d09f56b83656e190764dde559b6400bf2dda4159e9f1b1de7fce2a50d6ba497b"
+    "sha256": "4477066c0846e29a848cc441e21d4b074e422c237bf41ca3fd3b6d7645ecadd2"
+  },
+  {
+    "file": "native/NativeRenderScale.h",
+    "sha256": "148471517d44e4cc616959ff566a705c4d3a3ff30ceea0e2c7b33b918d8e7290"
+  },
+  {
+    "file": "native/NativeReturnRoute.h",
+    "sha256": "1ad424bea352fae91699e19412fc1ec6a6231e6f5a361132924c890109745bb6"
+  },
+  {
+    "file": "native/NativeSceneRectangle.h",
+    "sha256": "4bf7a8a15a9ed38726ff58c94778ab7cbe048a56363181c426e4e618936199d6"
   },
   {
     "file": "native/NativeTemporalContract.h",
-    "sha256": "13609de82c59b51c8867d810f47096cf098c28215ba80319c9cb8f5ec4f7a834"
+    "sha256": "28dd6a25b398da5b1713e53a4ff53f0f054094eb6ffdc271371c0187e3913948"
   },
   {
     "file": "native/NativeTemporalPass.cpp",
-    "sha256": "b0a211f1242496df2229e3e26bea84edefd88f3ec480cf7484d4ed5371dc5f42"
+    "sha256": "80f362b032b42947e52f8413b44afc23d54efca23929601bd1ae24728bddfaf9"
   },
   {
     "file": "native/NativeTemporalPass.h",
-    "sha256": "ddd887dba0176dee6445ecc5dd5f6d323f4ce6db0fcc79543b97929079a855ec"
+    "sha256": "c86f995b54ee0f1cfa23836b92333b147e2ad7fa162a6d6e07ab59af142d227d"
+  },
+  {
+    "file": "native/NativeTrackCatalog.h",
+    "sha256": "00f24559e664fd283a95f67fad45aa0821e36de87b64a4ba2cfb3fdf4ee5e9ee"
+  },
+  {
+    "file": "native/NativeTrackModes.h",
+    "sha256": "f19d7f815592a3e03d22365682694035a66c042664cd2681ee1ec97d1a1fd3b2"
+  },
+  {
+    "file": "native/NativeVelocity.h",
+    "sha256": "61aeb871ad0e82b52a82377786d7fd3ffb9cae63779b5aa1873b026375cac6ef"
   },
   {
     "file": "native/NativeViewMath.h",
-    "sha256": "2ffd94d324c131ca40eef0ef50692649ad17c5f3b78215b07f69d96e2d87f3dc"
+    "sha256": "3b0cc5dc37018cd3381d402ceb0fffea6cbe5d96cd2191c7717576a48b35a660"
   },
   {
     "file": "native/NeuralD3D12.cpp",
-    "sha256": "fd7af571bdb8c917d2ebb59c4fa6a9605fa69e7a6c2608f9accb0883912a0541"
+    "sha256": "6615c8ee0f5bc8b67d1626ad58761365f22e4aefcb9b4892ca0aa94530843aa6"
   },
   {
     "file": "native/NeuralD3D12.h",
-    "sha256": "7407f240af2ffe9dc01e29d43a7c8a50c8826724b0275385ba7ea726f1f34adb"
+    "sha256": "ec6d6845e11797684474a87cd362edb4bd1899df2d8840e50de3d869ad1cce17"
   },
   {
     "file": "native/OwnedCodePatch.h",
@@ -293,7 +345,7 @@
   },
   {
     "file": "native/RaceControl.h",
-    "sha256": "734bae7a48e2a5c0f5bbda0a20c34d9d2e3d5d511dfeeedf4c4cbbbf19899153"
+    "sha256": "22d225ab512d7481f00443d2f42bea0df7990a03ea61a0d8c504a8a7d00978d8"
   },
   {
     "file": "native/RenderActivity.h",
@@ -301,7 +353,7 @@
   },
   {
     "file": "native/RenderPassTrace.cpp",
-    "sha256": "adb5d8ef67bb9f0f4d07b8086fbf65e1ec89ed4663e5a92ae6bfea73d56ba06c"
+    "sha256": "943ee10328782ae84e853cacf71209f37af97ba3dfe29cc0ec00c2efaa702523"
   },
   {
     "file": "native/RenderPassTrace.h",
@@ -309,11 +361,11 @@
   },
   {
     "file": "native/SharedTextureBridge.cpp",
-    "sha256": "589280f0d2c7dd4f730647a466ca9cad3a31c31a22ce05e82bf343a3e49da5d9"
+    "sha256": "069f7d2ffc517bf6cbe1092a024a46ca7832f5ef42e3c4691585913317447a21"
   },
   {
     "file": "native/SharedTextureBridge.h",
-    "sha256": "0c7481390ca70ba343f09c16763fe7b9dfce54c932d418e16c1aa4787a514db0"
+    "sha256": "45129c478353276a37d16402f8e26b8938e9726742c3d26c755deb2d48049012"
   },
   {
     "file": "native/TemporalCapture.cpp",
@@ -337,15 +389,19 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "33aa70bae209e9105fcf80fa104d7239993f368b4800f0af7cc92bcbcbdb393a"
+    "sha256": "7c3599540b6646538d1309e68c7a2ca5084a7a4b16e629370696b90cfdd37d9e"
   },
   {
     "file": "README.md",
-    "sha256": "d50cac5f980b1435d24a8eb03f6cf1d5fdf9cf7f0a2439e1750364aeabb2360f"
+    "sha256": "1ca226e7ba867b5fc81c84d18dc45e15916becc78fabf61d0c52bec0e421bbe3"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
-    "sha256": "489d655f17b18ce7816edb4906da0a955e490eb1eb844ca8ef99b9ca61a59274"
+    "sha256": "ea54073392cca77cd0629dcec24a83085110bc2ea843c20df020fb4f25e213b9"
+  },
+  {
+    "file": "src/AiRosterCatalog.cs",
+    "sha256": "b52d497475def78b9dc191d0e6054886b84653260564c18631280b73eda2209c"
   },
   {
     "file": "src/ClientDiscovery.cs",
@@ -360,16 +416,24 @@
     "sha256": "20098a82a2964d3d0fbdae0417bbd8b3c6fe5efe6b2a72d3161179acc3d39caf"
   },
   {
+    "file": "src/GraphicsLaunchForm.cs",
+    "sha256": "e71f6a317fabf1cbdf5ab0162d33054d5687768e6920de3f8568f59ecbf024a2"
+  },
+  {
     "file": "src/GraphicsProfile.cs",
     "sha256": "c86e1922957bf5e6ce764995ea30f49e819e320ccbb0d7f58e4ca4028f2e181e"
   },
   {
     "file": "src/LocalRaceForm.cs",
-    "sha256": "cd0a3320abc1a17cc2d9a07c4106098fa05e259230e946d2627c183b5605f7af"
+    "sha256": "114603465cfcbc5733a3152d20fc6eee646e7f1476f16948c6febc0bc98dfb11"
   },
   {
     "file": "src/MainForm.cs",
-    "sha256": "e96542520cf14a6b3ca16806b166d659907f825985f2cffbd56609db470323ba"
+    "sha256": "285c06836c856cd2080d83a1c896e243e0db8dbc3a4615cf446c0cd2969a9aee"
+  },
+  {
+    "file": "src/NativeTrackSessionCatalog.cs",
+    "sha256": "188d5e07d358ed79c88b14bd1af474152aecb60d1b74cd7df360af158f63a24c"
   },
   {
     "file": "src/OfflineGarageForm.cs",
@@ -377,11 +441,23 @@
   },
   {
     "file": "src/OfflineGraphicsOptions.cs",
-    "sha256": "9695594b9658d4563c92c1094f34cc53da7b20a937a6a8907470d68044ee24c2"
+    "sha256": "f8996d803e2920f416849267118679befb078c753bb91cc03a99cb97bffa6155"
+  },
+  {
+    "file": "src/OfflineGraphicsPreferenceStore.cs",
+    "sha256": "caca8573482865cf3166f614a08c206eb8a5fccab8afa5ea4e79fc961b992753"
+  },
+  {
+    "file": "src/OfflineKeyboardOptions.cs",
+    "sha256": "714bc728e32d0e50e074e4d86d3133d9ddff642ff0e974e6f7d20c959e5b3314"
+  },
+  {
+    "file": "src/OfflineLanguageOptions.cs",
+    "sha256": "3cbb8488ddcd875abe55187ffdd8a98af3462d02d66cf89e6a90c36cbbb3cbcd"
   },
   {
     "file": "src/OfflineLaunchSession.cs",
-    "sha256": "feb55f24d402d214b3a25cfa37fcb5b9c2253f2b23d8ffe3e460d827658e6df4"
+    "sha256": "37342317705d678313292f8d804628b6e26519fd457db23498309945e284288e"
   },
   {
     "file": "src/OwnedGameModule.cs",
@@ -389,11 +465,11 @@
   },
   {
     "file": "src/OwnedGameStartup.cs",
-    "sha256": "1efa5f745bb2ee25598b44c085f0cfee36bcfbfeb6c7ee861ac577be73674b13"
+    "sha256": "78816f50b0004cc3fd326ffca0ae46d5bb1c97a7b4783e4dc2e1cb6ef77e7b0b"
   },
   {
     "file": "src/Profiles.cs",
-    "sha256": "3fd6dfcaddb177e3aac18890a07b2adcbb926dc035bc57bf3c2b50cd6aa79484"
+    "sha256": "3dec1a14fd908eebacdd14b6beff8ef5e195b882936cd52e14049d54ad39c4f1"
   },
   {
     "file": "src/SharedPad.cs",
@@ -401,15 +477,19 @@
   },
   {
     "file": "test-graphics.ps1",
-    "sha256": "329cf5f3a2f3b6fe10211d535e714bc254eb209e0bbafb43c3b2e8cae9fabe6e"
+    "sha256": "baffa633de4b64af0c81e44cbabe22daa6f3bc3d5a7dff91d8194337afc9b823"
   },
   {
     "file": "test-input.ps1",
     "sha256": "1518df5d64deef60ffc36650cc8e855c5459720e4076c9f59e0e5ba1431a2196"
   },
   {
+    "file": "tests/AiRosterCatalogTests.cs",
+    "sha256": "5b2f17271687144927d0285dbbd8e84ecef54d6e0c7dd80af7cb67e14aaa18fe"
+  },
+  {
     "file": "tests/CockpitControlTests.cpp",
-    "sha256": "58b063bc3d0b9c59c44095d1fa7bf3f21a2d6b6244eb9fefce32c13e71b20277"
+    "sha256": "e7cd75a1314856bdb348441565237999a7917e7e95c057bbac16cad80a838268"
   },
   {
     "file": "tests/CockpitProfileTests.cs",
@@ -421,11 +501,11 @@
   },
   {
     "file": "tests/FrameGenerationNativeTests.cpp",
-    "sha256": "59350da68201b1f16a46d9e662f9b048fa7389b723494c254821cd614df528d5"
+    "sha256": "249e553dd9e6d6312c00db945423d3b7a72ed7b8c0a2ac6b070436707bfbf0ee"
   },
   {
     "file": "tests/GameThreadQueueTests.cpp",
-    "sha256": "55a61bd7eeceaf65668ae10502e726b3d0a9e47f40e7d81e3e2111ac510067ea"
+    "sha256": "c827a8d0988456f8e84cca35034ef98a6444f33de5ab7eeaee05330b12b9d7fd"
   },
   {
     "file": "tests/GatewayTests.cs",
@@ -441,47 +521,79 @@
   },
   {
     "file": "tests/InventoryUnlockTests.cs",
-    "sha256": "c453834fa663b9d56c8f5c8c71616dae6e27ab7678d8fa553dfa32223f6297c0"
+    "sha256": "cc77c6a2271a619489f389eaa31f9818104390426b84d3a8ffd84e3d173199ed"
+  },
+  {
+    "file": "tests/LocalAiLifecycleTests.cpp",
+    "sha256": "64afea46069b2fe41c5e1bc24f5b69ccf30f2e40932c36261efa352eefefdc59"
   },
   {
     "file": "tests/LocalRaceProfileTests.cs",
-    "sha256": "08856682f6217865345dddb82639fe2486bb05ba261693c6011b91eebe060d52"
+    "sha256": "b955d087b97c38f075ca4aaa75573fe7346ef35a5a098c4dc802d1686d1abcad"
+  },
+  {
+    "file": "tests/NativeAiRosterTests.cpp",
+    "sha256": "b2edffc8e8c0fb3586d2a646a60c694af473b036811b2638ee670824f1bfbb79"
+  },
+  {
+    "file": "tests/NativeEquipmentPresetTests.cpp",
+    "sha256": "34ff1ed6f3f6dccbda1b294c70c8657e88e49c2d830a83f2e96cff5871694bd8"
   },
   {
     "file": "tests/NativeFrameMarkersTests.cpp",
-    "sha256": "8df651d5fa5e8738d8bdb3ce861e40839b83180ca7efd9df60a43648b2710a2a"
+    "sha256": "cdd2378210f696aa8ebe473389aa9769f19336793b4020e58e32f778257b14ad"
   },
   {
     "file": "tests/NativeGuideTests.cpp",
-    "sha256": "6135d0ef006e0c0251d6b737a67685fce40f5ddac72df486e24257d2c47c2fac"
+    "sha256": "5321764e4f444b25e0ec0ea6d306a3d2138d3edfb58cca3eda15489c283a22d7"
   },
   {
     "file": "tests/NativeTemporalContractTests.cpp",
-    "sha256": "b619912a34266b6f91cecb7a38ef83da1e3e760eab78597047e8a1a9c2db51f6"
+    "sha256": "b96900c7045ec03efdff6bc892bd50396faf5f8754aa40185e3065ca2b13a297"
   },
   {
     "file": "tests/NativeTemporalPassTests.cpp",
-    "sha256": "cd18705b238e3aa495cfca8ed217c032dc2711db3baa78cb032f5ce6e7bef4f4"
+    "sha256": "bb444504085e289144512dcee681769a479fbd5517cf6cebf9690177143713dd"
+  },
+  {
+    "file": "tests/NativeTrackCatalogTests.cpp",
+    "sha256": "e46c9dae2a8ba539ced51a0bac87642efa86a140bb9ba0be9c59c09d0c9ea680"
+  },
+  {
+    "file": "tests/NativeTrackSessionCatalogTests.cs",
+    "sha256": "714e0e0f0f1416b10e8d6e27d5c54245fee24ad23627e64f6d181894ef6ba777"
   },
   {
     "file": "tests/NativeViewMathTests.cpp",
-    "sha256": "8103e081dbea77b842220bb64dd60daa9ed2e35131025d701e5a4beb5f1bec48"
+    "sha256": "78814f09522bbdc4ef6644fb688050303dc8121135aaa72bb5d31c6c30d51708"
   },
   {
     "file": "tests/OfflineBackendTests.cs",
-    "sha256": "f8d18d6c4de5a44220b533f988378248bfc98dc304b214495c50b140fb041ee1"
+    "sha256": "ae1cb5c1cb4b70afb17d2a66457dfa6eeadff27f75b28a713a936cfcd80dcadd"
   },
   {
     "file": "tests/OfflineGraphicsOptionsTests.cs",
-    "sha256": "8468b3046fcc713cb31bb91ffd9bf5a5cd6f305801516eed96f99b31bcf07d84"
+    "sha256": "81983013683fb5fdc8285d510e3e23cdc5b0b44b5674cc1d62576efffe08621a"
+  },
+  {
+    "file": "tests/OfflineGraphicsPreferenceStoreTests.cs",
+    "sha256": "585ef2042bb9a1a08fc0b3d913365bb7d1b3b2d8eb0034206ad5e5e7e6b83d56"
+  },
+  {
+    "file": "tests/OfflineKeyboardOptionsTests.cs",
+    "sha256": "3c46b5c685ad779c938c7845bbabfa612decf99b26fc5472b59252046c7bb50b"
+  },
+  {
+    "file": "tests/OfflineLanguageOptionsTests.cs",
+    "sha256": "07876deeb67aa7abc08e1945cf4330cc089230fa0a25494fa604ef420388af34"
   },
   {
     "file": "tests/OwnedCodePatchTests.cpp",
-    "sha256": "dda25d644cd4bcfb8bdcedd4bb55dadbdbda5cadecb11d95d14b8a1031ed58e1"
+    "sha256": "ac4decf7201e9e0df2fefe8b1c15f5021b9c358189d5880e8d3a36b6328ae49d"
   },
   {
     "file": "tests/OwnedGameStartupTests.cs",
-    "sha256": "e7ecd8cfea660ca145115a8950ddff23b2a6be1db9b4e2848e9480d4e9b87ae8"
+    "sha256": "9a581371f45f7bc05f390749ab0de143af4cbf0d21362e8945db19521048741d"
   },
   {
     "file": "tests/PackedFieldLayoutTests.cs",
@@ -493,19 +605,19 @@
   },
   {
     "file": "tests/PresentationInteropTests.cpp",
-    "sha256": "f6cd91668cd21ea356f73f6aba5b62ab87c7b2af49469d3f8a8f4c0172bc2b4c"
+    "sha256": "defab25f37d07e4842f073a1a4c405df613563a39f161702654cd9d390bf6587"
   },
   {
     "file": "tests/RaceControlTests.cpp",
-    "sha256": "a7961cd776d309a117897a3dcc8dbebb99ac586d477e2e6203383532eedc22a4"
+    "sha256": "bbcd9564b44abc32b89891137c85138cf4bf4600f6c0c72810112501af6e4473"
   },
   {
     "file": "tests/RenderPassTraceTests.cpp",
-    "sha256": "913f681a3aaa6bbc06126201e41764a5ecb62dd0a4264d27fa47cbdffe6188d2"
+    "sha256": "eccd4bd46dcc7889a5d98fd46c4b9d671013ae45194709693f4030874f587a54"
   },
   {
     "file": "tests/RoomStateTests.cs",
-    "sha256": "a1d4717bc158a6e110e6479322ac11372b6399f6745b5ac79332e2d982ed2cd6"
+    "sha256": "db6e3da52e597940ffe5b47a16e010ea7ec33507c32d9a088d3ab5c93c0ac289"
   },
   {
     "file": "tests/SdkCopyTests.cs",
@@ -521,7 +633,7 @@
   },
   {
     "file": "tests/TrackSupportAuditTests.cs",
-    "sha256": "8e57643e5855a00198046742836607e2dfeb7fc933dd4f21611a33aee9f77785"
+    "sha256": "268ca1b4595d78ed5aea7cb249485735eb5177bb0418615afe48d5573a1f35e9"
   },
   {
     "file": "tests/WireCodecTests.cs",
@@ -545,7 +657,11 @@
   },
   {
     "file": "tools/ProbeFrameGeneration.cpp",
-    "sha256": "645a997dce2898fa38ba29a14aa9529f2b83a380dd1205b5807e448717932b88"
+    "sha256": "d2e0ee98d03c8a98465e15e47a682fbc4a0adb1bd8d38081a13cce65103498fe"
+  },
+  {
+    "file": "tools/ProbeNativeReconstruction.cpp",
+    "sha256": "2b800386fd180778ade619e728b83187ce419fd853d8bb8a2dadc8d37bea8dbc"
   },
   {
     "file": "tools/ProbeNeuralRuntime.cpp",
@@ -557,7 +673,7 @@
   },
   {
     "file": "tools/ProbeTemporalSR.cpp",
-    "sha256": "877f774de80731569c5eff34be77d8fb3d1ca04f9a8dad9a87c88e8552bf9128"
+    "sha256": "09100b8cc415eb5d40e05890ee772e08517ae72c8069b60ac01d967d2492a9cd"
   },
   {
     "file": "tools/RunSession.cs",

@@ -14,8 +14,25 @@ namespace TwinKartLauncher
         public int AiCount { get; set; }
         public int Laps { get; set; }
         public LocalRaceSettings() { Track="Pirate_R01"; Mode=1; AiCount=7; Laps=3; }
+        public static bool SpitemMode(int mode) { return mode>=105 && mode<=107; }
+        public static bool InfiniteBoostMode(int mode) { return mode>=101 && mode<=103; }
+        public static bool FlagMode(int mode) { return mode==104; }
+        public static int TeamSizeFor(int mode) {
+            if(FlagMode(mode)) return 4;
+            if((mode<1 || mode>6) && !SpitemMode(mode) && !InfiniteBoostMode(mode)) return 0;
+            int group=SpitemMode(mode)?mode-105:InfiniteBoostMode(mode)?mode-101:(mode-1)%3;
+            return group==0?1:group==1?2:4;
+        }
+        public static bool TrackSupports(int mask,int mode) {
+            return mask>=0 && mask<=31 && TeamSizeFor(mode)>0 && (mask & (1 << (FlagMode(mode)?4:SpitemMode(mode)?3:mode<=3 || InfiniteBoostMode(mode)?2:1)))!=0;
+        }
+        public static bool ValidPopulation(int mode,int ai) {
+            if(FlagMode(mode)) return ai==7;
+            int size=TeamSizeFor(mode),racers=ai+1;
+            return size>0 && ai>=1 && ai<=7 && (size==1 || (racers>=size*2 && racers%size==0));
+        }
         public bool IsValid { get { return System.Text.RegularExpressions.Regex.IsMatch(Track??"","^[A-Za-z][A-Za-z0-9_]{0,95}$") &&
-            (Mode==1 || Mode==4) && AiCount>=1 && AiCount<=7 && Laps>=1 && Laps<=9; } }
+            ValidPopulation(Mode,AiCount) && Laps>=1 && Laps<=9; } }
         internal void WriteControl(string path) {
             if(!IsValid) throw new ArgumentException("Invalid local race settings.");
             string text=String.Format(System.Globalization.CultureInfo.InvariantCulture,"TKRACE1 {0} {1} {2} {3} {4}\n",Guid.NewGuid().ToString("N"),Track,Mode,AiCount,Laps);

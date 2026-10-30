@@ -155,12 +155,19 @@ namespace TwinKartLauncher
             buttonsText.SetBounds(20, 590, 896, 28);
             status.SetBounds(20, 624, 896, 38);
             var configure = new Button { Text = "离线配置", Left = 20, Top = 677, Width = 115, Height = 34 };
-            var startGame = new Button { Text = "启动原厂游戏", Left = 145, Top = 677, Width = 155, Height = 34 };
-            var tuning = new Button { Text = "改装方案", Left = 310, Top = 677, Width = 115, Height = 34 };
-            var camera=new Button { Text="第一人称视角",Left=435,Top=677,Width=135,Height=34 };
-            var race=new Button { Text="AI 比赛候选",Left=580,Top=677,Width=130,Height=34 };
-            var pending = new Label { Left = 725, Top = 670, Width = 190, Height = 62, ForeColor = Color.FromArgb(130, 65, 10), Text = "完整 AI 及 DLSS\n仍待游戏内验收。" };
-            Controls.AddRange(new Control[] { title, editions, editionNote, client, browse, verify, clientStatus, refresh, devicesText, axes, save, preview, bindDrift, bindItem, buttonsText, status, configure, startGame, tuning,camera,race,pending });
+            var graphics = new Button { Text = "画面风格", Left = 145, Top = 677, Width = 115, Height = 34 };
+            var startGame = new Button { Text = "启动原厂游戏", Left = 270, Top = 677, Width = 155, Height = 34 };
+            var advanced = new Button { Text = "高级调试工具", Left = 435, Top = 677, Width = 120, Height = 34 };
+            var tuning = new Button { Text = "改装调试", Left = 565, Top = 677, Width = 105, Height = 34, Visible=false };
+            var camera=new Button { Text="座舱调试",Left=680,Top=677,Width=105,Height=34,Visible=false };
+            var race=new Button { Text="比赛调试",Left=795,Top=677,Width=105,Height=34,Visible=false };
+            var pending = new Label { Left = 565, Top = 665, Width = 350, Height = 66,
+                Text = "大厅右下角选择个人／双人组／四人组。\n随后在游戏内选图并开始；F6 切换视角。" };
+            advanced.Click+=delegate {
+                bool show=!race.Visible;tuning.Visible=camera.Visible=race.Visible=show;pending.Visible=!show;
+                advanced.Text=show?"收起调试工具":"高级调试工具";
+            };
+            Controls.AddRange(new Control[] { title, editions, editionNote, client, browse, verify, clientStatus, refresh, devicesText, axes, save, preview, bindDrift, bindItem, buttonsText, status, configure, graphics, startGame, advanced,tuning,camera,race,pending });
             race.Click+=delegate {
                 try {
                     if(profile.Edition!=GameEdition.Drift || String.IsNullOrEmpty(profile.OfflineManifestPath)) { status.Text="请先选择 Drift 的本机离线配置。"; return; }
@@ -187,19 +194,26 @@ namespace TwinKartLauncher
                 using(var picker=new OpenFileDialog { Filter="离线会话配置 (*.local.json)|*.local.json",CheckFileExists=true })
                     if(picker.ShowDialog(this)==DialogResult.OK) { profile.OfflineManifestPath=picker.FileName; dirty=true; SaveProfile(); }
             };
+            graphics.Click+=delegate {
+                try {
+                    if(profile.Edition!=GameEdition.Drift || String.IsNullOrEmpty(profile.OfflineManifestPath)) {status.Text="请先选择 Drift 的本机离线配置。";return;}
+                    using(var dialog=new GraphicsLaunchForm(profile.OfflineManifestPath,false))
+                        if(dialog.ShowDialog(this)==DialogResult.OK)status.Text="画面风格已保存，下次启动生效。";
+                } catch(Exception error){status.Text="画面设置读取失败："+error.Message;}
+            };
             startGame.Click += async delegate {
                 if(gameSession!=null) { gameSession.Cancel(); return; }
                 if(profile.Edition!=GameEdition.Drift) { status.Text="经典版尚缺完整客户端，本入口暂未完成。"; return; }
                 if(String.IsNullOrEmpty(profile.OfflineManifestPath)) { status.Text="请先选择为本机准备的离线会话配置。"; return; }
                 string manifest=profile.OfflineManifestPath;
                 var cockpit=(profile.Cockpit??new CockpitSettings()).Copy();
-                gameSession=new CancellationTokenSource(); startGame.Text="结束并恢复配置"; editions.Enabled=false; configure.Enabled=false;
+                gameSession=new CancellationTokenSource(); startGame.Text="结束并恢复配置"; editions.Enabled=false; configure.Enabled=graphics.Enabled=false;
                 try {
                     Action<string> update=message=>{ if(!closed && IsHandleCreated) BeginInvoke((Action)(()=>status.Text=message)); };
                     await Task.Run(()=>OfflineLaunchSession.Run(manifest,update,gameSession.Token,cockpit));
                 } catch(OperationCanceledException) { status.Text="会话已结束，配置已恢复。"; }
                 catch(Exception problem) { status.Text="启动失败："+problem.Message; }
-                finally { gameSession.Dispose(); gameSession=null; startGame.Text="启动原厂游戏"; editions.Enabled=true; configure.Enabled=true; }
+                finally { gameSession.Dispose(); gameSession=null; startGame.Text="启动原厂游戏"; editions.Enabled=true; configure.Enabled=graphics.Enabled=true; }
             };
             editions.SelectedIndexChanged += delegate { SwitchEdition(); };
             client.TextChanged += delegate { if (!loading) { dirty = true; profile.ClientPath = client.Text; profile.FingerprintSha256 = ""; clientStatus.Text = "路径已变更，尚未核对文件"; } };
@@ -222,7 +236,10 @@ namespace TwinKartLauncher
             if(startupManifest!=null) {
                 var manifest=new System.Web.Script.Serialization.JavaScriptSerializer().Deserialize<OfflineLaunchManifest>(File.ReadAllText(startupManifest));
                 profile.OfflineManifestPath=Path.GetFullPath(startupManifest); client.Text=manifest.GamePath; dirty=true; SaveProfile();
-                if(startImmediately) Shown+=delegate { BeginInvoke((Action)(()=>startGame.PerformClick())); };
+                if(startImmediately) Shown+=delegate { BeginInvoke((Action)(()=>{
+                    try {using(var dialog=new GraphicsLaunchForm(profile.OfflineManifestPath,true))if(dialog.ShowDialog(this)==DialogResult.OK)startGame.PerformClick();}
+                    catch(Exception error){status.Text="画面设置读取失败："+error.Message;}
+                })); };
             }
         }
         void MarkDirty() { if (!loading) dirty = true; }

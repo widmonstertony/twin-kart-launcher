@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 #include <string>
 #include <cstdio>
+#include <atomic>
 #include "NativeTemporalPass.h"
 #include "NativeTemporalContract.h"
 #include "NativeGuideShader.h"
@@ -13,6 +14,7 @@
 #include "ClientBuildGuard.h"
 #include "RenderPassTrace.h"
 #include "DlssD3D11.h"
+#include "NativeVelocity.h"
 using Microsoft::WRL::ComPtr;
 namespace TwinKartGraphics {
 namespace {
@@ -20,6 +22,7 @@ constexpr char PassHash[]="190895c92630ac60e123be317004c6c8fa033d514b006e470b69b
 using Init=decltype(&TwinKartDlssInitialize);
 using Evaluate=decltype(&TwinKartDlssEvaluate);
 using Shutdown=decltype(&TwinKartDlssShutdown);
+using ShutdownDrained=decltype(&TwinKartDlssShutdownDrained);
 struct TemporalRuntime {
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext1> context;
@@ -29,6 +32,7 @@ struct TemporalRuntime {
     ComPtr<ID3D11Texture2D> color,depth,motion,output;
     ComPtr<ID3D11UnorderedAccessView> colorWrite,depthWrite,motionWrite;
     HMODULE module=nullptr;Init init=nullptr;Evaluate evaluate=nullptr;Shutdown shutdown=nullptr;
+    ShutdownDrained shutdownDrained=nullptr;
     unsigned w=0,h=0,ow=0,oh=0,lastOutput=0;
     DWORD thread=0;
     TemporalHistory history;
@@ -37,7 +41,13 @@ struct TemporalRuntime {
 TemporalRuntime runtime;
 std::wstring modulePath,providerPath,cachePath;
 TemporalPassLog logger=nullptr;
-bool configured=false,failed=false;
+bool configured=false;
+std::atomic<bool> failed{false};
+SRWLOCK runtimeLock=SRWLOCK_INIT;
+struct RuntimeUse {
+    bool entered=TryAcquireSRWLockExclusive(&runtimeLock)!=FALSE;
+    ~RuntimeUse(){if(entered)ReleaseSRWLockExclusive(&runtimeLock);}
+};
 thread_local bool processing=false;
 void Event(const char* name,unsigned frame,unsigned result=0) {
     if(!logger)return;char row[320];
@@ -71,7 +81,7 @@ bool InitializeContext(ID3D11DeviceContext* context) {
     ComPtr<ID3DBlob> code,errors;D3D_SHADER_MACRO definitions[]={{"TK_TEMPORAL_INPUT","1"},{nullptr,nullptr}};
     if(FAILED(D3DCompile(NativeGuideShader,sizeof(NativeGuideShader),nullptr,definitions,nullptr,"main","cs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&code,&errors)) ||
        FAILED(r.device->CreateComputeShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&r.convert)))return false;
-    D3D11_BUFFER_DESC desc{};desc.ByteWidth=16;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
+    D3D11_BUFFER_DESC desc{};desc.ByteWidth=32;desc.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
     if(FAILED(r.device->CreateBuffer(&desc,nullptr,&r.rectangle)))return false;
     QueryPerformanceFrequency(&r.frequency);return true;
 }
@@ -81,7 +91,8 @@ bool Initialize(ID3D11DeviceContext* context) {
     r.init=reinterpret_cast<Init>(GetProcAddress(r.module,"TwinKartDlssInitialize"));
     r.evaluate=reinterpret_cast<Evaluate>(GetProcAddress(r.module,"TwinKartDlssEvaluate"));
     r.shutdown=reinterpret_cast<Shutdown>(GetProcAddress(r.module,"TwinKartDlssShutdown"));
-    if(!r.init || !r.evaluate || !r.shutdown)return false;
+    r.shutdownDrained=reinterpret_cast<ShutdownDrained>(GetProcAddress(r.module,"TwinKartDlssShutdownDrained"));
+    if(!r.init || !r.evaluate || !r.shutdown || !r.shutdownDrained)return false;
     unsigned result=r.init(r.device.Get(),cachePath.c_str(),providerPath.c_str());Event("sr_temporal_initialize",0,result);
     return result==1;
 }
@@ -114,13 +125,18 @@ bool ConfigureNativeTemporalPass(const wchar_t* module,const char* sha,const wch
 }
 namespace {
 bool ProcessQualifiedTemporalPass(ID3D11DeviceContext* context,ID3D11ComputeShader* shader,unsigned frame,UINT x,UINT y,UINT z) {
+    RuntimeUse use;if(!use.entered)return false;
+    auto& r=runtime;
+    if(r.device && (r.thread!=GetCurrentThreadId() || r.context.Get()!=context))return false;
     struct Guard {Guard(){processing=true;}~Guard(){processing=false;}} guard;
     ComPtr<ID3D11ShaderResourceView> color,depth,motion;
     context->CSGetShaderResources(1,1,&color);context->CSGetShaderResources(3,1,&depth);context->CSGetShaderResources(4,1,&motion);
     ComPtr<ID3D11Texture2D> ct,dt,mt,target;D3D11_TEXTURE2D_DESC cd{},dd{},md{},od{};
+    bool cameraOnly=false;
     if(!ReadTexture(color.Get(),DXGI_FORMAT_R11G11B10_FLOAT,DXGI_FORMAT_R11G11B10_FLOAT,ct,cd) ||
        !ReadTexture(depth.Get(),DXGI_FORMAT_R32G8X24_TYPELESS,DXGI_FORMAT_R32_FLOAT_X8X24_TYPELESS,dt,dd) ||
-       !ReadTexture(motion.Get(),DXGI_FORMAT_R16G16B16A16_UNORM,DXGI_FORMAT_R16G16B16A16_UNORM,mt,md))return false;
+       !ReadNativeVelocity(context,motion.Get(),128,128,mt,cameraOnly))return false;
+    mt->GetDesc(&md);
     ComPtr<ID3D11UnorderedAccessView> output;context->CSGetUnorderedAccessViews(0,1,&output);
     if(!output)return false;D3D11_UNORDERED_ACCESS_VIEW_DESC ov{};output->GetDesc(&ov);
     if(ov.ViewDimension!=D3D11_UAV_DIMENSION_TEXTURE2D || ov.Format!=DXGI_FORMAT_R16G16B16A16_FLOAT || ov.Texture2D.MipSlice)return false;
@@ -130,11 +146,11 @@ bool ProcessQualifiedTemporalPass(ID3D11DeviceContext* context,ID3D11ComputeShad
     ID3D11UnorderedAccessView* extra[7]{};context->CSGetUnorderedAccessViews(1,7,extra);bool additional=false;
     for(auto p:extra)if(p){additional=true;p->Release();}if(additional)return false;
     ComPtr<ID3D11Buffer> params,view;context->CSGetConstantBuffers(0,1,&params);context->CSGetConstantBuffers(1,1,&view);
-    float p[24]{},v[576]{};
+    float p[NativeTemporalParameterFloats]{},v[576]{};
     if(!ReadBuffer(context,params.Get(),p,sizeof(p),4096) || !ReadBuffer(context,view.Get(),v,sizeof(v),8192))return false;
     NativeTemporalContract contract;
     if(!DecodeNativeTemporalContract(p,sizeof(p),v,cd.Width,cd.Height,od.Width,od.Height,contract) ||
-       !contract.input.Fits(dd.Width,dd.Height) || !contract.input.Fits(md.Width,md.Height) ||
+       !contract.input.Fits(dd.Width,dd.Height) || (!cameraOnly && !contract.input.Fits(md.Width,md.Height)) ||
        !x || !y || z!=1)return false;
     // Read work-group dimensions from reflection at native shader creation.
     // Do not guess a group size or replace a partial native dispatch.
@@ -143,7 +159,6 @@ bool ProcessQualifiedTemporalPass(ID3D11DeviceContext* context,ID3D11ComputeShad
        x!=(contract.output.Width()+gx-1)/gx || y!=(contract.output.Height()+gy-1)/gy)return false;
     CameraFrame camera{};
     if(!DecodeNativeCamera(v,contract.input.Width(),contract.input.Height(),false,camera))return false;
-    auto& r=runtime;
     if(!r.device && !Initialize(context)){failed=true;Event("sr_temporal_initialization_failed",frame);return false;}
     if(r.thread!=GetCurrentThreadId() || r.context.Get()!=context || r.lastOutput==frame || !Resources(contract))return false;
     using Revision=unsigned long long(WINAPI*)();HMODULE cockpit=GetModuleHandleW(L"TwinKartDriftCamera.dll");
@@ -155,7 +170,7 @@ bool ProcessQualifiedTemporalPass(ID3D11DeviceContext* context,ID3D11ComputeShad
     unsigned result;
     {
         Isolated saved(r);
-        unsigned rect[]{static_cast<unsigned>(contract.input.left),static_cast<unsigned>(contract.input.top),r.w,r.h};
+        unsigned rect[]{static_cast<unsigned>(contract.input.left),static_cast<unsigned>(contract.input.top),r.w,r.h,0,0,r.w,r.h};
         context->UpdateSubresource(r.rectangle.Get(),0,nullptr,rect,0,0);
         ID3D11Buffer* native=view.Get();context->CSSetConstantBuffers(1,1,&native);ID3D11Buffer* rectangle=r.rectangle.Get();context->CSSetConstantBuffers(3,1,&rectangle);
         ID3D11ShaderResourceView* reads[]{depth.Get(),motion.Get(),color.Get()};
@@ -180,5 +195,16 @@ bool ProcessNativeTemporalPass(ID3D11DeviceContext* context,unsigned frame,UINT 
     if(!TwinKartRender::ShaderHash(shader.Get(),hash) || strcmp(hash,PassHash))return false;
     return ProcessQualifiedTemporalPass(context,shader.Get(),frame,x,y,z);
 }
-bool NativeTemporalSuperResolutionRan(unsigned frame){return frame && runtime.lastOutput==frame;}
+bool NativeTemporalSuperResolutionRan(unsigned frame){RuntimeUse use;return use.entered && frame && runtime.lastOutput==frame;}
+bool RetireNativeTemporalForRenderThread(ID3D11DeviceContext* context) {
+    RuntimeUse use;if(!use.entered || !context || context->GetType()!=D3D11_DEVICE_CONTEXT_IMMEDIATE)return false;
+    auto& r=runtime;if(!r.device)return true;
+    ComPtr<ID3D11Device> device;context->GetDevice(&device);
+    if(device.Get()!=r.device.Get() || context!=r.context.Get())return false;
+    if(r.thread==GetCurrentThreadId())return true;
+    if(!r.shutdownDrained || !r.shutdownDrained(r.thread,context))return false;
+    HMODULE module=r.module;r=TemporalRuntime{};failed=false;
+    if(module)FreeLibrary(module);
+    Event("sr_temporal_owner_retired_after_gpu_drain",0);return true;
+}
 }

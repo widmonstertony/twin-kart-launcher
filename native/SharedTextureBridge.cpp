@@ -15,6 +15,13 @@ struct SharedTextureBridge::Impl {
         return parent.Get()==device11.Get() && desc.Width==width && desc.Height==height && desc.MipLevels==1 && desc.ArraySize==1 && desc.SampleDesc.Count==1 && desc.Format==format;
     }
     bool Owner() const { return thread==GetCurrentThreadId(); }
+    HRESULT DrainContext(unsigned milliseconds) {
+        UINT64 value=++next;HRESULT hr=context->Signal(fence11.Get(),value);if(FAILED(hr))return hr;
+        context->Flush();HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!event)return HRESULT_FROM_WIN32(GetLastError());
+        hr=fence12->SetEventOnCompletion(value,event);
+        if(SUCCEEDED(hr)){DWORD waited=WaitForSingleObject(event,milliseconds);hr=waited==WAIT_OBJECT_0?S_OK:waited==WAIT_TIMEOUT?HRESULT_FROM_WIN32(WAIT_TIMEOUT):E_FAIL;}
+        CloseHandle(event);return hr;
+    }
 };
 SharedTextureBridge::SharedTextureBridge():impl(new Impl) {}
 SharedTextureBridge::~SharedTextureBridge() { if(impl->context && impl->Owner()) Drain(); delete impl; }
@@ -67,10 +74,12 @@ HRESULT SharedTextureBridge::WaitForConsumer(ID3D12Fence* fence,UINT64 value) {
 HRESULT SharedTextureBridge::Drain(unsigned milliseconds) {
     if(!impl->Owner() || !impl->fence11 || milliseconds>30000) return E_INVALIDARG;
     if(impl->in12) { HRESULT returned=ReturnTo11(nullptr); if(FAILED(returned)) return returned; }
-    UINT64 value=++impl->next; HRESULT hr=impl->context->Signal(impl->fence11.Get(),value); if(FAILED(hr)) return hr;
-    impl->context->Flush(); HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr); if(!event) return HRESULT_FROM_WIN32(GetLastError());
-    hr=impl->fence12->SetEventOnCompletion(value,event);
-    if(SUCCEEDED(hr)) { DWORD waited=WaitForSingleObject(event,milliseconds); hr=waited==WAIT_OBJECT_0?S_OK:waited==WAIT_TIMEOUT?HRESULT_FROM_WIN32(WAIT_TIMEOUT):E_FAIL; }
-    CloseHandle(event); return hr;
+    return impl->DrainContext(milliseconds);
+}
+HRESULT SharedTextureBridge::DrainForRetirement(unsigned expectedOwner,ID3D11DeviceContext* context,unsigned milliseconds) {
+    if(!expectedOwner || impl->thread!=expectedOwner || !impl->fence11 || impl->in12 || !context || milliseconds>30000)return E_INVALIDARG;
+    ComPtr<ID3D11DeviceContext4> selected;
+    if(FAILED(context->QueryInterface(IID_PPV_ARGS(&selected))) || selected.Get()!=impl->context.Get())return E_INVALIDARG;
+    return impl->DrainContext(milliseconds);
 }
 }

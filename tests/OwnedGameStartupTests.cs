@@ -19,7 +19,7 @@ static class OwnedGameStartupTests
                     startup.Load(args[1],ProfileStore.Fingerprint(args[1]));
                     Need(ready.WaitOne(5000),"Original fixture module did not signal readiness.");
                     Need(!File.Exists(marker),"Primary thread ran while initialization was pending.");
-                    startup.Resume();Need(startup.Process.WaitForExit(10000) && startup.ExitCode==0,"Original fixture primary did not complete.");
+                    startup.Resume();Need(startup.Process.WaitForExit(10000) && startup.ExitCode==0 && startup.Process.ExitCode==0,"Original fixture primary/managed exit status did not complete.");
                     Need(File.ReadAllText(marker)=="primary-resumed","Wrong primary-thread marker.");
                     startup.Process.Dispose();
                 }

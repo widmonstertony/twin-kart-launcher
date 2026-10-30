@@ -7,6 +7,8 @@ class InventoryUnlockTests
     static void Need(bool ok, string reason) { if (!ok) throw new Exception(reason); }
     static int Main()
     {
+        AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs args) {
+            var error=args.ExceptionObject as Exception; Console.Error.WriteLine(error==null?"unknown":error.GetType().Name+": "+error.Message); };
         string save = "{\"inventory\":{\"inventoryData\":{\"itemList\":[\"Character:1,1\"]},\"inventoryDataInitial\":{\"itemList\":[\"Kart:1,1\"]},\"inventoryDataCash\":{\"itemList\":[\"Cash:1,999\"]}},\"ownKartsUpgradeInfo\":{\"Kart:1\":{\"grade\":5,\"custom\":true}},\"records\":{\"best\":123},\"itemPresetOn\":{\"selected\":\"Kart:1\"}}";
         string catalog = "{\"items\":[{\"id\":\"Kart:1\",\"quantity\":1},{\"id\":\"Kart:2\",\"quantity\":1},{\"id\":\"Character:2\",\"quantity\":1}],\"kartBodies\":[\"Kart:1\",\"Kart:2\"],\"kartUpgrades\":{\"Kart:1\":{\"gearInfo\":{},\"engineType\":0,\"grade\":0}}}";
         var result = InventoryUnlocks.Apply(save, catalog);
@@ -21,6 +23,18 @@ class InventoryUnlockTests
         rejected = false;
         try { InventoryUnlocks.Apply(save, catalog.Replace("Character:2", "../private")); } catch (FormatException) { rejected = true; }
         Need(rejected, "Invalid resource accepted");
+        string availability = "{\"bodies\":[{\"id\":\"Kart:1\",\"registered\":1},{\"id\":\"Kart:2\",\"registered\":0}]}";
+        string withPlaceholder = result.ProfileJson;
+        var filtered = InventoryUnlocks.Apply(withPlaceholder, catalog, availability);
+        Need(filtered.RemovedUnavailableKartBodies == 1 && !filtered.ProfileJson.Contains("Kart:2,1") && filtered.ProfileJson.Contains("Character:2,1"), "Unavailable client body was not isolated from non-body grants");
+        Need(filtered.ProfileJson.Contains("\"selected\":\"Kart:1\"") && filtered.ProfileJson.Contains("\"best\":123") && filtered.ProfileJson.Contains("999"), "Availability migration changed equipment, progress or currency");
+        Need(InventoryUnlocks.Apply(filtered.ProfileJson, catalog, availability).ProfileJson == filtered.ProfileJson, "Availability migration is not idempotent");
+        rejected = false;
+        try { InventoryUnlocks.Apply(save, catalog, availability.Replace("Kart:2", "Kart:1")); } catch (FormatException) { rejected = true; }
+        Need(rejected, "Duplicate/incomplete native vehicle availability accepted");
+        rejected = false;
+        try { InventoryUnlocks.Apply(save.Replace("Kart:1\"", "Kart:2\""), catalog, availability); } catch (FormatException) { rejected = true; }
+        Need(rejected, "Unavailable selected vehicle was silently retained or replaced");
         var schema = new System.Collections.Generic.Dictionary<string, int[]>();
         var request = new System.Collections.Generic.Dictionary<string, int>();
         for (int i = 0; i < 6; ++i) { schema.Add("field" + i, new[] { 0, 10 }); request.Add("field" + i, 10); }
@@ -54,7 +68,7 @@ class InventoryUnlockTests
         rejected = false;
         try { new TrackCatalog("{\"tracks\":[\"../Test\"]}"); } catch (FormatException) { rejected = true; }
         Need(rejected, "Invalid track path accepted");
-        Console.WriteLine("Inventory migration: global ownership, idempotence, preserved currency/progress/upgrades and missing prerequisite checks passed.");
+        Console.WriteLine("Inventory migration: global ownership, client-native body filtering, idempotence, preserved currency/progress/equipment/upgrades and missing prerequisite checks passed.");
         Console.WriteLine("Offline garage: all-kart maximum, custom preset, fixed fields, isolation and missing physics checks passed. Track selection has no record/progression gate.");
         return 0;
     }

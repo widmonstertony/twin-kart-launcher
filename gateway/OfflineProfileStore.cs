@@ -45,15 +45,16 @@ namespace TwinKartLauncher.Gateway
 
         public OfflineProfileStore(string profilePath, string initialProfile, string clientDefaults,
             string unlockCatalog, string tuningRules, string trackCatalog, string physicsCatalog,
-            string vehicleParts, string accountId, int localPingPort, string tuningPlan = null)
+            string vehicleParts, string accountId, int localPingPort, string tuningPlan = null, string vehicleAvailability = null,
+            Func<RoomState,string> startRoom = null)
         {
             path = Path.GetFullPath(profilePath); account = accountId; pingPort = localPingPort;
-            rooms = new OfflineRoomService(accountId);
+            rooms = new OfflineRoomService(accountId,startRoom,unlockCatalog,vehicleParts,physicsCatalog,vehicleAvailability);
             defaults = ProfileJson.Parse(clientDefaults); parts = ProfileJson.Parse(vehicleParts);
             rulesJson = tuningRules; tracks = new TrackCatalog(trackCatalog);
             physics = new NativeKartParameters(physicsCatalog);
             string existing = File.Exists(path) ? ProfileJson.Read(path) : initialProfile;
-            string granted = InventoryUnlocks.Apply(existing, unlockCatalog).ProfileJson;
+            string granted = InventoryUnlocks.Apply(existing, unlockCatalog, vehicleAvailability).ProfileJson;
             state = ProfileJson.Parse(tuningPlan == null ? granted : OfflineGarage.Apply(granted, tuningRules, tuningPlan).ProfileJson);
             Commit(state);
         }

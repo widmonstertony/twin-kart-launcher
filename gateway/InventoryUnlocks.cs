@@ -12,6 +12,7 @@ namespace TwinKartLauncher.Gateway
         public int AddedItems { get; internal set; }
         public int AddedKartUpgrades { get; internal set; }
         public int CatalogItems { get; internal set; }
+        public int RemovedUnavailableKartBodies { get; internal set; }
         public string[] KartsWithoutUpgradeRecord { get; internal set; }
     }
 
@@ -50,7 +51,29 @@ namespace TwinKartLauncher.Gateway
             return list;
         }
 
-        public static UnlockResult Apply(string profileJson, string catalogJson)
+        static HashSet<string> AvailableBodies(string availabilityJson, HashSet<string> catalogBodies)
+        {
+            if (availabilityJson == null) return null;
+            var root = Map(Serializer().DeserializeObject(availabilityJson), "vehicle availability");
+            var rows = List(Required(root, "bodies"), "vehicle availability bodies");
+            if (rows.Count > 100000) throw new FormatException("Vehicle availability exceeds limit.");
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            var available = new HashSet<string>(StringComparer.Ordinal);
+            foreach (object raw in rows)
+            {
+                var row = Map(raw, "vehicle availability row");
+                string id = Identifier(Required(row, "id"));
+                object status = Required(row, "registered");
+                if (!id.StartsWith("Kart:", StringComparison.Ordinal) || !catalogBodies.Contains(id) ||
+                    !(status is int) || ((int)status != 0 && (int)status != 1) || !seen.Add(id))
+                    throw new FormatException("Invalid or duplicate vehicle availability row.");
+                if ((int)status == 1) available.Add(id);
+            }
+            if (seen.Count != catalogBodies.Count) throw new FormatException("Vehicle availability is incomplete for this unlock catalog.");
+            return available;
+        }
+
+        public static UnlockResult Apply(string profileJson, string catalogJson, string availabilityJson = null)
         {
             var json = Serializer();
             // Parsing creates private trees. Failure never partially edits a caller's save.
@@ -58,7 +81,7 @@ namespace TwinKartLauncher.Gateway
             var catalog = Map(json.DeserializeObject(catalogJson), "catalog");
             var entries = List(Required(catalog, "items"), "catalog.items");
             if (entries.Count > 100000) throw new FormatException("Resource catalog exceeds limit.");
-            var grants = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            var allGrants = new SortedDictionary<string, int>(StringComparer.Ordinal);
             foreach (object raw in entries)
             {
                 var entry = Map(raw, "catalog item");
@@ -66,15 +89,28 @@ namespace TwinKartLauncher.Gateway
                 object quantity = Required(entry, "quantity");
                 if (!(quantity is int) || (int)quantity < 1) throw new FormatException("Quantity must be a positive int32.");
                 int previous;
-                if (grants.TryGetValue(id, out previous) && previous != (int)quantity)
+                if (allGrants.TryGetValue(id, out previous) && previous != (int)quantity)
                     throw new FormatException("Conflicting quantities for a resource.");
-                grants[id] = (int)quantity;
+                allGrants[id] = (int)quantity;
             }
+            var catalogBodies = new HashSet<string>(StringComparer.Ordinal);
+            object rawBodies;
+            if (catalog.TryGetValue("kartBodies", out rawBodies))
+                foreach (object raw in List(rawBodies, "kartBodies"))
+                {
+                    string id = Identifier(raw);
+                    if (!allGrants.ContainsKey(id) || !id.StartsWith("Kart:", StringComparison.Ordinal) || !catalogBodies.Add(id))
+                        throw new FormatException("Body is absent from the grant catalog or duplicated.");
+                }
+            var availableBodies = AvailableBodies(availabilityJson, catalogBodies);
+            var grants = new SortedDictionary<string, int>(StringComparer.Ordinal);
+            foreach (var pair in allGrants)
+                if (!catalogBodies.Contains(pair.Key) || availableBodies == null || availableBodies.Contains(pair.Key)) grants.Add(pair.Key, pair.Value);
             var suppliedUpgrades = Map(Required(catalog, "kartUpgrades"), "catalog.kartUpgrades");
             foreach (var pair in suppliedUpgrades)
             {
                 Identifier(pair.Key);
-                if (!pair.Key.StartsWith("Kart:", StringComparison.Ordinal) || !grants.ContainsKey(pair.Key))
+                if (!pair.Key.StartsWith("Kart:", StringComparison.Ordinal) || !allGrants.ContainsKey(pair.Key))
                     throw new FormatException("Upgrade must belong to a catalog kart.");
                 var upgrade = Map(pair.Value, "kart upgrade");
                 Map(Required(upgrade, "gearInfo"), "gearInfo");
@@ -103,6 +139,31 @@ namespace TwinKartLauncher.Gateway
             }
             var target = Map(destination, "inventoryData");
             var targetList = List(Required(target, "itemList"), "inventoryData.itemList");
+            int removed = 0;
+            if (availableBodies != null)
+            {
+                for (int index = targetList.Count - 1; index >= 0; --index)
+                {
+                    string text = targetList[index] as string; int comma = text == null ? -1 : text.IndexOf(',');
+                    if (comma < 1) throw new FormatException("Invalid saved inventory row.");
+                    string id = Identifier(text.Substring(0, comma));
+                    if (catalogBodies.Contains(id) && !availableBodies.Contains(id)) { targetList.RemoveAt(index); owned.Remove(id); ++removed; }
+                }
+                object presetObject;
+                if (state.TryGetValue("itemPresetOn", out presetObject))
+                {
+                    var preset = Map(presetObject, "itemPresetOn"); object itemMapObject;
+                    if (preset.TryGetValue("itemMap", out itemMapObject))
+                    {
+                        var itemMap = Map(itemMapObject, "itemPresetOn.itemMap"); object selected;
+                        if (itemMap.TryGetValue("Kart", out selected) && selected is string && catalogBodies.Contains((string)selected) && !availableBodies.Contains((string)selected))
+                            throw new FormatException("Selected kart body is unavailable in this client; profile was not changed.");
+                    }
+                    object selectedDirect;
+                    if (preset.TryGetValue("selected", out selectedDirect) && selectedDirect is string && catalogBodies.Contains((string)selectedDirect) && !availableBodies.Contains((string)selectedDirect))
+                        throw new FormatException("Selected kart body is unavailable in this client; profile was not changed.");
+                }
+            }
             int added = 0;
             foreach (var grant in grants)
                 if (owned.Add(grant.Key))
@@ -117,21 +178,19 @@ namespace TwinKartLauncher.Gateway
             var upgrades = Map(savedUpgrades, "ownKartsUpgradeInfo");
             int upgradeCount = 0;
             foreach (var pair in suppliedUpgrades)
-                if (!upgrades.ContainsKey(pair.Key)) { upgrades.Add(pair.Key, pair.Value); ++upgradeCount; }
+                if ((availableBodies == null || !catalogBodies.Contains(pair.Key) || availableBodies.Contains(pair.Key)) && !upgrades.ContainsKey(pair.Key)) { upgrades.Add(pair.Key, pair.Value); ++upgradeCount; }
             var missing = new List<string>();
             // Body IDs are explicit in the external catalog: Kart also includes parts.
-            object bodies;
-            if (catalog.TryGetValue("kartBodies", out bodies))
-                foreach (object raw in List(bodies, "kartBodies"))
+            if (rawBodies != null)
+                foreach (object raw in List(rawBodies, "kartBodies"))
                 {
                     string id = Identifier(raw);
-                    if (!grants.ContainsKey(id) || !id.StartsWith("Kart:", StringComparison.Ordinal))
-                        throw new FormatException("Body is absent from the grant catalog.");
+                    if (availableBodies != null && !availableBodies.Contains(id)) continue;
                     if (!upgrades.ContainsKey(id)) missing.Add(id);
                 }
             missing.Sort(StringComparer.Ordinal);
             return new UnlockResult { ProfileJson = json.Serialize(state), AddedItems = added,
-                AddedKartUpgrades = upgradeCount, CatalogItems = grants.Count,
+                AddedKartUpgrades = upgradeCount, CatalogItems = grants.Count, RemovedUnavailableKartBodies = removed,
                 KartsWithoutUpgradeRecord = missing.ToArray() };
         }
     }

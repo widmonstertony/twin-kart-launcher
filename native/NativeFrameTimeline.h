@@ -21,6 +21,14 @@ public:
     Ticket* Advance(FrameStage stage,std::uint64_t id,std::uint64_t now) {
         if(static_cast<unsigned>(stage)>5)return nullptr;
         const unsigned bit=1u<<static_cast<unsigned>(stage);
+        // Simulation and render submission are separate native threads. A
+        // render-start callback may precede simulation-end for the same ID;
+        // rejecting that real callback loses the whole ticket. Preserve the
+        // observed order and require each phase's own start before its end.
+        // Present is nested inside rendering. ForPresent still requires an
+        // actually completed simulation-end before any frame can interpolate.
+        constexpr unsigned prerequisites[]{0,1,1,5,5,21};
+        const unsigned required=prerequisites[static_cast<unsigned>(stage)];
         auto& ticket=tickets[id%16];
         if(stage==FrameStage::SimulationStart) {
             if(haveLast && id<=lastNative)return nullptr;
@@ -29,7 +37,7 @@ public:
             lastNative=id;haveLast=true;
         }
         if(!ticket.live || ticket.nativeId!=id || ticket.failed || now<ticket.time || now-ticket.time>1000 ||
-           (ticket.seen&bit) || (ticket.completed&(bit-1))!=bit-1)return nullptr;
+           (ticket.seen&bit) || (ticket.completed&required)!=required)return nullptr;
         ticket.seen|=bit;return &ticket;
     }
     void Complete(std::uint64_t id,FrameStage stage,bool success) {
@@ -39,7 +47,11 @@ public:
     Ticket* ForPresent(std::uint64_t id,std::uint64_t now) {
         auto& ticket=tickets[id%16];
         return ticket.live && ticket.nativeId==id && !ticket.failed && ticket.token &&
-            (ticket.completed&31)==31 && !(ticket.seen&32) && now>=ticket.time && now-ticket.time<=1000?&ticket:nullptr;
+            (ticket.completed&23)==23 && !(ticket.seen&32) && now>=ticket.time && now-ticket.time<=1000?&ticket:nullptr;
+    }
+    Ticket Inspect(std::uint64_t id) const {
+        const auto& ticket=tickets[id%16];
+        return ticket.live && ticket.nativeId==id?ticket:Ticket{};
     }
 };
 }

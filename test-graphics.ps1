@@ -11,3 +11,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Graphics profile tests failed.' }
 if($LASTEXITCODE -ne 0) { throw 'Offline graphics policy test compilation failed' }
 & (Join-Path $buildDir 'OfflineGraphicsOptionsTests.exe')
 if($LASTEXITCODE -ne 0) { throw 'Offline graphics policy checks failed' }
+& $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ "/out:$buildDir\OfflineGraphicsPreferenceStoreTests.exe" /r:System.Web.Extensions.dll (Join-Path $PSScriptRoot 'src\OfflineGraphicsPreferenceStore.cs') (Join-Path $PSScriptRoot 'tests\OfflineGraphicsPreferenceStoreTests.cs')
+if($LASTEXITCODE -ne 0) { throw 'Offline graphics preference test compilation failed' }
+& (Join-Path $buildDir 'OfflineGraphicsPreferenceStoreTests.exe')
+if($LASTEXITCODE -ne 0) { throw 'Offline graphics preference checks failed' }
+& $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ "/out:$buildDir\OfflineKeyboardOptionsTests.exe" (Join-Path $PSScriptRoot 'src\OfflineKeyboardOptions.cs') (Join-Path $PSScriptRoot 'tests\OfflineKeyboardOptionsTests.cs')
+if($LASTEXITCODE -ne 0) { throw 'Offline keyboard policy test compilation failed' }
+& (Join-Path $buildDir 'OfflineKeyboardOptionsTests.exe')
+if($LASTEXITCODE -ne 0) { throw 'Offline keyboard policy checks failed' }

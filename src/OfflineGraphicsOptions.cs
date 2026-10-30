@@ -15,18 +15,28 @@ namespace TwinKartLauncher
         public bool SuperResolution { get; set; }
         public bool FrameGeneration { get; set; }
         public bool NeuralRendering { get; set; }
+        public int NeuralPasses { get; set; }
+        public int NeuralStyle { get; set; }
         public double RenderPercentage { get; set; }
-        public OfflineGraphicsOptions() { RenderPercentage=66.666667; }
+        public double Brightness { get; set; }
+        public OfflineGraphicsOptions() { RenderPercentage=50; NeuralPasses=2; NeuralStyle=1; Brightness=1; }
         public bool NeedsRenderer { get { return SuperResolution || FrameGeneration || NeuralRendering; } }
         public void Validate(IDictionary<string,string> environment)
         {
+            if(NeuralPasses<1 || NeuralPasses>2 || NeuralStyle<0 || NeuralStyle>2)
+                throw new ArgumentException("NR requires 1 or 2 passes and style 0 (default), 1 (natural), or 2 (cinematic/Movie).");
             if(Double.IsNaN(RenderPercentage) || Double.IsInfinity(RenderPercentage) || RenderPercentage<25 || RenderPercentage>100)
                 throw new ArgumentException("Render percentage must be between 25 and 100.");
+            if(Double.IsNaN(Brightness) || Double.IsInfinity(Brightness) || Brightness<0.75 || Brightness>1.5)
+                throw new ArgumentException("Native brightness must be between 0.75 and 1.50.");
             if(SuperResolution && RenderPercentage>=100)throw new ArgumentException("Super resolution requires a lower native rendering percentage.");
-            if((SuperResolution || FrameGeneration) && !NeuralRendering)
-                throw new ArgumentException("This integrated candidate uses the native NR adapter to supply current scene guides.");
+            // Temporal SR and frame generation have their own native guide
+            // adapters. DLSS 5 NR can therefore be disabled independently.
             if(NeuralRendering) {
                 Required(environment,"TWIN_KART_NEURAL_MODULE");Required(environment,"TWIN_KART_NEURAL_PROVIDER");
+                Required(environment,"TWIN_KART_NEURAL_MODULE_SHA256");
+                if(!Regex.IsMatch(environment["TWIN_KART_NEURAL_MODULE_SHA256"],"\\A[0-9a-f]{64}\\z",RegexOptions.CultureInvariant))
+                    throw new ArgumentException("Expected the SHA-256 of the independently built NR consumer.");
             }
             if(FrameGeneration)Required(environment,"TWIN_KART_FG_PROVIDER");
             if(SuperResolution) {
@@ -54,6 +64,10 @@ namespace TwinKartLauncher
             }
             if(NeuralRendering) {
                 if(!File.Exists(environment["TWIN_KART_NEURAL_MODULE"]))throw new FileNotFoundException("Original NR consumer unavailable.");
+                string actual;
+                using(var file=File.OpenRead(environment["TWIN_KART_NEURAL_MODULE"]))
+                using(var hash=SHA256.Create())actual=BitConverter.ToString(hash.ComputeHash(file)).Replace("-","").ToLowerInvariant();
+                if(actual!=environment["TWIN_KART_NEURAL_MODULE_SHA256"])throw new InvalidDataException("NR consumer differs from the private manifest.");
                 if(!Directory.Exists(environment["TWIN_KART_NEURAL_PROVIDER"]))throw new DirectoryNotFoundException("External NR provider directory unavailable.");
             }
             if(FrameGeneration)foreach(string file in new[]{"sl.interposer.dll","sl.dlss_g.dll","sl.common.dll","sl.reflex.dll","sl.pcl.dll"})
@@ -63,7 +77,10 @@ namespace TwinKartLauncher
         {
             Validate(environment);
             environment["TWIN_KART_SUPER_RESOLUTION"]=SuperResolution?"1":"0";
+            environment["TWIN_KART_RENDER_PERCENTAGE"]=SuperResolution?RenderPercentage.ToString("0.######",CultureInfo.InvariantCulture):"";
             environment["TWIN_KART_FRAME_GENERATION"]=FrameGeneration?"1":"0";
+            environment["TWIN_KART_NR_PASSES"]=NeuralPasses.ToString(CultureInfo.InvariantCulture);
+            environment["TWIN_KART_NR_STYLE"]=NeuralStyle.ToString(CultureInfo.InvariantCulture);
             if(!NeuralRendering)environment["TWIN_KART_NEURAL_MODULE"]="";
             if(FrameGeneration) {
                 string logs=Path.Combine(runDirectory,"streamline-log");Directory.CreateDirectory(logs);
@@ -82,14 +99,16 @@ namespace TwinKartLauncher
         string Settings(string value)
         {
             if(SuperResolution)value=Field(value,"ScreenPercentage",RenderPercentage.ToString("0.######",CultureInfo.InvariantCulture));
-            // The original NVAPI Reflex integration cannot supply frame IDs
-            // for the new Streamline presentation path. Avoid running both.
+            if(Math.Abs(Brightness-1)>0.000001)value=Field(value,"Brightness",Brightness.ToString("0.######",CultureInfo.InvariantCulture));
+            // Observe original engine frame IDs before the native NVAPI
+            // enable checks, while Streamline owns pacing and PCL delivery.
+            // Keep native NVAPI pacing disabled to avoid two sleep providers.
             if(FrameGeneration)value=Field(value,"ReflexMode","0");
             return value;
         }
         public byte[] RouteUserSettings(byte[] original)
         {
-            if(!SuperResolution && !FrameGeneration)return original;
+            if(!SuperResolution && !FrameGeneration && Math.Abs(Brightness-1)<=0.000001)return original;
             if(SuperResolution && (Double.IsNaN(RenderPercentage) || Double.IsInfinity(RenderPercentage) || RenderPercentage<25 || RenderPercentage>=100))
                 throw new ArgumentException("Invalid lower rendering percentage.");
             string text=new UTF8Encoding(false,true).GetString(original??new byte[0]).TrimStart('\ufeff');

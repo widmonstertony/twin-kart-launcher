@@ -14,4 +14,9 @@ bool BindNativeFrameMarkerSink(const std::shared_ptr<NativeFrameMarkerSink>&);
 void RemoveNativeFrameMarkerSink(const std::shared_ptr<NativeFrameMarkerSink>&);
 // Only the calling native render/present thread's observed frame is returned.
 bool CurrentNativeRenderFrame(unsigned long long& nativeFrame);
+#ifdef TWIN_KART_SYNTHETIC_MARKER_INPUT
+// Standalone first-party fixture only. The production game module does not
+// compile this input; its frame IDs still come exclusively from native hooks.
+void ObserveSyntheticNativeMarker(FrameStage,unsigned long long nativeFrame);
+#endif
 }

@@ -7,4 +7,7 @@ bool ConfigureNativeTemporalPass(const wchar_t* module,const char* sha256,const 
 // false requires the caller to execute the original native dispatch unchanged.
 bool ProcessNativeTemporalPass(ID3D11DeviceContext*,unsigned frame,UINT x,UINT y,UINT z);
 bool NativeTemporalSuperResolutionRan(unsigned frame);
+// Serialized native Present boundary only. Foreign draw callbacks cannot adopt
+// the consumer; a completed GPU drain and destruction precede lazy recreation.
+bool RetireNativeTemporalForRenderThread(ID3D11DeviceContext*);
 }

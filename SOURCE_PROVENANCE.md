@@ -6,6 +6,12 @@ This project is an **independent public repository, not a fork**. The code liste
 
 | Module | Original work in this project | Standard dependencies |
 |---|---|---|
+| `native/NativeAiRoster.h`, `native/NativeAiAssets.h`, `src/AiRosterCatalog.cs`, `tests/NativeAiRosterTests.cpp`, `tests/AiRosterCatalogTests.cs` | Original per-race selection with cryptographic entropy, same-race uniqueness, human exclusion and previous-slot avoidance. Compatible default costumes/parts come from external private definitions and are filtered by the PC client's native primary-asset registry before selection; native descriptors retain their original allocation ownership. iOS was studied for behavior, with no imported implementation. Registered paths are not proof of successful dependency loading or race rendering. | C++17, BCrypt, .NET JSON; user-supplied private resource metadata. |
+| `native/NeuralD3D12.*`, `NativeNeuralPass.cpp` | Original two-feature NR chain with separate temporal histories, private intermediate texture, explicit resource transitions, per-pass results/counters and drained teardown/rebuild. Movie/Cinematic requests the pinned runtime's Style=2 interface. Synthetic GPU readback is distinguished from in-game look acceptance. | External NVIDIA model/SDK retained locally, never published. |
+| `native/NativeDeviceIdentity.h`, `NeuralD3D12.*`, `NativeNeuralPass.*`, `NativePresentation.*` | Independently authored shared NGX device-lifetime handling: native COM identity via the documented Streamline interface GUID, separately initialized consumer dispatcher, own-feature retirement without shutting down the presentation owner's shared device, and reconstruction-before-presentation shutdown ordering. Moving hardware fixtures preserve FG across a mid-run reconstruction rebuild. | Windows COM/D3D12 APIs and separately supplied NVIDIA SDK declarations/runtime. |
+| `native/DlssD3D11.*`, `NativeTemporalPass.*`, `NativeViewMath.h`, `tools/ProbeTemporalSR.cpp`, `ProbeFrameGeneration.cpp`, `ProbeNativeReconstruction.cpp` | Original nonblocking consumer/adapter serialization, exact immediate-context GPU event draining and checked teardown before new-owner reconstruction. Infinite reversed-Z camera bounds avoid the vendor invalid sentinel and reject inconsistent inputs. Hardware fixtures exercise actual SR/NR, moving synthetic source/object guides, size/owner rebuilding and camera-constant submission; these are separate from game quality or generated-frame acceptance. | C++17, Windows SDK, separately supplied NVIDIA headers/import libraries/runtime/models. No vendor implementation is included. |
+| `native/NativeTrackCatalog.h`, `src/NativeTrackSessionCatalog.cs` | Independently mapped native table enumeration and exact alias/mode/lap reconciliation, with borrowed-record lifetime checks and original allocator cleanup. Original session code seeds queries, validates full same-thread table/lookup agreement and atomically publishes a private launcher report. Native discoveries keep separate resource and driving evidence. Synthetic interface/file fixtures do not start a game. | C++17, Windows SDK and .NET Framework JSON/file APIs. |
+| `native/NativeGuideSnapshot.h`, `NativeSceneRectangle.h`, `NativeTemporalContract.h` | Original same-frame constant snapshots, native input/output geometry decoding and observed producer viewport tracking for pooled textures. Draw/write hooks invalidate stale geometry; crop conversion copies native pixels without resizing a full-resolution scene. Actual WARP fixtures check independent color/depth origins, immutable views and resource-write invalidation. These interfaces do not claim in-game SR or dynamic quality acceptance. | C++17 and Windows SDK D3D11. |
 | `native/NativeFrameMarkers.*`, `NativeFrameTimeline.h`, `LocalRaceWorld.h` | Independently mapped six-stage native marker observation, original provider-token correlation/pacing integration and serial-checked local-world lifetime scope. Original C++ fixtures cover forwarding, thread/failure behavior and recycled objects. No client instructions, shader bytecode, SDK implementation or game assets are distributed. | C++17, Windows SDK, separately supplied Streamline headers/runtime for FG. |
 | `src/MainForm.cs`, `Profiles.cs`, `ClientDiscovery.cs` | WinForms workflow, separate Classic/Drift profiles, calibration persistence, local Steam discovery and PE/SHA-256 inspection. | .NET Framework 4.8, Windows Registry/file APIs. |
 | `src/DeviceInput.cs`, `SharedPad.cs` | Managed DirectInput wrapper and session-scoped 64-byte input channel. | .NET interop and memory-mapped files. |
@@ -50,6 +56,35 @@ The public BlueYeeeee/Kartrider-Drift_Offline v0.2.11 implementation has been re
 - Protocol and camera research documents record observations and hypotheses; they are not implementation source. No generated decompilation, full client binary, packet body, raw user log, save or private token belongs in the public repository.
 
 ## Safe source allowlist for the first public package
+
+`NativeEquipmentPreset.h` and its fixtures are independently authored PC
+compatibility code. Native sparse-map/FString geometry, descriptor properties,
+default-equipment comparison callsites and native string-copy interfaces were
+checked against the supplied PC executable and its generated property metadata.
+The mobile project's documented equipment behavior was a research reference;
+none of its implementation bodies were copied. The adapter replaces only the
+current local human's stack-owned default descriptions during original race
+registration, then leaves native model loading and PawnState copying in control.
+Source tests cover malformed/sparse data, string ownership, livery/body matching,
+AI/world/thread exclusions and scoped lifetime. They are not game acceptance.
+The player's performance bridge reuses the PC account's original current-body
+decoder and original movement/body setter, preserving its native channel input.
+It supplies no vehicle coefficients or cryptographic keys. The PC body's size,
+scalar property offsets and the three call boundaries are interface facts from
+the preserved PC binary. A synthetic provider exercises current-account data,
+missing-input fallback, AI exclusion and registration cleanup; actual tuning
+effects in a race remain unaccepted.
+
+The D3D11 presentation observer explicitly filters private non-D3D11 chains on
+every calling thread. Generated-frame worker presentations cannot advance its
+native render/history counters. This is independently authored COM boundary
+code; the worker-thread fixture executes our callbacks with synthetic chains
+and a real WARP D3D11 device, without a vendor game or generated-frame claim.
+The qualified reconstruction path also rejects foreign-owner callbacks before
+reading D3D11 state or attempting feature retirement. An original standalone
+NVIDIA probe exercises temporary callback deferral and same-owner resolution
+rebuilds with synthetic inputs; it does not accept a permanent thread-ownership
+handoff or any game's image quality. No NVIDIA model/runtime is packaged.
 
 Stage an empty new repository and copy **only** these paths from `work/twin-kart-launcher`:
 
@@ -105,6 +140,7 @@ tools/ProbeNeuralRuntime.cpp
 tools/ProbeFrameGeneration.cpp
 tools/ProbeSharedTexture.cpp
 tools/ProbeTemporalSR.cpp
+tools/ProbeNativeReconstruction.cpp
 tests/*.cs
 tests/*.cpp
 tests/test_protocol_probe.py
@@ -118,10 +154,16 @@ Before any public push, review the staged file list and scan **that staged tree*
 
 The original `NativeRacePhase.h` classifier uses interface facts independently derived from the local PC client's property type/offset metadata, phase-construction call sites and FName initializers. It includes no vendor function body, native capture, asset or reference launcher implementation. Synthetic fixtures explicitly distinguish a phase object from its transition rule; they do not establish live phase or frame-generation acceptance.
 
-The HDR temporal adapter, input/output rectangle and exposure validator, raw/resolved guide conversion, camera history revisions and WARP boundary fixtures are original code written in this project. Local captures were used only to inspect layouts and reject false 1:1 SR claims. No captured shader instructions, game textures, native function bodies or reference launcher code are published. The fixture consumer writes a known pattern; it is explicitly not NVIDIA output. Native shader hashes and interface addresses select the supported external build and are not a substitute for game acceptance.
+The HDR temporal adapter, input/output rectangle and exposure validator, raw/resolved guide conversion, camera history revisions and WARP boundary fixtures are original code written in this project. Local captures were used only to inspect layouts and reject false 1:1 SR claims. No captured shader instructions, game textures, native function bodies or reference launcher code are published. Optional shader-layout diagnostics require an explicit exact hash and existing private directory; their bounded local disassembly is research evidence excluded from every source package. The fixture consumer writes a known pattern; it is explicitly not NVIDIA output. Native shader hashes and interface addresses select the supported external build and are not a substitute for game acceptance.
 
 The separate original offscreen temporal SR probe dynamically calls our hash-checked D3D11 consumer with synthetic HDR/color/depth/motion resources. Real NVIDIA initialization/evaluation and GPU output readback passed. It does not create a window, swapchain or game and does not treat synthetic guides as native game evidence. The external SDK/runtime remains excluded.
 
+The independently authored native reconstruction probe exercises the production SR/NR resource path with synthetic draw-produced color, padded native-style rectangles and immutable View buffers. Its optional standalone focused presentation chains the actual production reconstruction output into the separately supplied frame-generation runtime. Native shader identity guards are retained; fixture shaders cannot enter the public game path. Reports distinguish synthetic inputs/markers and measured GPU evaluations/presentations from game acceptance. Private INI arguments, captures, runtime libraries and models are excluded.
+
+Native track-mode compatibility is read from the supported client's FKtTrackDef byte-enum array. Enum facts and field offsets were independently mapped from the owner's executable, rather than inferred from track-name suffixes. Launcher and native request validation preserve unknown metadata in historical reports and reject unsupported explicit combinations. No vendor table contents or function implementations are included.
+
 The new native presentation, camera-matrix decoder, owned suspended-startup loader, graphics INI policy and interoperation fixtures were independently authored here. PC interface addresses, mode-selection behavior and native setter layouts were derived from the owner's local client. The owner's iOS project is a behavioral reference, not imported launcher source. The Streamline/NGX headers and implementations remain separately supplied dependencies. Source fixtures create only their own tiny executable/DLL or hidden WARP resources; they do not launch vendor games or establish gameplay/visual acceptance.
+
+The selected-equipment adapter uses the account UObject owning the preset. A private read-only capture distinguished that owner from its embedded interface; the regression fixture preserves this distinction and rejects non-account and interior pointers. No captured account payload, preset contents or memory dump is included in source packages.
 
 The first-party source allowlist contains no observed personal absolute path, email address, real token, API key, password or embedded vendor binary. Test-only `SECRET_*` values are synthetic redaction assertions. `build/` already contains multiple compiled `.exe`, `.dll`, `.obj`, `.lib` and `.exp` files; they are excluded. `research/` contains generated client/phone metadata and machine-specific user-profile and installed-game paths, so it is excluded as a whole. This is a source-tree review, not a provenance warranty for future additions or proof of offline gameplay.

@@ -65,7 +65,10 @@ namespace TwinKartLauncher
                 var command=new StringBuilder(Quote(start.FileName)+(String.IsNullOrEmpty(start.Arguments)?"":" "+start.Arguments));
                 uint flags=0x404u|(start.CreateNoWindow?0x08000000u:0u);
                 if(!CreateProcess(start.FileName,command,IntPtr.Zero,IntPtr.Zero,false,flags,environment,start.WorkingDirectory,ref si,out owned.info))throw new Win32Exception();
-                owned.Process=System.Diagnostics.Process.GetProcessById(owned.info.processId);return owned;
+                owned.Process=System.Diagnostics.Process.GetProcessById(owned.info.processId);
+                // Retain the managed handle before this startup object's
+                // native handle is disposed, including for natural exits.
+                owned.Process.EnableRaisingEvents=true;return owned;
             }catch{owned.Dispose();throw;}finally{Marshal.FreeHGlobal(environment);}
         }
         public void Load(string path,string hash)

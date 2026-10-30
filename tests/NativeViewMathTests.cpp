@@ -21,7 +21,7 @@ int main(int argc,char** argv){try{
     Near(camera.position[0],12);Near(camera.position[1],-34);Near(camera.position[2],56);
     Near(camera.right[0],1);Near(camera.up[1],1);Near(camera.forward[2],1);
     Near(camera.jitterX,-0.32f);Near(camera.jitterY,-0.36f);Near(camera.nearPlane,10);
-    Near(camera.aspect,640.0f/360);Need(camera.reset && camera.invertedDepth && camera.farPlane==FLT_MAX,"Infinite reversed-Z plane or reset lost");
+    Near(camera.aspect,640.0f/360);Need(camera.reset && camera.invertedDepth && std::isinf(camera.farPlane) && camera.farPlane>0,"Infinite reversed-Z plane or reset lost");
     float product[16];MultiplyNativeMatrix(camera.viewToClip,camera.clipToView,product);
     for(unsigned i=0;i<16;++i)Near(product[i],identity[i]);
     CameraFrame resolved=ResolvedPresentationCamera(camera,1280,720);
