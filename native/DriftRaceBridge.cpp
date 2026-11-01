@@ -17,6 +17,7 @@
 #include "NativeTrackModes.h"
 #include "NativeTrackCatalog.h"
 #include "NativeReturnRoute.h"
+#include "NativeRacePreparation.h"
 
 // Original game-thread bridge for exact-build native race preparation work.
 // Track lookup and an opt-in native local-host candidate. A travel request is
@@ -29,13 +30,34 @@ TwinKartGraphics::RenderActivity renderActivity;
 TwinKartGraphics::RenderActivity sceneActivity;
 TwinKartGraphics::RenderActivity cockpitDrivingActivity;
 volatile LONG renderActivityPending=0;
+volatile LONG controlInterval=250;
 TwinKartGraphics::NativeRenderScale renderScale;
 int lastScaleResult=-1;
 struct NativeString { const wchar_t* data; int count,capacity; };
 struct Query { std::wstring alias; wchar_t level[512]{}; unsigned modeMask=0;int laps=0,status=-1; DWORD executedThread=0; HANDLE complete=nullptr; };
-struct StartQuery { TwinKartRace::Request request; wchar_t track[97]{},options[512]{};unsigned modeMask=0;int status=-1,stage=0; DWORD fault=0; uintptr_t faultRva=0; DWORD executedThread=0; HANDLE complete=nullptr; };
+struct StartQuery { TwinKartRace::Request request; wchar_t track[97]{},options[1024]{};unsigned modeMask=0;int status=-1,stage=0; DWORD fault=0; uintptr_t faultRva=0; DWORD executedThread=0; HANDLE complete=nullptr; };
 struct CatalogQuery {TwinKartRace::NativeTrackEntry* entries=nullptr;int capacity=0,status=-1;TwinKartRace::NativeTrackEnumeration summary;DWORD executedThread=0;HANDLE complete=nullptr;};
 HWND gameWindow=nullptr;
+volatile LONG flagFaultCount=0;
+LONG CALLBACK CaptureFlagFault(EXCEPTION_POINTERS* error) {
+    if(!error || !TwinKartRace::FlagMode(TwinKartLocalRace::armedMode) || !TwinKartLocalRace::armed ||
+       GetCurrentThreadId()!=queue.ThreadId() || InterlockedIncrement(&flagFaultCount)>12)return EXCEPTION_CONTINUE_SEARCH;
+    __try {
+        CONTEXT context=*error->ContextRecord;char line[1400]{};
+        int length=sprintf_s(line,"{\"event\":\"native_flag_fault_trace\",\"code\":%lu,\"game_frames\":[",error->ExceptionRecord->ExceptionCode);
+        unsigned frames=0;
+        for(unsigned i=0;i<24 && context.Rip && length<1200;++i) {
+            auto base=reinterpret_cast<ULONG64>(image);
+            if(context.Rip>=base && context.Rip-base<0x8657000)length+=sprintf_s(line+length,sizeof(line)-length,"%s%llu",frames++?",":"",context.Rip-base);
+            ULONG64 moduleBase=0;auto function=RtlLookupFunctionEntry(context.Rip,&moduleBase,nullptr);
+            if(function){void* handler=nullptr;ULONG64 frame=0;RtlVirtualUnwind(UNW_FLAG_NHANDLER,moduleBase,context.Rip,function,&context,&handler,&frame,nullptr);}
+            else {context.Rip=*reinterpret_cast<ULONG64*>(context.Rsp);context.Rsp+=8;}
+        }
+        length+=sprintf_s(line+length,sizeof(line)-length,"]}\r\n");DWORD written=0;
+        if(frames && output!=INVALID_HANDLE_VALUE)WriteFile(output,line,static_cast<DWORD>(length),&written,nullptr);
+    } __except(EXCEPTION_EXECUTE_HANDLER){}
+    return EXCEPTION_CONTINUE_SEARCH;
+}
 volatile LONG exitPending=0;
 TwinKartLocalRace::LocalRaceWorld exitWorld;
 // All object access remains inside this game's window thread. No object pointer
@@ -80,16 +102,19 @@ void UpdateRenderActivity(void*) {
             BYTE* traveler=Traveler();using GetWorld=BYTE*(__fastcall*)(void*);
             BYTE* world=traveler?reinterpret_cast<GetWorld>((*reinterpret_cast<void***>(traveler))[0x160/8])(traveler):nullptr;
             if(TwinKartLocalRace::Live(world) && !*reinterpret_cast<void**>(world+0x38)) {
+                TwinKartLocalRace::RetryLocalStartWhenReady(world);
                 // Lobby, garage and results have live 3D worlds without a
                 // BeginRace phase. Rendering eligibility is separate from
                 // race eligibility; the renderer still requires current-frame
                 // depth/motion/camera and real simulation/present markers.
                 using Paused=bool(__fastcall*)(void*);
                 sceneActive=!reinterpret_cast<Paused>(image+0x4011c70)(world);
+                TwinKartLocalRace::UpdateFlagArena(world,sceneActive);
                 BYTE* state=*reinterpret_cast<BYTE**>(world+0x120);
                 if(TwinKartLocalRace::Live(state)) {
                     using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
-                    auto phaseType=reinterpret_cast<Type>(image+TwinKartGraphics::RacePhaseComponentGetter)();
+                    bool flagMode=TwinKartRace::FlagMode(TwinKartLocalRace::armedMode);
+                    auto phaseType=reinterpret_cast<Type>(image+(flagMode?0x22ac6a0:TwinKartGraphics::RacePhaseComponentGetter))();
                     auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(state))[0x620/8]);
                     BYTE* component=find(state,phaseType);
                     if(TwinKartLocalRace::Live(component) && *reinterpret_cast<void**>(component+0xa0)==state) {
@@ -104,9 +129,20 @@ void UpdateRenderActivity(void*) {
                             auto currentName=*reinterpret_cast<unsigned long long*>(phase+TwinKartGraphics::PhaseNameOffset);
                             auto beginName=*reinterpret_cast<unsigned long long*>(image+TwinKartGraphics::BeginRaceNameRva);
                             bool paused=reinterpret_cast<Paused>(image+0x4011c70)(world);
-                            active=TwinKartGraphics::ClassifyNativeRacePhase(actualClass,phaseClass,currentName,beginName,
-                                *reinterpret_cast<unsigned long long*>(image+TwinKartGraphics::RetireCountdownNameRva),paused);
-                            cockpitDriving=TwinKartGraphics::ClassifyNativeDrivingPhase(actualClass,phaseClass,currentName,beginName,paused);
+                            if(flagMode) {
+                                unsigned long long game=0,overtime=0,lastSpurt=0;
+                                using Name=void(__fastcall*)(void*,const wchar_t*,int);
+                                reinterpret_cast<Name>(image+0x2589130)(&game,L"Game",0);
+                                reinterpret_cast<Name>(image+0x2589130)(&overtime,L"Overtime",0);
+                                reinterpret_cast<Name>(image+0x2589130)(&lastSpurt,L"LastSpurt",0);
+                                active=TwinKartGraphics::ClassifyNativeRacePhase(actualClass,phaseClass,currentName,game,overtime,paused);
+                                active=active || TwinKartGraphics::ClassifyNativeDrivingPhase(actualClass,phaseClass,currentName,lastSpurt,paused);
+                                cockpitDriving=active;
+                            } else {
+                                active=TwinKartGraphics::ClassifyNativeRacePhase(actualClass,phaseClass,currentName,beginName,
+                                    *reinterpret_cast<unsigned long long*>(image+TwinKartGraphics::RetireCountdownNameRva),paused);
+                                cockpitDriving=TwinKartGraphics::ClassifyNativeDrivingPhase(actualClass,phaseClass,currentName,beginName,paused);
+                            }
                         }
                     }
                 }
@@ -114,10 +150,14 @@ void UpdateRenderActivity(void*) {
         }
     } __except(EXCEPTION_EXECUTE_HANDLER) {active=false;sceneActive=false;cockpitDriving=false;}
     sceneActivity.Publish(sceneActive,GetTickCount64());
+    // Arena steering needs a 20 Hz feedback loop. Circuit AI is native and
+    // retains the existing low-frequency activity polling. No extra queue task
+    // is submitted until the previous game-thread task has completed.
+    InterlockedExchange(&controlInterval,active && TwinKartRace::FlagMode(TwinKartLocalRace::armedMode)?50:250);
     cockpitDrivingActivity.Publish(cockpitDriving,GetTickCount64());
     renderActivity.Publish(active,GetTickCount64());InterlockedExchange(&renderActivityPending,0);
 }
-void CancelRenderActivity(void*){sceneActivity.Publish(false,0);cockpitDrivingActivity.Publish(false,0);renderActivity.Publish(false,0);InterlockedExchange(&renderActivityPending,0);}
+void CancelRenderActivity(void*){sceneActivity.Publish(false,0);cockpitDrivingActivity.Publish(false,0);renderActivity.Publish(false,0);InterlockedExchange(&controlInterval,250);InterlockedExchange(&renderActivityPending,0);}
 // 0=model not ready; 1=native travel submitted; 2=definition absent;
 // -1=native fault; no value means race acceptance.
 void RuntimeEvent(const char* name,int slot,int value) {
@@ -219,6 +259,10 @@ BYTE* NativeTrackSelection(BYTE* account) {
 void InitializeRuntime(void* raw) {
     auto& value=*static_cast<Query*>(raw); value.executedThread=GetCurrentThreadId();
     bool ready=TwinKartLocalRace::Install(image,RuntimeEvent);
+    wchar_t flagDiagnostic[4]{};
+    if(ready && GetEnvironmentVariableW(L"TWIN_KART_FLAG_DIAGNOSTICS",flagDiagnostic,4) && flagDiagnostic[0]==L'1') {
+        TwinKartLocalRace::flagDiagnostics=true;AddVectoredExceptionHandler(1,CaptureFlagFault);
+    }
     // Keep the original lobby RegisterMatch path intact. The local gateway
     // converts that request into the original room/setup surface, so map and
     // team selection plus the loading screen remain inside the game UI.
@@ -273,6 +317,15 @@ int NativeStart(StartQuery& query) {
                 reinterpret_cast<TwinKartRace::AssignReturnString>(image+0x9118f0));
         RuntimeEvent("native_local_lobby_return_route",-1,routeResult);
         if(routeResult<0)return -6; // Never enter another race with no return route.
+        // Use the client's normal FKtGameMode/profile/track preparation, so
+        // local loading screens and native mode configuration see this race
+        // instead of stale room/previous-race metadata.
+        const BYTE preparationPrefix[]={0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10};
+        if(memcmp(image+0x1bba140,preparationPrefix,sizeof(preparationPrefix)) ||
+           !TwinKartRace::PrepareNativeRace(traveler,query.request,
+              reinterpret_cast<TwinKartRace::CopyPreparationString>(image+0x923880),
+              reinterpret_cast<TwinKartRace::InitializeNativeRace>(image+0x1bba140)))return -10;
+        RuntimeEvent("native_local_mode_profile_prepared",-1,mode);
         // Launcher selection also updates the native picker using owned FString
         // storage, so the next original solo button uses the same selected map.
         TwinKartEquipment::Preset player;BYTE* playerAccount=nullptr;
@@ -433,14 +486,14 @@ std::vector<std::string> Queries(const wchar_t* path) {
 void WatchControl(const wchar_t* path) {
     char previous[33]{};
     for(;;) {
-        Sleep(250);
+        Sleep(static_cast<DWORD>(InterlockedCompareExchange(&controlInterval,0,0)));
         CheckExitPrompt();
         if(InterlockedCompareExchange(&renderActivityPending,1,0)==0 && !queue.Submit({UpdateRenderActivity,nullptr,CancelRenderActivity}))CancelRenderActivity(nullptr);
         if(!path || !*path)continue;
         HANDLE file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_DELETE,nullptr,OPEN_EXISTING,0,nullptr);
         if(file==INVALID_HANDLE_VALUE) continue;
-        LARGE_INTEGER size{}; char bytes[257]{}; DWORD read=0;
-        bool valid=GetFileSizeEx(file,&size) && size.QuadPart>0 && size.QuadPart<=256 &&
+        LARGE_INTEGER size{}; char bytes[1025]{}; DWORD read=0;
+        bool valid=GetFileSizeEx(file,&size) && size.QuadPart>0 && size.QuadPart<=1024 &&
             ReadFile(file,bytes,static_cast<DWORD>(size.QuadPart),&read,nullptr) && read==size.QuadPart;
         CloseHandle(file);
         StartQuery value;

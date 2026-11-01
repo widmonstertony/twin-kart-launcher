@@ -7,6 +7,9 @@
 #include "NativeAiRoster.h"
 #include "NativeAiAssets.h"
 #include "NativeRaceModes.h"
+#include "FlagArenaDriver.h"
+#include "FlagGroundNavigation.h"
+#include "NativeRoadQuery.h"
 
 namespace TwinKartLocalRace {
 using Spawn=bool(__fastcall*)(void*,void*,int,void*,void**,bool*);
@@ -46,8 +49,16 @@ inline SetBody setBody=nullptr;
 inline TwinKartNative::OwnedCodePatch bodyEquipmentPatch;
 inline TwinKartEquipment::Body equipmentBody;
 inline bool equipmentBodyReady=false;
-inline unsigned flagAiPreparedMask=0;
-inline bool flagStartRequested=false;
+inline unsigned localAiPreparedMask=0;
+inline bool localStartRequested=false;
+using NetMode=int(__fastcall*)(void*);
+using FlagConfig=BYTE*(__fastcall*)(void*);
+inline NetMode flagNetMode=nullptr;
+inline NetMode flagZoneNetMode=nullptr;
+inline FlagConfig flagConfig=nullptr;
+inline BeginRule flagMovementBegin=nullptr;
+inline BYTE* flagPhysicsScope=nullptr;
+inline TwinKartNative::OwnedCodePatch flagBeginPatch,flagPhysicsPatch,flagZonePatch,flagConfigPatches[2];
 inline bool AiSlot(int slot,int players,int ais) {
     return players==1 && ais>=1 && ais<=7 && slot>=players && slot<players+ais;
 }
@@ -206,13 +217,57 @@ inline bool __fastcall OnSpawn(void* raw,void* mode,int slot,void* start,void** 
 inline bool OwnedComponent(BYTE* component,BYTE* pawn,void* type) {
     return Live(component) && *reinterpret_cast<void**>(component+0xa0)==pawn && *reinterpret_cast<void**>(component+0x10)==type;
 }
-inline void EnsureAiDriver(BYTE* pawn,int slot) {
+inline bool StandaloneFlagWorld(BYTE* world) {
+    if(!armed || !TwinKartRace::FlagMode(armedMode) || GetCurrentThreadId()!=owner || !Live(world) ||
+       *reinterpret_cast<void**>(world+0x38))return false;
+    BYTE* mode=*reinterpret_cast<BYTE**>(world+0x118);
+    using Type=void*(__fastcall*)();
+    return Live(mode) && *reinterpret_cast<void**>(mode+0x10)==reinterpret_cast<Type>(image+0x22a77b0)();
+}
+inline int __fastcall LocalFlagPhysicsNetMode(void* raw) {
+    int mode=flagNetMode(raw);
+    // This call site belongs only to FlagMovement::BeginPlay. Standalone
+    // authority needs the original client projectile/config initialization,
+    // alongside the unchanged authoritative native game rules. No global
+    // net-mode override or duplicate BeginPlay invocation is involved.
+    if(mode==0 && flagPhysicsScope && World(flagPhysicsScope)==raw && StandaloneFlagWorld(static_cast<BYTE*>(raw))) {
+        Emit("native_local_flag_projectile_initialized",-1,1);return 3;
+    }
+    return mode;
+}
+inline BYTE* __fastcall LocalFlagConfig(void* raw) {
+    BYTE* notification=flagConfig(raw);
+    if(StandaloneFlagWorld(World(static_cast<BYTE*>(raw))) && notification) {
+        BYTE* config=*reinterpret_cast<BYTE**>(notification+0x20);
+        using Type=void*(__fastcall*)();
+        if(Live(config) && !(*reinterpret_cast<unsigned*>(config+8)&0x30) &&
+           *reinterpret_cast<void**>(config+0x10)==reinterpret_cast<Type>(image+0x22a6580)() && !config[0x30]) {
+            // Exact reflected bDoOverlapCheckInServer byte. The independent
+            // per-world instance is native owned; never change its class CDO.
+            config[0x30]=1;Emit("native_local_flag_authority_overlaps_enabled",-1,1);
+        }
+    }
+    return notification;
+}
+inline int __fastcall LocalFlagZoneInitialization(void* raw) {
+    int mode=flagZoneNetMode(raw);auto actor=static_cast<BYTE*>(raw);
+    if(mode!=0 || !Live(actor) || GetCurrentThreadId()!=owner)return mode;
+    using Type=void*(__fastcall*)();using GetWorld=BYTE*(__fastcall*)(void*);
+    if(*reinterpret_cast<void**>(actor+0x10)!=reinterpret_cast<Type>(image+0x22add30)())return mode;
+    BYTE* world=reinterpret_cast<GetWorld>((*reinterpret_cast<void***>(actor))[0x160/8])(actor);
+    if(!StandaloneFlagWorld(world))return mode;
+    // Only the first net-mode query in original FlagZone::BeginPlay gates
+    // authoritative PawnList/goal overlap registration. Its second query and
+    // all other actor/world queries keep standalone mode and native visuals.
+    Emit("native_local_flag_goal_registered",*reinterpret_cast<int*>(actor+0x220),1);return 1;
+}
+inline bool EnsureAiDriver(BYTE* pawn,int slot) {
         using Type=void*(__fastcall*)(); using Find=BYTE*(__fastcall*)(void*,void*);
         auto aiType=reinterpret_cast<Type>(image+0x23bd880)();
         auto pathType=reinterpret_cast<Type>(image+0x22b1e10)();
         // Registration itself selects team components through the native
         // world's IsTeam predicate. Look up the matching mode-specific class.
-        unsigned getter=TwinKartRace::BehaviorGetter(armedMode);if(!getter)return;
+        unsigned getter=TwinKartRace::BehaviorGetter(armedMode);if(!getter)return false;
         auto behaviorType=reinterpret_cast<Type>(image+getter)();
         bool exactAi=*reinterpret_cast<void**>(pawn+0x10)==aiType;
         auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(pawn))[0x620/8]);
@@ -242,8 +297,10 @@ inline void EnsureAiDriver(BYTE* pawn,int slot) {
                     reinterpret_cast<Bind>(image+0x15d1100)(movement,path);
                     Emit("native_local_ai_movement_driver_bound",slot,*reinterpret_cast<void**>(movement+0xf08)==path?1:0);
                 } else Emit("native_local_ai_driver_binding_conflict",slot,1);
+                return OwnedComponent(behavior,pawn,behaviorType) && *reinterpret_cast<void**>(movement+0xf08)==path;
             }
         }
+        return false;
     }
 inline bool PrepareFlagAi(BYTE* pawn,int slot) {
     __try {
@@ -259,13 +316,75 @@ inline bool PrepareFlagAi(BYTE* pawn,int slot) {
         return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
 }
-inline bool ForceFlagStartWhenReady(BYTE* rule,int slot,bool prepared) {
+inline BYTE* EnsureFlagComponent(BYTE* pawn,unsigned getter,bool pawnHolder=false) {
+    using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
+    auto type=reinterpret_cast<Type>(image+getter)();
+    if(!Live(pawn) || !Live(static_cast<BYTE*>(type)))return nullptr;
+    auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(pawn))[0x620/8]);
+    BYTE* component=find(pawn,type);
+    if(OwnedComponent(component,pawn,type))return component;
+    // Exact original NewObject/RegisterComponent sequence used by FlagPawn.
+    // RegisterComponent owns initialization and BeginPlay. Never call either
+    // lifecycle method ourselves or replace the AI pawn/interface class.
+    alignas(8) BYTE parameters[0x40]{};
+    using Parameters=void(__fastcall*)(void*,void*);
+    reinterpret_cast<Parameters>(image+0x2771dd0)(parameters,type);
+    *reinterpret_cast<BYTE**>(parameters+8)=pawn;
+    component=static_cast<BYTE*>(construct(parameters));
+    if(!Live(component) || *reinterpret_cast<void**>(component+0x10)!=type ||
+       *reinterpret_cast<void**>(component+0x20)!=pawn)return nullptr;
+    // AFlagPawn's default FlagHolder identifies its holder as a carrier.
+    // Set before registration so the original receiver/holder callbacks see it.
+    if(pawnHolder)*reinterpret_cast<BYTE*>(component+0x130)=1;
+    using Register=void(__fastcall*)(void*);
+    reinterpret_cast<Register>(image+0x3de4900)(component);
+    return OwnedComponent(component,pawn,type)?component:nullptr;
+}
+inline bool PrepareFlagInteractions(BYTE* pawn,int slot) {
     __try {
-        if(!prepared || !TwinKartRace::FlagMode(armedMode) || slot<1 || slot>7 || !Local(rule))return false;
-        flagAiPreparedMask|=1u<<slot;
-        if(flagAiPreparedMask!=0xfe || flagStartRequested)return flagStartRequested;
+        if(!PrepareFlagAi(pawn,slot))return false;
+        // The stock SpeedSingleAiPawn has movement but lacks FlagPawn's
+        // interaction components. Use original native components for overlaps,
+        // pickup, steal, hit/drop, carried-flag visuals and scoring delegates.
+        // The original client-default registration creates FlagDropper later
+        // in the pawn lifecycle. Do not eagerly create a duplicate here.
+        const unsigned getters[]={0x23a1840,0x22ac760,0x22ac830,0x22a6400};
+        unsigned ready=0;
+        for(unsigned i=0;i<4;++i)
+            if(EnsureFlagComponent(pawn,getters[i],i==1))ready|=1u<<i;
+        Emit("native_local_flag_ai_interaction_components",slot,ready);
+        return ready==15;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {
+        Emit("native_local_flag_ai_interaction_fault",slot,0);return false;
+    }
+}
+inline void __fastcall OnFlagMovementBegin(void* raw) {
+    auto movement=static_cast<BYTE*>(raw);BYTE* previous=flagPhysicsScope;
+    __try {
+        if(Live(movement) && StandaloneFlagWorld(World(movement))) {
+            BYTE* actor=*reinterpret_cast<BYTE**>(movement+0xa0);
+            // The native authority overlap registry requires MagneticMovement
+            // (+0x168), while the native local visual/drop physics requires
+            // ProjectileMovement (+0x170). Preserve both dependencies before
+            // original config callbacks publish the newly spawned flag.
+            auto magnetic=EnsureFlagComponent(actor,0x237cd80);
+            if(magnetic){*reinterpret_cast<BYTE**>(movement+0x168)=magnetic;flagPhysicsScope=movement;}
+        }
+        flagMovementBegin(raw);
+    } __finally {flagPhysicsScope=previous;}
+}
+inline bool ForceLocalStartWhenReady(BYTE* rule,int slot,bool prepared) {
+    __try {
+        if(!prepared || !TwinKartRace::PlayableMode(armedMode) || slot<1 || slot>7 || !Local(rule))return false;
+        int ais=*reinterpret_cast<int*>(rule+0x138),players=*reinterpret_cast<int*>(rule+0x130);
+        if(players!=1 || !TwinKartRace::PopulationValid(armedMode,ais) || slot>ais)return false;
+        localAiPreparedMask|=1u<<slot;
+        unsigned expected=(1u<<(ais+1))-2;
+        if((localAiPreparedMask&expected)!=expected || localStartRequested)return localStartRequested;
         auto world=World(rule);
-        BYTE* state=world?*reinterpret_cast<BYTE**>(world+0x120):nullptr;
+        // PlayerWait and MajorConnect belong to AuthorityGameMode (+0x118),
+        // while FlagModeState belongs to GameState (+0x120).
+        BYTE* state=world?*reinterpret_cast<BYTE**>(world+0x118):nullptr;
         using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
         auto waitType=reinterpret_cast<Type>(image+0x23b4a90)();
         if(!Live(state) || !waitType)return false;
@@ -273,8 +392,8 @@ inline bool ForceFlagStartWhenReady(BYTE* rule,int slot,bool prepared) {
         BYTE* wait=find(state,waitType);
         if(!OwnedComponent(wait,state,waitType) || !InRaceWorld(wait))return false;
         if(*reinterpret_cast<BYTE*>(wait+0xc8)) {
-            flagStartRequested=true;
-            Emit("native_local_flag_player_wait_already_ready",-1,1);
+            localStartRequested=true;
+            Emit("native_local_player_wait_already_ready",-1,1);
             return true;
         }
         if(!*reinterpret_cast<BYTE*>(wait+0xc9)) {
@@ -285,12 +404,272 @@ inline bool ForceFlagStartWhenReady(BYTE* rule,int slot,bool prepared) {
             using Force=void(__fastcall*)(void*);
             reinterpret_cast<Force>(image+0x1638220)(wait);
         }
-        flagStartRequested=*reinterpret_cast<BYTE*>(wait+0xc8)!=0 || *reinterpret_cast<BYTE*>(wait+0xc9)!=0;
-        Emit("native_local_flag_player_wait_forced",-1,flagStartRequested?1:0);
-        return flagStartRequested;
+        localStartRequested=*reinterpret_cast<BYTE*>(wait+0xc8)!=0 || *reinterpret_cast<BYTE*>(wait+0xc9)!=0;
+        Emit("native_local_player_wait_forced",-1,localStartRequested?1:0);
+        return localStartRequested;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
-        Emit("native_local_flag_player_wait_fault",slot,0);return false;
+        Emit("native_local_player_wait_fault",slot,0);return false;
     }
+}
+inline bool RetryLocalStartWhenReady(BYTE* world) {
+    __try {
+        if(!armed || !TwinKartRace::PlayableMode(armedMode) || GetCurrentThreadId()!=owner || localStartRequested)return false;
+        auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
+        int count=*reinterpret_cast<int*>(image+0x69c28c4);
+        if(!raceWorld.Matches(world,chunks,count))return false;
+        BYTE* state=*reinterpret_cast<BYTE**>(world+0x118);
+        if(!Live(state))return false;
+        using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
+        auto type=reinterpret_cast<Type>(image+0x2381ed0)();
+        auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(state))[0x620/8]);
+        BYTE* rule=find(state,type);
+        if(!OwnedComponent(rule,state,type) || !Local(rule))return false;
+        int ais=*reinterpret_cast<int*>(rule+0x138);
+        if(!TwinKartRace::PopulationValid(armedMode,ais))return false;
+        unsigned expected=(1u<<(ais+1))-2;
+        return (localAiPreparedMask&expected)==expected && ForceLocalStartWhenReady(rule,ais,true);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {return false;}
+}
+struct FlagCommandMirror {
+    TwinKartCamera::ObjectIdentity identity{};
+    alignas(16) BYTE command[0x50]{};
+};
+inline FlagCommandMirror flagMirrors[32]{};
+inline TwinKartRace::ArenaDriver flagDrivers[8]{};
+inline TwinKartCamera::ObjectIdentity flagDriverPawns[8]{};
+inline ULONGLONG flagDriverTime=0;
+inline unsigned flagDriverSamples=0;
+inline ULONGLONG flagDiagnosticNext=0;
+inline bool flagDiagnostics=false;
+inline unsigned long long flagLoggedPhase=~0ull;
+inline int flagLoggedWinner=-1,flagLoggedPoints[3]{-1,-1,-1};
+inline TwinKartRace::FlagGroundNavigation flagGround;
+inline TwinKartRace::FlagGroundRoute flagRoutes[8];
+inline bool flagGroundDecided=false;
+inline float flagGroundTop=0,flagGroundBottom=0;
+inline void BuildFlagGround(BYTE* world,const TwinKartRace::ArenaPoint* points,int count) {
+    using Point=TwinKartRace::ArenaPoint;
+    if(!flagGroundDecided && count>=4) {
+        Point low=points[0],high=points[0];
+        for(int i=1;i<count;++i){low.x=(std::min)(low.x,points[i].x);low.y=(std::min)(low.y,points[i].y);low.z=(std::min)(low.z,points[i].z);
+            high.x=(std::max)(high.x,points[i].x);high.y=(std::max)(high.y,points[i].y);high.z=(std::max)(high.z,points[i].z);}
+        flagGroundDecided=true;
+        if(high.z-low.z>500) {
+            flagGroundTop=high.z+3000;flagGroundBottom=low.z-3000;
+            low.x-=6000;low.y-=6000;high.x+=6000;high.y+=6000;
+            if(flagGround.Initialize(low,high))Emit("native_local_flag_road_sampling_started",static_cast<int>(flagGround.Count()),400);
+        }
+    }
+    if(!flagGround.Started() || flagGround.Ready())return;
+    // Same exact native road object-mask and immutable collision query used by
+    // FlagMovement::FetchContactLocationOfNearestRoad. Query only; no scene or
+    // vehicle transform changes. Spread the work across window-thread pumps.
+    for(int i=0;i<128 && !flagGround.Ready();++i) {
+        Point at{};if(!flagGround.Next(at))break;Point start{at.x,at.y,flagGroundTop},end{at.x,at.y,flagGroundBottom};
+        Point contact{};bool road=TwinKartRace::QueryRoad(world,reinterpret_cast<TwinKartRace::RoadTrace>(image+0x3de0910),image+0x6b01810,start,end,contact);
+        flagGround.Sample(contact.z,road);
+    }
+    if(flagGround.Ready()) {
+        Emit("native_local_flag_road_sampling_ready",static_cast<int>(flagGround.ValidCount()),static_cast<int>(flagGround.Count()));
+        if(flagDiagnostics)for(size_t i=0;i<flagGround.Count();++i) {
+            Point point{};if(!flagGround.SampleAt(i,point))continue;
+            Emit("native_local_flag_road_xy",static_cast<int>(point.x),static_cast<int>(point.y));
+            Emit("native_local_flag_road_z",static_cast<int>(i),static_cast<int>(point.z));
+        }
+    }
+}
+inline void LogFlagPhase(BYTE* phase) {
+    if(!Live(phase))return;
+    auto value=*reinterpret_cast<unsigned long long*>(phase+0x28);if(value==flagLoggedPhase)return;
+    flagLoggedPhase=value;unsigned index=static_cast<unsigned>(value),block=index>>16,offset=index&65535;
+    if(block>=8192)return;
+    auto entry=*reinterpret_cast<BYTE**>(image+0x6986150+block*8)+offset*2;
+    unsigned header=*reinterpret_cast<unsigned short*>(entry),length=header>>6;
+    if((header&1) || !length || length>80)return;
+    char eventName[128]="native_local_flag_phase_";size_t prefix=strlen(eventName);
+    for(unsigned i=0;i<length;++i){char ch=static_cast<char>(entry[2+i]);if(!((ch>='A'&&ch<='Z') || (ch>='a'&&ch<='z') || (ch>='0'&&ch<='9') || ch=='_'))return;eventName[prefix+i]=ch;}
+    Emit(eventName,-1,1);
+}
+inline bool CaptureFlagObject(BYTE* object,TwinKartCamera::ObjectIdentity& identity) {
+    auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
+    int count=*reinterpret_cast<int*>(image+0x69c28c4);
+    if(TwinKartCamera::Capture(object,chunks,count,&identity))return true;
+    struct Weak {int index,serial;} weak{-1,0};using Assign=void(__fastcall*)(Weak*,void*);
+    reinterpret_cast<Assign>(image+0x2796c20)(&weak,object);
+    return TwinKartCamera::Capture(object,chunks,count,&identity) && identity.index==weak.index && identity.serial==weak.serial;
+}
+inline BYTE* FlagFind(BYTE* actor,unsigned getter) {
+    if(!Live(actor))return nullptr;
+    using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
+    auto type=reinterpret_cast<Type>(image+getter)();
+    auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(actor))[0x620/8]);
+    auto value=find(actor,type);return OwnedComponent(value,actor,type)?value:nullptr;
+}
+inline bool FlagPosition(BYTE* actor,TwinKartRace::ArenaPoint& point,float* heading=nullptr) {
+    if(!Live(actor))return false;
+    BYTE* root=*reinterpret_cast<BYTE**>(actor+0x130);if(!Live(root))return false;
+    memcpy(&point,root+0x1e0,sizeof(point));if(!TwinKartRace::Finite(point))return false;
+    if(heading) {
+        const float* q=reinterpret_cast<const float*>(root+0x1d0);
+        for(int i=0;i<4;++i)if(!std::isfinite(q[i]))return false;
+        float norm=q[0]*q[0]+q[1]*q[1]+q[2]*q[2]+q[3]*q[3];if(norm<0.9f || norm>1.1f)return false;
+        *heading=std::atan2(2*(q[3]*q[2]+q[0]*q[1]),1-2*(q[1]*q[1]+q[2]*q[2]));
+    }
+    return true;
+}
+inline void MirrorFlagCommand(BYTE* movement) {
+    if(!InRaceWorld(movement))return;
+    int kind=*reinterpret_cast<int*>(movement+0x184);
+    if(*reinterpret_cast<int*>(movement+0x180)<0 || kind<0 || kind>2)return;
+    TwinKartCamera::ObjectIdentity identity{};if(!CaptureFlagObject(movement,identity))return;
+    auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
+    int count=*reinterpret_cast<int*>(image+0x69c28c4);
+    FlagCommandMirror* slot=nullptr;
+    for(auto& item:flagMirrors) {
+        if(item.identity.object==movement && item.identity.index==identity.index && item.identity.serial==identity.serial){slot=&item;break;}
+        if(!slot && !TwinKartCamera::Live(item.identity,chunks,count))slot=&item;
+    }
+    if(!slot)return;
+    bool same=slot->identity.object==movement && slot->identity.serial==identity.serial;
+    if(same && !memcmp(slot->command,movement+0x180,sizeof(slot->command)))return;
+    alignas(16) BYTE previous[0x50]{};
+    if(same)memcpy(previous,slot->command,sizeof(previous));
+    else *reinterpret_cast<int*>(previous+4)=kind==2?0:2;
+    // Standalone authority mutates FFlagCommandParam, but replication never
+    // delivers OnRep to its local renderer. Invoke the exact original consumer
+    // with the previous value, once per actual native command change.
+    using Replicate=void(__fastcall*)(void*,const void*);
+    reinterpret_cast<Replicate>(image+0x191dc50)(movement,previous);
+    slot->identity=identity;memcpy(slot->command,movement+0x180,sizeof(slot->command));
+    Emit("native_local_flag_command_mirrored",*reinterpret_cast<int*>(movement+0x180),kind);
+}
+inline void UpdateFlagArena(BYTE* world,bool sceneActive) {
+    __try {
+        if(!armed || !TwinKartRace::FlagMode(armedMode) || GetCurrentThreadId()!=owner)return;
+        auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
+        int count=*reinterpret_cast<int*>(image+0x69c28c4);
+        if(!raceWorld.Matches(world,chunks,count))return;
+        BYTE* gameState=*reinterpret_cast<BYTE**>(world+0x120);
+        BYTE* phase=FlagFind(gameState,0x22ac6a0);
+        BYTE* current=phase?*reinterpret_cast<BYTE**>(phase+0x110):nullptr;
+        LogFlagPhase(current);
+        BYTE* flagState=FlagFind(gameState,0x22ad790);
+        if(flagState && flagState[0x121]) {
+            int winner=flagState[0x120];
+            if(winner!=flagLoggedWinner){flagLoggedWinner=winner;Emit("native_local_flag_winner",-1,winner);}
+        }
+        using Name=void(__fastcall*)(void*,const wchar_t*,int);
+        unsigned long long begin=0,overtime=0,lastSpurt=0;
+        reinterpret_cast<Name>(image+0x2589130)(&begin,L"Game",0);
+        reinterpret_cast<Name>(image+0x2589130)(&overtime,L"Overtime",0);
+        reinterpret_cast<Name>(image+0x2589130)(&lastSpurt,L"LastSpurt",0);
+        bool driving=sceneActive && Live(current) &&
+            (*reinterpret_cast<unsigned long long*>(current+0x28)==begin || *reinterpret_cast<unsigned long long*>(current+0x28)==overtime ||
+             *reinterpret_cast<unsigned long long*>(current+0x28)==lastSpurt);
+        ULONGLONG now=GetTickCount64();float dt=flagDriverTime?static_cast<float>(now-flagDriverTime)/1000.f:0.25f;
+        flagDriverTime=now;if(dt<=0 || dt>1)dt=0.25f;
+        bool logControls=now>=flagDiagnosticNext;if(logControls)flagDiagnosticNext=now+5000;
+        using Type=void*(__fastcall*)();
+        auto movementType=reinterpret_cast<Type>(image+0x22adc60)();
+        auto zoneType=reinterpret_cast<Type>(image+0x22add30)();
+        auto aiType=reinterpret_cast<Type>(image+0x2413310)();
+        auto playerType=reinterpret_cast<Type>(image+0x22ae2e0)();
+        BYTE* pawns[8]{};BYTE* flags[32]{};unsigned flagsCount=0;
+        TwinKartRace::ArenaPoint zones[3]{};bool zoneReady[3]{};
+        for(int index=0;index<count;++index) {
+            auto chunk=chunks[index/65536];if(!chunk)continue;
+            auto object=static_cast<BYTE*>(chunk[index%65536].object);
+            if(!object || (chunk[index%65536].flags&0x30000000))continue;
+            auto type=*reinterpret_cast<void**>(object+0x10);
+            if(type!=movementType && type!=zoneType && type!=aiType && type!=playerType)continue;
+            if(!Live(object) || (*reinterpret_cast<unsigned*>(object+8)&0x18030))continue;
+            if(type==movementType && InRaceWorld(object)) {
+                MirrorFlagCommand(object);
+                BYTE* actor=*reinterpret_cast<BYTE**>(object+0xa0);
+                BYTE* holder=FlagFind(actor,0x22ac760);
+                if(holder && holder[0x110] && !holder[0x130] && flagsCount<32)flags[flagsCount++]=actor;
+            } else if(type==zoneType) {
+                using GetWorld=BYTE*(__fastcall*)(void*);
+                if(reinterpret_cast<GetWorld>((*reinterpret_cast<void***>(object))[0x160/8])(object)!=world)continue;
+                int team=*reinterpret_cast<int*>(object+0x220);
+                if(team>=1 && team<=2)zoneReady[team]=FlagPosition(object,zones[team]);
+            } else if(type==aiType || type==playerType) {
+                BYTE* state=FlagFind(object,0x23afeb0);if(!state || !InRaceWorld(state))continue;
+                int slot=*reinterpret_cast<int*>(state+0x168);
+                if(slot>=0 && slot<=7 && (slot==0 || state[0x321]))pawns[slot]=object;
+            }
+        }
+        using Input=void(__fastcall*)(void*,float);
+        if(zoneReady[1] && zoneReady[2]) {
+            TwinKartRace::ArenaPoint bounds[42]{};int used=0;bounds[used++]=zones[1];bounds[used++]=zones[2];
+            for(unsigned i=0;i<flagsCount && used<42;++i){TwinKartRace::ArenaPoint at{};if(FlagPosition(flags[i],at))bounds[used++]=at;}
+            for(int slot=0;slot<=7 && used<42;++slot){TwinKartRace::ArenaPoint at{};if(pawns[slot] && FlagPosition(pawns[slot],at))bounds[used++]=at;}
+            BuildFlagGround(world,bounds,used);
+        }
+        unsigned claims[32]{};
+        int totals[3]{};
+        for(int slot=0;slot<=7;++slot)if(pawns[slot]) {
+            BYTE* score=FlagFind(pawns[slot],0x23b3790);if(!score)continue;
+            struct Contribution {int team,points;};
+            struct Points {Contribution* data;int count,capacity;};auto points=*reinterpret_cast<Points*>(score+0x148);
+            if(points.count<0 || points.count>8 || points.capacity<points.count || points.capacity>1024 || (points.count && !points.data))continue;
+            for(int i=0;i<points.count;++i)if(points.data[i].team>=1 && points.data[i].team<=2 && points.data[i].points>=-10000 && points.data[i].points<=10000)
+                totals[points.data[i].team]+=points.data[i].points;
+        }
+        for(int team=1;team<=2;++team)if(totals[team]!=flagLoggedPoints[team]){flagLoggedPoints[team]=totals[team];Emit("native_local_flag_team_points",team,totals[team]);}
+        for(int slot=1;slot<=7;++slot) {
+            BYTE* pawn=pawns[slot];if(!pawn)continue;
+            BYTE* movement=FlagFind(pawn,0x22f9030);if(!movement)continue;
+            auto state=FlagFind(pawn,0x23afeb0);auto holder=FlagFind(pawn,0x22ac760);
+            int team=state?*reinterpret_cast<int*>(state+0x16c):0;
+            TwinKartRace::ArenaPoint position{},target{};float heading=0;
+            bool ready=driving && holder && team>=1 && team<=2 && FlagPosition(pawn,position,&heading);
+            bool found=false;
+            if(ready && holder[0x110] && zoneReady[team]){target=zones[team];found=true;}
+            if(ready && !found) {
+                float best=1.e30f;int selected=-1;
+                for(unsigned i=0;i<flagsCount;++i) {
+                    auto flagHolder=FlagFind(flags[i],0x22ac760);if(!flagHolder)continue;
+                    int color=*reinterpret_cast<int*>(flagHolder+0x104);
+                    TwinKartRace::ArenaPoint candidate{};if(!FlagPosition(flags[i],candidate))continue;
+                    // Native Flag scores either color at the driver's own zone;
+                    // matching colors earn more. Do not strand a usable flag by
+                    // imposing an unrelated capture-the-enemy-only rule.
+                    float distance=TwinKartRace::ArenaDistance(position,candidate)+5000.f*claims[i]+(color==team?0.f:2500.f);
+                    if(distance<best){target=candidate;best=distance;found=true;selected=static_cast<int>(i);}
+                }
+                if(selected>=0)++claims[selected];
+            }
+            if(ready && !found) {
+                float best=1.e30f;
+                for(int other=0;other<=7;++other) {
+                    if(other==slot || !pawns[other])continue;
+                    auto otherState=FlagFind(pawns[other],0x23afeb0),otherHolder=FlagFind(pawns[other],0x22ac760);
+                    if(!otherState || !otherHolder || !otherHolder[0x110] || *reinterpret_cast<int*>(otherState+0x16c)==team)continue;
+                    TwinKartRace::ArenaPoint candidate{};if(!FlagPosition(pawns[other],candidate))continue;
+                    float distance=TwinKartRace::ArenaDistance(position,candidate);
+                    if(distance<best){target=candidate;best=distance;found=true;}
+                }
+            }
+            TwinKartCamera::ObjectIdentity identity{};
+            if(!CaptureFlagObject(pawn,identity))continue;
+            if(flagDriverPawns[slot].object!=pawn || flagDriverPawns[slot].serial!=identity.serial){flagDrivers[slot].Reset();flagRoutes[slot].Reset();}
+            flagDriverPawns[slot]=identity;
+            auto steeringTarget=ready && found && flagGround.Ready()?flagRoutes[slot].Target(flagGround,position,target,now):target;
+            if(flagRoutes[slot].planned==now)Emit("native_local_flag_ground_route",slot,static_cast<int>(flagRoutes[slot].points.size()));
+            auto control=ready && found?flagDrivers[slot].Step(position,heading,steeringTarget,dt,slot):TwinKartRace::ArenaControl{};
+            if(!ready)flagDrivers[slot].Reset();
+            reinterpret_cast<Input>(image+0x15d4320)(movement,control.throttle);
+            reinterpret_cast<Input>(image+0x15d3fd0)(movement,control.steer);
+            if(logControls)Emit("native_local_flag_arena_control",slot,(driving?1:0)|(found?2:0)|(holder && holder[0x110]?4:0));
+            if(flagDiagnostics && ready && found && logControls) {
+                Emit("native_local_flag_aim_x",slot,static_cast<int>(steeringTarget.x));
+                Emit("native_local_flag_aim_y",slot,static_cast<int>(steeringTarget.y));
+                Emit("native_local_flag_aim_z",slot,static_cast<int>(steeringTarget.z));
+            }
+        }
+        ++flagDriverSamples;
+    } __except(EXCEPTION_EXECUTE_HANDLER){Emit("native_local_flag_arena_fault",-1,0);}
 }
 inline void __fastcall OnUnknown(void* raw,void* rawPawn,int slot,bool flag) {
     auto rule=static_cast<BYTE*>(raw),pawn=static_cast<BYTE*>(rawPawn);
@@ -351,10 +730,10 @@ inline void __fastcall OnUnknown(void* raw,void* rawPawn,int slot,bool flag) {
             // FlagSquad deliberately uses the original SpeedSingleAiPawn and
             // its arena/flag components. Flag maps have no circuit AIPath;
             // never fabricate or bind FollowTG to them.
-            bool prepared=PrepareFlagAi(pawn,slot);
+            bool prepared=PrepareFlagInteractions(pawn,slot);
             Emit("native_local_flag_ai_ready",slot,prepared?1:0);
-            ForceFlagStartWhenReady(rule,slot,prepared);
-        } else EnsureAiDriver(pawn,slot);
+            ForceLocalStartWhenReady(rule,slot,prepared);
+        } else ForceLocalStartWhenReady(rule,slot,EnsureAiDriver(pawn,slot));
     }
 }
 inline void PrepareAiPopulation(BYTE* phase,int phaseStage) {
@@ -384,7 +763,9 @@ inline void PrepareAiPopulation(BYTE* phase,int phaseStage) {
                 int slot=*reinterpret_cast<int*>(state+0x168);
                 if(slot<1 || slot>7)continue;
                 *reinterpret_cast<BYTE*>(state+0x321)=1;
-                if(TwinKartRace::FlagMode(armedMode))PrepareFlagAi(pawn,slot);else EnsureAiDriver(pawn,slot);++ais;
+                if(TwinKartRace::FlagMode(armedMode))PrepareFlagAi(pawn,slot);
+                else if(EnsureAiDriver(pawn,slot))localAiPreparedMask|=1u<<slot;
+                ++ais;
             }
             Emit("native_local_ai_pre_phase_prepared",phaseStage,ais);
         } __finally {
@@ -473,6 +854,12 @@ inline bool Install(BYTE* base,Event callback) {
     const BYTE activationPrefix[]={0x41,0x56,0x48,0x83,0xec,0x30,0x48,0x8b,0x49,0x28,0x48,0x8d,0x54,0x24,0x20};
     const BYTE splinePrefix[]={0x48,0x89,0x5c,0x24,0x08,0x48,0x89,0x6c,0x24,0x10,0x48,0x89,0x74,0x24,0x18};
     const BYTE forceFlagPrefix[]={0x40,0x53,0x48,0x83,0xec,0x30,0x33,0xc0,0xc6,0x81,0xc9,0x00,0x00,0x00,0x01};
+    const BYTE parametersPrefix[]={0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0x48,0x89,0x11};
+    const BYTE componentPrefix[]={0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0x48,0x8b,0x89,0xa0,0x00,0x00,0x00};
+    const BYTE flagCommandPrefix[]={0x48,0x89,0x5c,0x24,0x10,0x55,0x48,0x8b,0xec,0x48,0x83,0xec,0x60};
+    const BYTE throttlePrefix[]={0x4c,0x8b,0xdc,0x49,0x89,0x5b,0x10,0x49,0x89,0x73,0x18};
+    const BYTE steerPrefix[]={0x40,0x53,0x48,0x83,0xec,0x30,0x80,0xb9,0xfd,0x0e,0x00,0x00,0x00};
+    const BYTE tracePrefix[]={0x48,0x8b,0xc4,0x48,0x89,0x58,0x08,0x48,0x89,0x68,0x10,0x48,0x89,0x70,0x20,0x57};
     // Prologue consists entirely of relocatable register/stack instructions.
     // Calls are patched only while this owned game's window thread is idle.
     if(memcmp(image+0x15acaf0,prefix,sizeof(prefix)) || memcmp(image+0x1973d10,registerPrefix,sizeof(registerPrefix)) ||
@@ -480,7 +867,13 @@ inline bool Install(BYTE* base,Event callback) {
        memcmp(image+0x168da30,factoryPrefix,sizeof(factoryPrefix)) || memcmp(image+0x168dad0,factoryPrefix,sizeof(factoryPrefix)) ||
        memcmp(image+0x15d1100,bindPrefix,sizeof(bindPrefix)) || memcmp(image+0x1952440,managerPrefix,sizeof(managerPrefix)) ||
        memcmp(image+0x193fe50,activationPrefix,sizeof(activationPrefix)) || memcmp(image+0x14d2660,splinePrefix,sizeof(splinePrefix)) ||
-       memcmp(image+0x1638220,forceFlagPrefix,sizeof(forceFlagPrefix))) return false;
+       memcmp(image+0x1638220,forceFlagPrefix,sizeof(forceFlagPrefix)) ||
+       memcmp(image+0x2771dd0,parametersPrefix,sizeof(parametersPrefix)) ||
+       memcmp(image+0x3de4900,componentPrefix,sizeof(componentPrefix)) ||
+       memcmp(image+0x191dc50,flagCommandPrefix,sizeof(flagCommandPrefix)) ||
+       memcmp(image+0x15d4320,throttlePrefix,sizeof(throttlePrefix)) ||
+       memcmp(image+0x15d3fd0,steerPrefix,sizeof(steerPrefix)) ||
+       memcmp(image+0x3de0910,tracePrefix,sizeof(tracePrefix))) return false;
     spawn=reinterpret_cast<Spawn>(image+0x1926150);
     addUnknown=reinterpret_cast<AddUnknown>(image+0x18f7370);
     construct=reinterpret_cast<Construct>(image+0x278aa90);
@@ -512,10 +905,28 @@ inline bool Install(BYTE* base,Event callback) {
         bodyEquipmentPatch.Restore();characterEquipmentPatch.Restore();kartEquipmentPatch.Restore();splinePatch.Restore();activationPatch.Restore();managerPatch.Restore();
         resultPatch.Restore();driverPatch.Restore();statePatch.Restore();spawnPatch.Restore();RestoreConstruction();return false;
     }
+    flagNetMode=reinterpret_cast<NetMode>(image+0x43beaf0);
+    flagZoneNetMode=reinterpret_cast<NetMode>(image+0x3cb9a40);
+    flagConfig=reinterpret_cast<FlagConfig>(image+0x186ee70);
+    const BYTE flagBeginPrefix[]={0x40,0x55,0x53,0x57,0x48,0x8d,0x6c,0x24,0xb9,0x48,0x81,0xec,0x90,0x00,0x00,0x00};
+    if(!flagBeginPatch.Entry(image+0x18f9aa0,flagBeginPrefix,sizeof(flagBeginPrefix),reinterpret_cast<void*>(OnFlagMovementBegin),reinterpret_cast<void**>(&flagMovementBegin)) ||
+       !flagPhysicsPatch.Call(image+0x18f9ae3,reinterpret_cast<void*>(flagNetMode),reinterpret_cast<void*>(LocalFlagPhysicsNetMode)) ||
+       !flagZonePatch.Call(image+0x18f86c6,reinterpret_cast<void*>(flagZoneNetMode),reinterpret_cast<void*>(LocalFlagZoneInitialization)) ||
+       !flagConfigPatches[0].Call(image+0x18f94af,reinterpret_cast<void*>(flagConfig),reinterpret_cast<void*>(LocalFlagConfig)) ||
+       !flagConfigPatches[1].Call(image+0x18f9c78,reinterpret_cast<void*>(flagConfig),reinterpret_cast<void*>(LocalFlagConfig))) {
+        for(auto& patch:flagConfigPatches)patch.Restore();flagZonePatch.Restore();flagPhysicsPatch.Restore();flagBeginPatch.Restore();
+        bodyEquipmentPatch.Restore();characterEquipmentPatch.Restore();kartEquipmentPatch.Restore();splinePatch.Restore();activationPatch.Restore();managerPatch.Restore();
+        resultPatch.Restore();driverPatch.Restore();statePatch.Restore();spawnPatch.Restore();RestoreConstruction();return false;
+    }
     installed=true; Emit("native_local_ai_hooks_installed",-1,1); return true;
 }
 inline void Arm(int mode) {
     raceWorld.Reset();armedMode=mode;armed=TwinKartRace::PlayableMode(mode);
-    flagAiPreparedMask=0;flagStartRequested=false;
+    localAiPreparedMask=0;localStartRequested=false;
+    for(auto& mirror:flagMirrors)mirror={};
+    for(int i=0;i<8;++i){flagDrivers[i].Reset();flagDriverPawns[i]={};}
+      flagDriverTime=0;flagDriverSamples=0;flagDiagnosticNext=0;
+    flagLoggedPhase=~0ull;flagLoggedWinner=-1;for(auto& points:flagLoggedPoints)points=-1;
+    flagGround.Reset();flagGroundDecided=false;for(auto& route:flagRoutes)route.Reset();
 }
 }

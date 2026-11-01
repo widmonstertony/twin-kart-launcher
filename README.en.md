@@ -2,6 +2,18 @@
 
 [简体中文](README.md) | English
 
+## v0.2.0-alpha.2: custom modes and random-track repair (2026-11-01)
+
+- Connect the 13 custom-mode identifiers visible in this PC client: solo/duo/squad Speed, Item, Infinite Booster and Spitem mixed races, plus squad Flag. Original maps, rules, countdown and results remain in use. Rooms show seven AI members by default and respect subsequently removed seats.
+- Fix roulette and both native random-track selectors. These are virtual picker entries: race start draws a compatible, locally complete physical map, avoids immediate repeats, and never attempts to load a roulette ID as a world.
+- Forward custom gameplay options and mode profiles through bounded `TKRACE2` requests into original preparation/loading. Engine commands and overrides of internal population, mode or map parameters are rejected.
+- Independently authored Flag AI uses original throttle/steering, collision, pickup/drop and scoring components. F02 navigation samples road collision and follows gentle ramp routes. One real F02 match recorded 4–0, the original winner, podium and result phases. F01 recorded an 18–18 regular-time tie, 4–10 overtime, team 2 winning, podium and result phases. This does not establish acceptance of every kart combination or player interaction.
+- Local modes call the original PlayerWait readiness method only after the required AI components are ready, retrying if the native component appears later. The original start countdown is preserved instead of waiting for nonexistent network players.
+
+Existing graphics, keyboard and cockpit preferences are preserved. Hidden or resource-incomplete modes are not enabled solely from enum values. Historical checkpoints below retain their original validation scope.
+
+Additional live regression: all seven AI in one Spitem squad match recorded original finish ranks/times and reached the original podium. Spitem duo and Infinite Booster squad also recorded real finish data and automatically returned to the lobby. This does not cover every item effect, custom-option combination or map.
+
 ## v0.2.0-alpha.1 release checkpoint (2026-10-30)
 
 This is the current public-source checkpoint of the independently authored launcher, offline compatibility backend, native rooms, AI, cockpit, and graphics adapters. It remains a **development prerelease**. Users must provide the original client, private compatibility data, and NVIDIA environment. The Release contains no game, first-party assets, protocol keys, SDK, model, or NVIDIA runtime.

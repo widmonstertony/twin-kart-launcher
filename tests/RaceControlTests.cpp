@@ -1,12 +1,22 @@
 #include "../native/RaceControl.h"
 #include "../native/NativeTrackModes.h"
 #include "../native/NativeReturnRoute.h"
+#include "../native/NativeRacePreparation.h"
 #include <stdexcept>
 #include <fstream>
 #include <iterator>
 void Need(bool value) { if(!value) throw std::runtime_error("Race request contract failed"); }
 static wchar_t ownedRoute[512];
 static int routeCopies=0;
+static unsigned nativePreparations=0;
+void* __fastcall CopyPreparation(TwinKartRace::PreparationString* out,const TwinKartRace::PreparationString* in) {
+    *out={new wchar_t[in->count],in->count,in->count};std::wmemcpy(out->data,in->data,in->count);return out;
+}
+bool __fastcall InitializePreparation(void* traveler,const TwinKartRace::PreparationMode* mode,TwinKartRace::PreparationString* track,void* details,const TwinKartRace::PreparationHints* hints,bool random) {
+    Need(traveler==&nativePreparations && mode->mode==4 && !wcscmp(mode->profile.data,L"item_solo_test") &&
+        !wcscmp(track->data,L"Pirate_R01") && !details && !hints->count && !hints->data && !random);
+    ++nativePreparations;delete[] track->data;return true;
+}
 void* __fastcall AssignRoute(TwinKartRace::ReturnString* out,const TwinKartRace::ReturnString* in) {
     ++routeCopies;std::wmemcpy(ownedRoute,in->data,in->count);*out={ownedRoute,in->count,512};return out;
 }
@@ -90,6 +100,16 @@ int main(int argc,char** argv) {
     }
     Need(!TwinKartRace::Parse("TKRACE1 0123456789abcdef0123456789abcdef Pirate_R01 1 7 3 extra",&request));
     Need(!TwinKartRace::Parse("TKRACE1 0123456789abcdef0123456789abcdef Pirate_R01 1 0 3",&request));
+    Need(TwinKartRace::Parse("TKRACE2 0123456789abcdef0123456789abcdef Pirate_R01 4 7 3 item_solo_test ?item.IgnoreFaraway=false?item.UseSkill=true?item.ActiveSkillCoolTime=false?item.CustomItem=Invalid",&request));
+    Need(TwinKartRace::Options(request,options,512) && wcsstr(options,L"?item.UseSkill=true") && wcsstr(options,L"?item.ActiveSkillCoolTime=false"));
+    Need(TwinKartRace::PrepareNativeRace(&nativePreparations,request,CopyPreparation,InitializePreparation) && nativePreparations==1);
+    Need(!TwinKartRace::PrepareNativeRace(nullptr,request,CopyPreparation,InitializePreparation) && nativePreparations==1);
+    for(const char* bad:{"?game=OtherGameMode","?item.UseSkill=1?ITEM.UseSkill=0","?item.UseSkill=","?item.CustomItem=foo/bar","?item.CustomItem=x;quit","?item.CustomItem=x extra","?players=99"}) {
+        char text[1025]{};sprintf_s(text,"TKRACE2 0123456789abcdef0123456789abcdef Pirate_R01 4 7 3 - %s",bad);
+        Need(!TwinKartRace::Parse(text,&request));
+    }
+    Need(TwinKartRace::Parse("TKRACE2 0123456789abcdef0123456789abcdef Pirate_R01 4 7 3 - -",&request) && !request.profile[0] && !request.custom[0]);
+    Need(!TwinKartRace::Parse("TKRACE2 0123456789abcdef0123456789abcdef Pirate_R01 4 7 3 bad/profile -",&request));
     if(argc==2) {
         std::ifstream file(argv[1],std::ios::binary); std::string text((std::istreambuf_iterator<char>(file)),{});
         Need(file.good() || file.eof()); Need(TwinKartRace::Parse(text.c_str(),&request) && request.mode==4 && request.ai==7 && request.laps==3 && !strcmp(request.track,"Pirate_R01"));

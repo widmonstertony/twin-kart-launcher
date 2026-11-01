@@ -6,6 +6,30 @@ using System.Web.Script.Serialization;
 
 namespace TwinKartLauncher.Gateway
 {
+    internal static class NativeRaceOptions
+    {
+        internal static string Merge(string level,string custom)
+        {
+            var keys=new HashSet<string>(StringComparer.OrdinalIgnoreCase);string result="";
+            foreach(string input in new[]{level,custom}) {
+                if(String.IsNullOrEmpty(input))continue;
+                if(input.Length>512 || input[0]!='?')throw new ArgumentException("Invalid native gameplay options.");
+                foreach(string pair in input.Substring(1).Split('?')) {
+                    var match=Regex.Match(pair,@"\A((?:item|speed|spitem|flag|modeLab|infinitybooster|track)\.[A-Za-z][A-Za-z0-9_]{0,47})=([A-Za-z0-9_,.+-]{1,96})\z",RegexOptions.IgnoreCase|RegexOptions.CultureInvariant);
+                    if(!match.Success || match.Groups[1].Length>=65 || keys.Count>=32 || !keys.Add(match.Groups[1].Value))throw new ArgumentException("Invalid or repeated native gameplay option.");
+                    result+="?"+pair;
+                }
+            }
+            if(result.Length>512)throw new ArgumentException("Native gameplay options exceed local request limit.");
+            return result;
+        }
+        internal static string Profile(string value)
+        {
+            if(String.IsNullOrEmpty(value))return "";
+            if(!Regex.IsMatch(value,@"\A[A-Za-z][A-Za-z0-9_]{0,95}\z"))throw new ArgumentException("Invalid native mode profile.");
+            return value;
+        }
+    }
     // Object-level JSON contracts only. The original client's SHA-256/AES-CBC
     // WebSocket envelope cannot be emitted until prefix, key and IV are known.
     // These fields were independently observed in this client's request log

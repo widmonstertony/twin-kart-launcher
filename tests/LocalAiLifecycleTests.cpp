@@ -23,6 +23,21 @@ BYTE *aiType=nullptr,*flagAiType=nullptr,*stateType=nullptr,*pathType=nullptr,*s
 BYTE *speedTeamType=nullptr,*itemTeamType=nullptr;
 BYTE *phaseType=nullptr,*gameState=nullptr,*manager=nullptr,*foreignManager=nullptr;
 BYTE *playerWaitType=nullptr,*playerWait=nullptr;
+BYTE *majorType=nullptr;
+BYTE* flagTypes[5]{};
+BYTE *flagGameModeType=nullptr,*flagConfigType=nullptr;
+BYTE* flagZoneType=nullptr;
+alignas(8) BYTE flagNotification[0x30]{};
+int originalNetMode=0;
+void* __fastcall FlagGameModeType(){return flagGameModeType;}
+void* __fastcall FlagConfigType(){return flagConfigType;}
+void* __fastcall FlagZoneType(){return flagZoneType;}
+int __fastcall NativeNetMode(void*){return originalNetMode;}
+BYTE* __fastcall NativeFlagConfig(void*){return flagNotification;}
+std::unordered_map<BYTE*,std::array<BYTE*,5>> flagComponents;
+unsigned flagCreates=0,flagRegisters=0;
+unsigned flagCommandCalls=0;
+bool delayPlayerWait=false;
 BYTE *presetType=nullptr,*kartType=nullptr,*characterType=nullptr;
 BYTE *accountType=nullptr,*replicationType=nullptr;
 bool exerciseEquipment=false;unsigned equipmentCopies=0,equipmentComparisons=0;
@@ -39,6 +54,12 @@ void *resultProvider=nullptr,*resultStyle=nullptr;
 const void *seenResultClass=nullptr,*seenPlayerClass=nullptr,*seenPointClass=nullptr;
 bool malformed=false,requireReady=true;
 void Check(bool value){if(!value)++errors;}
+bool __fastcall RoadQueryFixture(void* queryWorld,void* raw,const TwinKartRace::ArenaPoint* start,const TwinKartRace::ArenaPoint* end,const void* mask,const void* parameters) {
+    Check(queryWorld!=nullptr && parameters==&flagCommandCalls && *static_cast<const unsigned*>(mask)==0x20000 && start->z>end->z);
+    auto hit=static_cast<unsigned char*>(raw);memset(hit,0xa5,0x88);
+    TwinKartRace::ArenaPoint point{start->x,start->y,123};memcpy(hit+0xc,&point,sizeof(point));float normal=1;memcpy(hit+0x38,&normal,4);hit[0x5d]=1;return true;
+}
+void __fastcall FlagCommand(void*,const void* previous){Check(reinterpret_cast<uintptr_t>(previous)%16==0);++flagCommandCalls;}
 void Need(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 BYTE* Object(size_t size,BYTE* type=nullptr,BYTE* owner=nullptr,BYTE* inWorld=nullptr) {
     Need(objects.size()<objectSlots.size(),"Fixture object registry full");
@@ -54,22 +75,45 @@ BYTE* Object(size_t size,BYTE* type=nullptr,BYTE* owner=nullptr,BYTE* inWorld=nu
 BYTE* __fastcall World(void* object){auto found=worlds.find(object);return found==worlds.end()?nullptr:found->second;}
 void* __fastcall AiType(){return aiType;}void* __fastcall StateType(){return stateType;}
 void* __fastcall FlagAiType(){return flagAiType;}
+void* __fastcall FlagNotifyType(){return flagTypes[0];}
+void* __fastcall FlagHolderType(){return flagTypes[1];}
+void* __fastcall FlagDropType(){return flagTypes[2];}
+void* __fastcall FlagReceiveType(){return flagTypes[3];}
+void* __fastcall FlagCarryType(){return flagTypes[4];}
 void* __fastcall PathType(){return pathType;}void* __fastcall SpeedType(){return speedType;}
 void* __fastcall ItemType(){return itemType;}void* __fastcall MovementType(){return movementType;}
 void* __fastcall SpeedTeamType(){return speedTeamType;}void* __fastcall ItemTeamType(){return itemTeamType;}
 void* __fastcall PhaseType(){return phaseType;}
 void* __fastcall PlayerWaitType(){return playerWaitType;}
+void* __fastcall MajorType(){return majorType;}
 void* __fastcall PresetType(){return presetType;}void* __fastcall KartType(){return kartType;}void* __fastcall CharacterType(){return characterType;}
 void* __fastcall AccountType(){return accountType;}void* __fastcall ReplicationType(){return replicationType;}
 BYTE* __fastcall Find(void* raw,void* type) {
+    auto fc=flagComponents.find(static_cast<BYTE*>(raw));
+    if(fc!=flagComponents.end())for(unsigned i=0;i<5;++i)if(type==flagTypes[i])return fc->second[i];
     if(raw==gameState && type==phaseType)return phase;
-    if(raw==gameState && type==playerWaitType)return playerWait;
+    if(raw==gameState && type==playerWaitType)return delayPlayerWait?nullptr:playerWait;
+    if(raw==gameState && type==majorType)return major;
     auto found=components.find(static_cast<BYTE*>(raw));if(found==components.end())return nullptr;auto& c=found->second;
     if(type==stateType)return c.state;if(type==pathType)return c.path;if(type==movementType)return c.movement;
     if(type==kartType)return c.kart;if(type==characterType)return c.character;
     if(type==replicationType)return c.replication;
     if((type==speedType || type==itemType || type==speedTeamType || type==itemTeamType) && c.behavior && *reinterpret_cast<void**>(c.behavior+0x10)==type)return c.behavior;
     return nullptr;
+}
+void __fastcall FlagParameters(void* raw,void* type){memset(raw,0,0x40);*static_cast<void**>(raw)=type;}
+void* __fastcall FlagConstruct(void* raw){
+    auto params=static_cast<BYTE**>(raw);++flagCreates;
+    auto result=Object(0x300,params[0],nullptr,world);*reinterpret_cast<void**>(result+0x20)=params[1];return result;
+}
+void __fastcall FlagRegister(void* raw){
+    auto object=static_cast<BYTE*>(raw),pawn=*reinterpret_cast<BYTE**>(object+0x20);
+    for(unsigned i=0;i<5;++i)if(*reinterpret_cast<void**>(object+0x10)==flagTypes[i]) {
+        Check(!flagComponents[pawn][i]);
+        if(i==1)Check(object[0x130]==1);
+        *reinterpret_cast<void**>(object+0xa0)=pawn;flagComponents[pawn][i]=object;++flagRegisters;return;
+    }
+    ++errors;
 }
 void __fastcall Register(void* raw) {
     auto pawn=static_cast<BYTE*>(raw)-0x320;auto& c=components[pawn];Check(c.prepared);++registrations;
@@ -148,7 +192,9 @@ int main(){try{
     *reinterpret_cast<int*>(major+0x130)=1;*reinterpret_cast<int*>(major+0x138)=7;
     phaseType=Object(0x40);gameState=Object(0x200,nullptr,nullptr,world);
     *reinterpret_cast<BYTE**>(world+0x120)=gameState;
+    *reinterpret_cast<BYTE**>(world+0x118)=gameState;
     playerWaitType=Object(0x40);playerWait=Object(0xd8,playerWaitType,gameState,world);
+    majorType=Object(0x40);*reinterpret_cast<void**>(major+0x10)=majorType;*reinterpret_cast<void**>(major+0xa0)=gameState;
     manager=Object(0x200,nullptr,gameState,world);foreignManager=Object(0x200,nullptr,gameState,otherWorld);
     phase=Object(0x200,phaseType,gameState,world);rule=Object(0x80);*reinterpret_cast<void**>(rule+0x28)=phase;
     foreignPhase=Object(0x200,nullptr,nullptr,otherWorld);foreignRule=Object(0x80);*reinterpret_cast<void**>(foreignRule+0x28)=foreignPhase;
@@ -163,6 +209,7 @@ int main(){try{
     Stub(0x1971550,reinterpret_cast<void*>(GetPawns));Stub(0x248b950,reinterpret_cast<void*>(Free));
     Stub(TwinKartGraphics::RacePhaseComponentGetter,reinterpret_cast<void*>(PhaseType));
     Stub(0x23b4a90,reinterpret_cast<void*>(PlayerWaitType));Stub(0x1638220,reinterpret_cast<void*>(ForceBegin));
+    Stub(0x2381ed0,reinterpret_cast<void*>(MajorType));
     Stub(0x168da80,reinterpret_cast<void*>(SpeedStyle));Stub(0x168db20,reinterpret_cast<void*>(ItemStyle));
     R::image=fixtureImage;R::owner=GetCurrentThreadId();R::addUnknown=AddUnknown;R::managerBegin=Manager;R::activationBegin=Activate;R::splineBegin=Spline;R::autoDrive=AutoDrive;R::Arm(1);
     Need(!R::Live(reinterpret_cast<BYTE*>(1)),"Expired native component address escaped liveness guard");
@@ -290,23 +337,117 @@ int main(){try{
     // Flag uses its distinct original pawn/rules/result path. It must receive
     // balanced native PawnState metadata without creating a circuit FollowTG
     // or borrowing a speed/item result factory.
+    Need(forceBeginCalls==1 && R::localStartRequested,"Circuit local readiness did not use the native idempotent PlayerWait method");
+    forceBeginCalls=0;playerWait[0xc8]=playerWait[0xc9]=0;
     R::Arm(104);Need(R::raceWorld.Bind({world,*reinterpret_cast<int*>(world+0xc),*reinterpret_cast<int*>(world+0xc)+1},chunks,static_cast<int>(objects.size())),"Flag local scope fixture");
     *reinterpret_cast<int*>(major+0x13c)=2;
     unsigned flagRegistrations=registrations,flagSpeedFactories=speedFactories,flagItemFactories=itemFactories;
+    for(auto& type:flagTypes)type=Object(0x40);
+    Stub(0x23a1840,reinterpret_cast<void*>(FlagNotifyType));Stub(0x22ac760,reinterpret_cast<void*>(FlagHolderType));
+    Stub(0x22a7030,reinterpret_cast<void*>(FlagDropType));Stub(0x22ac830,reinterpret_cast<void*>(FlagReceiveType));
+    Stub(0x22a6400,reinterpret_cast<void*>(FlagCarryType));Stub(0x2771dd0,reinterpret_cast<void*>(FlagParameters));
+    Stub(0x3de4900,reinterpret_cast<void*>(FlagRegister));R::construct=FlagConstruct;
+    delayPlayerWait=true;
     for(int slot=1;slot<8;++slot) {
         auto pawn=pawns[slot];*reinterpret_cast<void**>(pawn+0x10)=flagAiType;
         auto& c=components[pawn];c.path=nullptr;c.behavior=nullptr;*reinterpret_cast<void**>(c.movement+0xf08)=nullptr;
         R::OnUnknown(major,pawn,slot,false);
         Need(!c.path && !c.behavior && *reinterpret_cast<void**>(c.movement+0xf08)==nullptr,"Flag AI was polluted with circuit FollowTG/behavior");
         Need(*reinterpret_cast<BYTE*>(c.state+0x321)==1 && *reinterpret_cast<int*>(c.state+0x16c)==1+slot%2,"Flag AI classification/team assignment failed");
-        Need(forceBeginCalls==(slot==7?1u:0u),"Flag player-wait force ran before all seven original AI were prepared");
+        Need(forceBeginCalls==0,"Flag player-wait force ran before its component was available");
     }
+    Need(!R::RetryLocalStartWhenReady(otherWorld) && !R::RetryLocalStartWhenReady(world) && forceBeginCalls==0,"Flag delayed readiness escaped its world or bypassed missing PlayerWait");
+    delayPlayerWait=false;
+    Need(R::RetryLocalStartWhenReady(world) && forceBeginCalls==1,"Flag delayed readiness did not retry after native component creation");
+    Need(!R::RetryLocalStartWhenReady(world) && forceBeginCalls==1,"Flag delayed readiness repeated a native start");
     R::OnUnknown(major,pawns[7],7,false);
-    Need(forceBeginCalls==1 && R::flagStartRequested && *reinterpret_cast<BYTE*>(playerWait+0xc9)==1,"Flag readiness did not use the original idempotent PlayerWait transition");
+    Need(flagCreates==28 && flagRegisters==28 && !errors,"Flag components missing, duplicated or initialized with wrong holder policy");
+    Need(forceBeginCalls==1 && R::localStartRequested && *reinterpret_cast<BYTE*>(playerWait+0xc9)==1,"Flag readiness did not use the original idempotent PlayerWait transition");
     Need(registrations==flagRegistrations,"Flag AI called ordinary circuit registration");
+    flagGameModeType=Object(0x40);flagConfigType=Object(0x40);
+    Stub(0x22a77b0,reinterpret_cast<void*>(FlagGameModeType));Stub(0x22a6580,reinterpret_cast<void*>(FlagConfigType));
+    *reinterpret_cast<void**>(gameState+0x10)=flagGameModeType;R::flagNetMode=NativeNetMode;
+    Need(R::LocalFlagPhysicsNetMode(world)==0,"Local projectile selection ran outside its movement initialization scope");
+    R::flagPhysicsScope=phase;
+    Need(R::LocalFlagPhysicsNetMode(world)==3 && R::LocalFlagPhysicsNetMode(otherWorld)==0,"Local projectile selection escaped its Flag world");
+    originalNetMode=2;Need(R::LocalFlagPhysicsNetMode(world)==2,"Flag physics altered a non-standalone world");originalNetMode=0;
+    R::flagPhysicsScope=nullptr;
+    flagZoneType=Object(0x40);Stub(0x22add30,reinterpret_cast<void*>(FlagZoneType));
+    auto goal=Object(0x290,flagZoneType,nullptr,world);R::flagZoneNetMode=NativeNetMode;
+    Need(R::LocalFlagZoneInitialization(goal)==1,"Standalone goal did not request original authority registration");
+    worlds[goal]=otherWorld;Need(R::LocalFlagZoneInitialization(goal)==0,"Goal initialization escaped its local Flag world");
+    worlds[goal]=world;*reinterpret_cast<void**>(goal+0x10)=aiType;
+    Need(R::LocalFlagZoneInitialization(goal)==0,"Goal registration changed a different actor class");
+    auto configuration=Object(0xb8,flagConfigType);
+    *reinterpret_cast<void**>(flagNotification+0x20)=configuration;R::flagConfig=NativeFlagConfig;
+    Need(R::LocalFlagConfig(phase)==flagNotification && configuration[0x30]==1,"Standalone Flag authority overlap did not use native per-world config");
+    configuration[0x30]=0;*reinterpret_cast<unsigned*>(configuration+8)=0x10;
+    R::LocalFlagConfig(phase);Need(configuration[0x30]==0,"Flag adapter changed class default configuration");
+    *reinterpret_cast<unsigned*>(configuration+8)=0;R::LocalFlagConfig(foreignPhase);
+    Need(configuration[0x30]==0,"Flag authority config escaped local world");
+    Stub(0x191dc50,reinterpret_cast<void*>(FlagCommand));
+    BYTE* flagMotion=Object(0x1f0,nullptr,pawns[1],world);
+    R::MirrorFlagCommand(flagMotion);R::MirrorFlagCommand(flagMotion);
+    Need(flagCommandCalls==1,"Unchanged local flag command repeated replication consumer");
+    *reinterpret_cast<int*>(flagMotion+0x180)=1;R::MirrorFlagCommand(flagMotion);
+    Need(flagCommandCalls==2,"Changed native flag command was dropped");
+    worlds[flagMotion]=otherWorld;*reinterpret_cast<int*>(flagMotion+0x180)=2;R::MirrorFlagCommand(flagMotion);
+    Need(flagCommandCalls==2,"Foreign arena received a local flag command");
+    worlds[flagMotion]=world;++objectSlots[*reinterpret_cast<int*>(flagMotion+0xc)].serial;
+    R::MirrorFlagCommand(flagMotion);Need(flagCommandCalls==3,"Recycled flag identity reused old command state");
+    TwinKartRace::ArenaDriver arena;
+    auto forward=arena.Step({0,0,0},0,{10000,0,0},0.25f,1);
+    Need(forward.throttle==1 && forward.steer==0,"Arena approach does not accelerate along native heading");
+    auto turn=arena.Step({100,0,0},0,{100,10000,0},0.25f,1);
+    Need(turn.steer>0 && turn.throttle>0 && turn.throttle<1,"Arena turn did not slow and steer toward target");
+    bool backed=false;for(int i=0;i<16;++i)if(arena.Step({100,0,0},0,{10000,0,0},0.25f,1).throttle<0)backed=true;
+    Need(backed,"Arena collision recovery did not use reverse controls");
+    Need(arena.Step({100,0,0},0,{100,0,0},0.25f,1).throttle==0,"Arena target arrival retained throttle");
+    arena.Reset();arena.Step({0,0,0},0,{1000,0,0},0.25f,1);
+    Need(arena.Step({-300,0,0},0,{1000,0,0},0.25f,1).throttle>0,"Forward speed feedback kept braking into reverse away from target");
+    arena.Reset();arena.Step({0,0,0},0,{1000,0,0},0.05f,1);
+    auto gradualBrake=arena.Step({40,0,0},0,{1000,0,0},0.05f,1);
+    Need(gradualBrake.throttle<0 && gradualBrake.throttle>-0.3f,"Short-segment speed feedback still uses abrupt reverse braking");
+    arena.Reset();
+    for(int i=0;i<100;++i)Need(arena.Step({i*5.f,0,0},0,{10000,0,0},0.05f,1).throttle>0,
+        "Higher-frequency slow forward motion was mistaken for a stalled kart");
+    TwinKartRace::FlagGroundNavigation ground;
+    TwinKartRace::ArenaPoint roadContact{};
+    Need(TwinKartRace::QueryRoad(world,RoadQueryFixture,&flagCommandCalls,{10,20,1000},{10,20,-1000},roadContact) && roadContact.z==123 && !errors,
+        "Native complete 0x88-byte road-hit ABI or query parameters were truncated");
+    Need(ground.Initialize({0,0,0},{2400,2400,600}),"Ground graph fixture initialization");
+    TwinKartRace::ArenaPoint sample{};
+    while(ground.Next(sample)) {
+        int x=static_cast<int>(sample.x/400),y=static_cast<int>(sample.y/400);
+        float z=y>=2 && y<=4?x*100.f:x==6?600.f:0.f;
+        ground.Sample(z,!(x==3 && y==3));
+    }
+    std::vector<TwinKartRace::ArenaPoint> route;
+    Need(ground.Path({0,1200,0},{2400,1200,600},route) && route.size()>3,"Ground graph did not find sampled ramp around a collision gap");
+    for(size_t i=1;i<route.size();++i)Need(std::fabs(route[i].z-route[i-1].z)<=TwinKartRace::ArenaDistance(route[i],route[i-1])*0.25f+15,"Ground graph jumped a cliff");
+    Need(!ground.Path({0,1200,0},{2400,1200,2500},route),"Ground graph silently snapped a missing upper surface to a lower road");
+    Need(ground.Initialize({0,0,0},{1600,1600,400}),"Bank/ramp fixture initialization");
+    while(ground.Next(sample)) {
+        int x=static_cast<int>(sample.x/400),y=static_cast<int>(sample.y/400);
+        ground.Sample(y==4?x*100.f:x>=2?400.f:0.f,true);
+    }
+    Need(ground.Path({0,0,0},{1600,0,400},route),"Gentle bank detour was lost");
+    bool usedRamp=false;for(const auto& point:route)if(point.y>=1200)usedRamp=true;
+    Need(usedRamp,"Arena path took the steep bank instead of its connected gentle ramp");
     style=nullptr;R::OnResultInit(phase,&resultClass,&playerClass,&pointClass,&provider,&style);
     Need(style==nullptr && speedFactories==flagSpeedFactories && itemFactories==flagItemFactories,"Flag settlement borrowed a speed/item result factory");
     for(int slot=1;slot<8;++slot)*reinterpret_cast<void**>(pawns[slot]+0x10)=aiType;
+    unsigned beforeShortRoom=forceBeginCalls;
+    R::Arm(102);Need(R::raceWorld.Bind({world,*reinterpret_cast<int*>(world+0xc),*reinterpret_cast<int*>(world+0xc)+1},chunks,static_cast<int>(objects.size())),"Short local room scope fixture");
+    *reinterpret_cast<int*>(major+0x138)=3;playerWait[0xc8]=playerWait[0xc9]=0;
+    Need(!R::ForceLocalStartWhenReady(major,1,true) && !R::ForceLocalStartWhenReady(major,2,false) &&
+        !R::ForceLocalStartWhenReady(major,3,true) && !R::ForceLocalStartWhenReady(major,4,true) &&
+        !R::RetryLocalStartWhenReady(otherWorld) && forceBeginCalls==beforeShortRoom,
+        "Local three-AI room bypassed a missing driver, invalid seat or world");
+    Need(R::ForceLocalStartWhenReady(major,2,true) && forceBeginCalls==beforeShortRoom+1,
+        "Local readiness incorrectly required seven AI in a three-AI duo room");
+    Need(!R::RetryLocalStartWhenReady(world) && forceBeginCalls==beforeShortRoom+1,
+        "Local short-room readiness submitted duplicate native start notices");
     puts("PASS team lifecycle: duo/squad speed/item, balanced human+AI teams, native team behavior and result factories, foreign-world isolation.");
     puts("PASS production equipment registration scope: current account preset/body -> human kart/character/physics hooks, preserved native channel and fallback, unchanged AI/foreign-world defaults, ambiguous/expired preset rejection, thread ownership and registration-lifetime cleanup. Synthetic interfaces only.");
     R::armed=false;before=queries;R::OnActivationBegin(rule);Need(queries==before && !errors,"Unarmed native forwarding changed preparation");

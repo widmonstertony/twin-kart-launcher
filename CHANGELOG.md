@@ -1,8 +1,11 @@
 # Changelog / 更新记录
 
-## Unreleased / 后续开发
+## v0.2.0-alpha.2 — 2026-11-01
 
-- No changes after the v0.2.0-alpha.1 publication checkpoint. / v0.2.0-alpha.1 发布检查点之后暂无变更。
+- Repair native roulette/random selectors using mode-compatible physical-map pools and no immediate repeats. / 修复原厂转盘／随机选图，按模式匹配实际地图并避免连续重复。
+- Preserve native custom profiles/options and populate seven AI previews in offline custom rooms. / 接通原厂自定义 profile／规则参数，并在离线自定义房间默认显示 7 个 AI。
+- Add independently authored Flag objective driving, sampled ramp navigation, original interaction components and authority callbacks. Real F01 and F02 matches reached original winner/podium/result phases, including F01 overtime. / 增加原创夺旗目标驾驶、缓坡采样寻路及原厂交互／得分回调；F01、F02 实际比赛均进入原厂胜负／领奖台／结果阶段，包含 F01 加时。
+- Remove the local custom-mode network-readiness stall through the original PlayerWait method after AI preparation; retain the original countdown. / 在 AI 准备齐备后调用原厂 PlayerWait，修复离线自定义模式等待联网就绪的问题，保留原厂倒计时。
 
 ## v0.2.0-alpha.1 — 2026-10-30
 

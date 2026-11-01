@@ -33,6 +33,11 @@ namespace TwinKartLauncher.Gateway
         public int[] AiSlots { get { var values = new List<int>(aiSlots); values.Sort(); return values.ToArray(); } }
         public int AiCount { get { return aiSlots.Count; } }
         public bool HasAiSlot(int slot) { return aiSlots.Contains(slot); }
+        internal void PopulateOfflineAi()
+        {
+            if(sessionId==null || observerMode)return;
+            for(int slot=1;slot<=7;++slot)aiSlots.Add(slot);
+        }
 
         // The main-lobby mode buttons enter the original room/setup surface.
         // This prepares only its local state; the client still performs the

@@ -233,6 +233,11 @@ namespace TwinKartLauncher.Gateway
             var reply = new ProfileResult { Response = Object("_type","PrPacket","reqId",id,
                 "result",Object("code",transition.Accepted && !start ? 0 : 10001),"desc","") };
             if (!transition.Accepted) return reply;
+            // Native arena/custom menus expose invite/close-seat, with no
+            // AddAI action in some modes. Populate the offline grid at creation
+            // so every native mode can start and previews show its actual AI.
+            // Subsequent kicks stay respected; never refill a user's edited grid.
+            if(type=="PqCreateCustomGame" && startRoom!=null)room.PopulateOfflineAi();
             if (start)
             {
                 string failure;
@@ -295,8 +300,12 @@ namespace TwinKartLauncher.Gateway
         sealed class Track { internal string Id; internal int Mask,Laps; }
         readonly string control,client,reportPath;
         readonly List<Track> tracks = new List<Track>();
+        readonly Dictionary<string,int> selectors = new Dictionary<string,int>(StringComparer.Ordinal);
         readonly object gate = new object();
         string lastIdentity;
+        string lastRandomTrack;
+        static bool IsSelector(string id)
+        { return id=="Roulette_A01" || id=="Random_R01" || id=="Random_R02"; }
         internal NativeRoomLaunch(string controlPath, string reportPath, string clientSha256)
         {
             if(!Regex.IsMatch(clientSha256??"","^[a-f0-9]{64}$")) throw new ArgumentException("Invalid client fingerprint.");
@@ -308,20 +317,26 @@ namespace TwinKartLauncher.Gateway
             if(!Object.Equals(report["ClientSha256"],client) || !Object.Equals(report["NativeDefinitionsComplete"],true))
                 throw new InvalidDataException("Native track report differs from this client.");
             var ids=new HashSet<string>(StringComparer.Ordinal);var available=new List<Track>();
+            var availableSelectors=new Dictionary<string,int>(StringComparer.Ordinal);
             foreach(var item in (object[])report["Tracks"]) {
                 var row=ProfileJson.Object(item); object raw;
                 string id=ProfileJson.Text(row,"TrackId");
                 if(!Regex.IsMatch(id,"^[A-Za-z][A-Za-z0-9_]{0,95}$") || !ids.Add(id)) throw new FormatException("Invalid native track identity.");
-                if(!Object.Equals(row["NativeDefinitionStatus"],"native-definition-present") ||
-                    !Object.Equals(row["WorldMatch"],"exact-base-world-record")) continue;
+                if(!Object.Equals(row["NativeDefinitionStatus"],"native-definition-present")) continue;
                 if(!row.TryGetValue("NativeModeMask",out raw) || !(raw is int) || (int)raw<0 || (int)raw>31) continue;
                 int mask=(int)raw;
+                // These are original picker entries, not physical World/AIPath
+                // assets. Preserve their native mode masks, then resolve them
+                // only against the exact playable map pool for this session.
+                if(IsSelector(id)) { availableSelectors.Add(id,mask);continue; }
+                if(!Object.Equals(row["WorldMatch"],"exact-base-world-record"))continue;
                 // Circuit AI requires its exact path. Flag uses native arena navigation.
                 if(!Object.Equals(row["AiPathMatch"],"exact-base-ai-record")) mask &= 16;
                 int laps=row.TryGetValue("NativeLaps",out raw) && raw is int ? (int)raw : 0;
                 if(mask!=0) available.Add(new Track {Id=id,Mask=mask,Laps=laps});
             }
             if(available.Count==0) throw new InvalidDataException("No native tracks available.");
+            foreach(var pair in availableSelectors)selectors.Add(pair.Key,pair.Value);
             tracks.AddRange(available);
         }
         internal static NativeRoomLaunch FromEnvironment()
@@ -353,13 +368,20 @@ namespace TwinKartLauncher.Gateway
                 if(!PacketJsonCodec.LocalRaceMode(mode) || ai<1 || ai>7 ||
                     (size>1 && (ai+1<size*2 || (ai+1)%size!=0))) return "请在房间添加 AI：双人组需 3、5 或 7 个，四人组需 7 个，个人赛需 1–7 个。";
                 var setting=room.Setting;
+                string options=NativeRaceOptions.Merge(setting.LevelOption,setting.CustomGameOption);
+                string profile=NativeRaceOptions.Profile(setting.GameMode.Profile);
                 var eligible=tracks.Where(t=>Supports(t,mode)).ToArray();
-                // Roulette_A01 is the original random-map choice, not an alias
-                // for a missing explicit map. Only this choice may draw a map.
                 Track track=eligible.FirstOrDefault(t=>t.Id==setting.Track);
-                if(setting.Track=="Roulette_A01" && eligible.Length>0) {
+                if(IsSelector(setting.Track) && eligible.Length>0) {
+                    int selectorMask;
+                    // Old private captures may omit Roulette_A01; retain its
+                    // observed speed/item/Spitem mask, never a wildcard for Flag.
+                    if(!selectors.TryGetValue(setting.Track,out selectorMask))
+                        selectorMask=setting.Track=="Roulette_A01"?14:0;
+                    if(!Supports(new Track {Mask=selectorMask},mode))return "所选随机赛道类型不支持当前模式，请重新选择。";
+                    var pool=eligible.Where(t=>eligible.Length==1 || t.Id!=lastRandomTrack).ToArray();
                     byte[] draw=new byte[4];using(var rng=RandomNumberGenerator.Create())rng.GetBytes(draw);
-                    track=eligible[BitConverter.ToUInt32(draw,0)%(uint)eligible.Length];
+                    track=pool[BitConverter.ToUInt32(draw,0)%(uint)pool.Length];
                 }
                 if(track==null) return "所选地图在本客户端缺少该模式的完整资源，请在游戏内重新选图。";
                 int laps=setting.Lap??999;
@@ -367,6 +389,8 @@ namespace TwinKartLauncher.Gateway
                 if(laps<1 || laps>9) return "圈数需要为 1–9 或原厂默认值。";
                 string identity=Guid.NewGuid().ToString("N");
                 string text=String.Format(CultureInfo.InvariantCulture,"TKRACE1 {0} {1} {2} {3} {4}\n",identity,track.Id,mode,ai,laps);
+                if(options.Length>0 || profile.Length>0)
+                    text=String.Format(CultureInfo.InvariantCulture,"TKRACE2 {0} {1} {2} {3} {4} {5} {6}\n",identity,track.Id,mode,ai,laps,profile.Length==0?"-":profile,options.Length==0?"-":options);
                 string temporary=control+"."+identity+".pending";
                 try {
                     using(var stream=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {
@@ -374,6 +398,7 @@ namespace TwinKartLauncher.Gateway
                     }
                     if(File.Exists(control))File.Replace(temporary,control,null);else File.Move(temporary,control);
                     lastIdentity=identity;
+                    if(IsSelector(setting.Track))lastRandomTrack=track.Id;
                     return null; // Accepted loading intent; no host packet/result fabricated.
                 } finally {if(File.Exists(temporary))File.Delete(temporary);}
             }
