@@ -85,6 +85,11 @@ static class OfflineBackendTests
         var wrappedJoined=RoomSnapshot(Call(store,"PqJoinCustomGame",",\"sessionId\":\"\""));
         Need(wrappedJoined.RaceSession.GameMode.RaceMode==6 && wrappedJoined.AiMemberCount==7,"Current client queue.gameModes selection was not preserved");
         Need(Code(Call(store,"PqLeaveCustomGame"))==0,"Wrapped native setup room did not close cleanly");
+        Need(Code(Call(store,"PqRegisterMatch",",\"queue\":{\"gameModes\":[{\"raceMode\":113,\"profile\":\"speed_solo_ghost\"}]}"))==0,"Native event lobby selection rejected");
+        Need(Code(Call(store,"PqCreateCustomGame",",\"observerMode\":false,\"setting\":{\"_type\":\"CsRaceGame\",\"track\":\"Roulette_A01\",\"gameMode\":{\"raceMode\":113,\"profile\":\"\"}}"))==0,"Native event quick create continuation rejected");
+        var eventJoined=RoomSnapshot(Call(store,"PqJoinCustomGame",",\"sessionId\":\"\""));
+        Need(eventJoined.RaceSession.GameMode.RaceMode==113 && eventJoined.RaceSession.GameMode.Profile=="speed_solo_ghost", "Quick-room boundary dropped the event profile");
+        Need(Code(Call(store,"PqLeaveCustomGame"))==0,"Native event room did not close cleanly");
         var opened=Call(store,"PqRegisterMatch",",\"queue\":[{\"raceMode\":5,\"profile\":\"\"}],\"trackBanList\":[],\"matchTutorial\":false,\"useDefaultLatencyInfo\":true");
         Need(Code(opened)==0 && (string)opened.Response["_type"]=="PrRegisterMatch" && opened.Notices.Count==1 && (string)opened.Notices[0]["_type"]=="PcPartyCreateJoinCustomGame","Lobby mode did not enter the native setup surface");
         var joined=RoomSnapshot(Call(store,"PqJoinCustomGame",",\"sessionId\":\"\""));
@@ -155,7 +160,7 @@ static class OfflineBackendTests
         string sha=new string('a',64);
         Func<string,int,int,string> row=(id,mask,laps)=>"{\"TrackId\":\""+id+"\",\"NativeDefinitionStatus\":\"native-definition-present\",\"WorldMatch\":\"exact-base-world-record\",\"AiPathMatch\":\"exact-base-ai-record\",\"NativeModeMask\":"+mask+",\"NativeLaps\":"+laps+"}";
         File.WriteAllText(report,"{\"ClientSha256\":\""+sha+"\",\"NativeDefinitionsComplete\":true,\"Tracks\":["+
-            row("Test_R01",6,2)+","+row("Flag_F01",16,999)+","+row("Spitem_S01",8,3)+
+            row("Test_R01",6,2)+","+row("Desert_I06",2,2)+","+row("Flag_F01",16,999)+","+row("Spitem_S01",8,3)+
             ",{\"TrackId\":\"Missing_R01\",\"NativeDefinitionStatus\":\"no-native-definition-in-client\",\"WorldMatch\":\"unmatched\",\"AiPathMatch\":\"unmatched\",\"NativeModeMask\":0}]}");
         var launch=new NativeRoomLaunch(control,report,sha);
         var service=new OfflineRoomService("1",launch.Start);
@@ -177,18 +182,20 @@ static class OfflineBackendTests
         File.WriteAllText(report,reportText.Replace(sha,new string('b',64)));
         Need(Code(send("PqPlayCustomGame",",\"hostMode\":true"))!=0 && !File.Exists(control),"Foreign session catalog accepted");
         File.WriteAllText(report,reportText);
-        foreach(int mode in new[]{1,2,3,4,5,6,101,102,103,104,105,106,107}) {
-            string track=mode==104?"Flag_F01":mode>=105?"Spitem_S01":"Test_R01";
+        foreach(int mode in new[]{1,2,3,4,5,6,101,102,103,104,105,106,107,110,111,112,113,114,115,116,118}) {
+            string track=mode==104?"Flag_F01":mode>=105 && mode<=107?"Spitem_S01":mode==116 || mode==118?"Desert_I06":"Test_R01";
             var changed=send("PqChangeCustomGameSetting",",\"setting\":{\"_type\":\"CsRaceGame\",\"track\":\""+track+"\",\"gameMode\":{\"raceMode\":"+mode+"},\"lap\":999}");
             Need(Code(changed)==0,"Native event mode rejected by room parser");
             var started=send("PqPlayCustomGame",",\"hostMode\":true");
             Need(Code(started)==0 && started.Notices.Count==0,"Native room button failed or fabricated a host/result push");
             string before=File.ReadAllText(control);string[] fields=before.Trim().Split(' ');
-            Need(fields.Length==6 && fields[0]=="TKRACE1" && fields[1].Length==32 && fields[2]==track && fields[3]==mode.ToString() && fields[4]=="7" && fields[5]==(mode==104?"3":mode>=105?"3":"2"),"Room selection lost at native loading boundary");
+            Need(fields.Length==6 && fields[0]=="TKRACE1" && fields[1].Length==32 && fields[2]==track && fields[3]==mode.ToString() && fields[4]=="7" && fields[5]==(mode==104 || mode>=105 && mode<=107?"3":"2"),"Room selection lost at native loading boundary");
             Need(Code(send("PqPlayCustomGame",",\"hostMode\":true"))!=0 && File.ReadAllText(control)==before,"Repeated click overlapped native loading");
             File.WriteAllText(control+"."+fields[1]+".result","TKRACEACK1 "+fields[1]+" 1\n");
         }
         string saved=File.ReadAllText(control);
+        send("PqChangeCustomGameSetting",setting.Replace("\"raceMode\":1","\"raceMode\":116"));
+        Need(Code(send("PqPlayCustomGame",",\"hostMode\":true"))!=0 && File.ReadAllText(control)==saved,"Cube accepted an ordinary map lacking an explicit dedicated-world binding");
         send("PqChangeCustomGameSetting",setting.Replace("Test_R01","Missing_R01"));
         Need(Code(send("PqPlayCustomGame",",\"hostMode\":true"))!=0 && File.ReadAllText(control)==saved,"Explicit missing map was silently replaced");
         send("PqChangeCustomGameSetting",setting.Replace("Test_R01","Flag_F01"));
@@ -201,7 +208,12 @@ static class OfflineBackendTests
         string[] customFields=File.ReadAllText(control).Trim().Split(' ');
         Need(customFields.Length==8 && customFields[0]=="TKRACE2" && customFields[6]=="item_solo_test" && customFields[7]=="?item.UseSkill=false?item.ActiveSkillCoolTime=true","Profile/skill settings were dropped at the native boundary");
         File.WriteAllText(control+"."+customFields[1]+".result","done");
-        foreach(string invalid in new[]{"?game=OtherGameMode","?item.UseSkill=true?ITEM.UseSkill=false","?item.UseSkill=x;quit"}) {
+        string engineOptions=custom.Replace("?item.UseSkill=false?item.ActiveSkillCoolTime=true","?game.useskill=true?game.skill.activesp=80p");
+        Need(Code(send("PqChangeCustomGameSetting",engineOptions))==0 && Code(send("PqPlayCustomGame",",\"hostMode\":true"))==0,"Actual original game settings were rejected");
+        var engineFields=File.ReadAllText(control).Trim().Split(' ');
+        Need(engineFields[7]=="?game.useskill=true?game.skill.activesp=80p","Original game setting keys were changed in transport");
+        File.WriteAllText(control+"."+engineFields[1]+".result","done");
+        foreach(string invalid in new[]{"?game=OtherGameMode","?item.UseSkill=true?ITEM.UseSkill=false","?item.UseSkill=x;quit","?game.command=quit","?game.skill.execute=bad"}) {
             string beforeInvalid=File.ReadAllText(control);
             Need(Code(send("PqChangeCustomGameSetting",custom.Replace("?item.UseSkill=false?item.ActiveSkillCoolTime=true",invalid)))==0,"Invalid-option boundary fixture setup failed");
             Need(Code(send("PqPlayCustomGame",",\"hostMode\":true"))!=0 && File.ReadAllText(control)==beforeInvalid,"Unsafe/duplicate option crossed the native boundary");
@@ -209,7 +221,7 @@ static class OfflineBackendTests
         send("PqChangeCustomGameSetting",setting.Replace("\"raceMode\":1","\"raceMode\":3"));
         send("PqKickCustomGameMember",",\"slot\":7");saved=File.ReadAllText(control);
         Need(Code(send("PqPlayCustomGame",",\"hostMode\":true"))!=0 && File.ReadAllText(control)==saved,"Incomplete native team accepted");
-        Console.WriteLine("PASS native custom-room start: original packets, 13 modes, exact maps/default laps/AI, readiness, double-click guard and missing-resource rejection. No game started.");
+        Console.WriteLine("PASS native custom-room transport: 21 mode IDs, exact maps/default laps/AI, readiness, double-click guard and missing-resource rejection. Native event rules require separate game acceptance. No game started.");
     }
     static void NativeRandomPickerChecks(string folder)
     {
@@ -235,6 +247,19 @@ static class OfflineBackendTests
             room.Apply("{\"_type\":\"PqChangeCustomGameSetting\",\"reqId\":1,\"setting\":{\"_type\":\"CsRaceGame\",\"track\":\""+choice[0]+"\",\"gameMode\":{\"raceMode\":"+choice[1]+"}}}");
             string previous=File.ReadAllText(control);
             Need(launch.Start(room)!=null && File.ReadAllText(control)==previous,"Random picker ignored original mode mask or accepted an invented selector");
+        }
+        // A Cube selector may draw only explicit dedicated-world bindings,
+        // even when ordinary maps advertise the same item mode mask.
+        File.WriteAllText(report,"{\"ClientSha256\":\""+sha+"\",\"NativeDefinitionsComplete\":true,\"Tracks\":["+
+            row("Map_A01",2,true)+","+row("Desert_I06",2,true)+","+row("Village_I05",1,true)+","+row("World_I11",1,true)+","+row("Roulette_A01",14,false)+"]}");
+        launch=new NativeRoomLaunch(control,report,sha);room=new RoomState();room.PrepareQuickRoom(116,"Roulette_A01");
+        Need(room.Apply("{\"_type\":\"PqJoinCustomGame\",\"reqId\":1,\"sessionId\":\"\"}").Accepted,"Cube picker did not join");
+        string previousCube=null;
+        for(int index=0;index<12;++index) {
+            Need(launch.Start(room)==null,"Cube roulette rejected the physical map pool");
+            string[] fields=File.ReadAllText(control).Trim().Split(' ');
+            Need((fields[2]=="Desert_I06" || fields[2]=="Village_I05" || fields[2]=="World_I11") && fields[2]!=previousCube,"Cube roulette drew an ordinary map or immediately repeated");
+            previousCube=fields[2];File.WriteAllText(control+"."+fields[1]+".result","done");
         }
         Console.WriteLine("PASS original random selectors: Roulette_A01/Random_R01/Random_R02, native mode masks, physical-map pool, no immediate repeats and unknown-selector rejection. No game started.");
     }

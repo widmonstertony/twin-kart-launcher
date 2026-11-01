@@ -7,6 +7,8 @@
 #include "NativeAiRoster.h"
 #include "NativeAiAssets.h"
 #include "NativeRaceModes.h"
+#include "NativeCubeWorld.h"
+#include "NativeReturnRoute.h"
 #include "FlagArenaDriver.h"
 #include "FlagGroundNavigation.h"
 #include "NativeRoadQuery.h"
@@ -43,6 +45,23 @@ inline TwinKartEquipment::Preset equipmentPreset;
 inline bool equipmentReady=false;
 inline TwinKartRace::AiRoster aiRoster;
 inline bool aiRosterEnabled=false;
+inline bool nativeCharacterRules=false;
+using CharacterSkillQuery=bool(__fastcall*)(void*,const TwinKartEquipment::String*,unsigned char,void*);
+using SkillSpawn=void*(__fastcall*)(void*,void*);
+inline CharacterSkillQuery characterSkillQuery=nullptr;
+inline SkillSpawn skillSpawn=nullptr;
+inline TwinKartNative::OwnedCodePatch characterSkillQueryPatch,skillSpawnPatch;
+using CubeAuthOverlap=void(__fastcall*)(void*,void*,void*);
+inline CubeAuthOverlap cubeAuthOverlap=nullptr;
+inline TwinKartNative::OwnedCodePatch cubeAuthOverlapPatch;
+inline bool eventDiagnosticsInstalled=false;
+inline wchar_t cubeBaseTrack[97]{};
+using CurrentLevelName=TwinKartRace::ReturnString*(__fastcall*)(TwinKartRace::ReturnString*,void*,bool);
+inline CurrentLevelName currentLevelName=nullptr;
+inline TwinKartNative::OwnedCodePatch cubePathLevelPatch;
+inline bool flagSkillsEnabled=false;
+inline bool flagSkillTickObserved=false;
+inline int flagSkillReadinessObserved[8]{-1,-1,-1,-1,-1,-1,-1,-1};
 inline int equipmentSlot=0;
 using SetBody=void(__fastcall*)(void*,const void*,const void*);
 inline SetBody setBody=nullptr;
@@ -54,6 +73,15 @@ inline bool localStartRequested=false;
 using NetMode=int(__fastcall*)(void*);
 using FlagConfig=BYTE*(__fastcall*)(void*);
 inline NetMode flagNetMode=nullptr;
+inline NetMode aiSkillNetMode=nullptr;
+inline TwinKartNative::OwnedCodePatch aiSkillModePatch;
+inline TwinKartNative::OwnedCodePatch aiSkillUsePatch;
+inline TwinKartNative::OwnedCodePatch aiSkillCanUsePatch;
+inline TwinKartNative::OwnedCodePatch flagItemContextPatch;
+using CanUseSkill=bool(__fastcall*)(void*,void*);
+inline CanUseSkill aiSkillCanUse=nullptr,baseSkillCanUse=nullptr;
+using UseSkillIfCan=void(__fastcall*)(void*);
+inline UseSkillIfCan aiUseSkill=nullptr;
 inline NetMode flagZoneNetMode=nullptr;
 inline FlagConfig flagConfig=nullptr;
 inline BeginRule flagMovementBegin=nullptr;
@@ -84,6 +112,13 @@ inline bool InRaceWorld(BYTE* component) {
     return raceWorld.Matches(World(component),*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0),
         *reinterpret_cast<int*>(image+0x69c28c4));
 }
+inline bool InActorRaceWorld(BYTE* actor) {
+    if(!armed || GetCurrentThreadId()!=owner || !Live(actor))return false;
+    using GetWorld=BYTE*(__fastcall*)(void*);
+    auto world=reinterpret_cast<GetWorld>((*reinterpret_cast<void***>(actor))[0x160/8])(actor);
+    return Live(world) && !*reinterpret_cast<void**>(world+0x38) && raceWorld.Matches(world,
+        *reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0),*reinterpret_cast<int*>(image+0x69c28c4));
+}
 inline bool Local(BYTE* rule) {return Eligible(rule) && InRaceWorld(rule);}
 inline bool BindWorld(BYTE* rule) {
     if(!Eligible(rule))return false;
@@ -105,6 +140,81 @@ inline bool BindWorld(BYTE* rule) {
     return raceWorld.Bind(identity,chunks,count);
 }
 inline void Emit(const char* name,int slot,int value) { if(event) event(name,slot,value); }
+inline bool __fastcall OnCharacterSkillQuery(void* component,const TwinKartEquipment::String* character,unsigned char grade,void* output) {
+    bool local=InRaceWorld(static_cast<BYTE*>(component));
+    if(local && character && TwinKartEquipment::Valid(*character,97) && TwinKartEquipment::Nonempty(*character)) {
+        const wchar_t prefix[]=L"Character:";
+        if(!wcsncmp(character->data,prefix,ARRAYSIZE(prefix)-1))Emit("native_event_skill_character_id",-1,_wtoi(character->data+ARRAYSIZE(prefix)-1));
+        Emit("native_event_skill_costume_grade",-1,grade);
+    }
+    bool result=characterSkillQuery(component,character,grade,output);
+    if(local && output)Emit("native_event_skill_definition_count",-1,result?*reinterpret_cast<int*>(static_cast<BYTE*>(output)+16):-1);
+    return result;
+}
+inline void* __fastcall OnSkillSpawn(void* component,void* parameter) {
+    void* result=skillSpawn(component,parameter);
+    if(InRaceWorld(static_cast<BYTE*>(component))) {
+        Emit("native_event_skill_spawned",-1,result?1:0);
+        if(result && Live(static_cast<BYTE*>(result)))Emit("native_event_skill_actor_vtable",-1,static_cast<int>(*static_cast<BYTE**>(result)-image));
+    }
+    return result;
+}
+inline bool CubeItemCount(BYTE* pawn,int& items) {
+    __try {
+    items=0;using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
+    if(!Live(pawn))return false;
+    auto type=reinterpret_cast<Type>(image+0x22ef370)();
+    auto slot=reinterpret_cast<Find>((*reinterpret_cast<void***>(pawn))[0x620/8])(pawn,type);
+    if(!Live(slot) || *reinterpret_cast<void**>(slot+0x10)!=type || *reinterpret_cast<void**>(slot+0xa0)!=pawn || !InRaceWorld(slot))return false;
+    struct Array {BYTE** data;int count,capacity;};auto stacks=*reinterpret_cast<Array*>(slot+0x170);
+    // Exact reflected ItemStacks (+0x170) and ChunkItems (+0xc0). These are
+    // borrowed original arrays; observe live chunk counts without allocating.
+    if(stacks.count<0 || stacks.count>8 || stacks.capacity<stacks.count || stacks.capacity>64 || (stacks.count && !stacks.data))return false;
+    auto stackType=reinterpret_cast<Type>(image+0x22ef0d0)();
+    for(int i=0;i<stacks.count;++i) {
+        auto stack=stacks.data[i];if(!Live(stack) || *reinterpret_cast<void**>(stack+0x10)!=stackType || !InRaceWorld(stack))return false;
+        auto chunks=*reinterpret_cast<Array*>(stack+0xc0);
+        if(chunks.count<0 || chunks.count>128 || chunks.capacity<chunks.count || chunks.capacity>1024 || (chunks.count && !chunks.data))return false;
+        items+=chunks.count;
+    }
+    return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER) {items=0;return false;}
+}
+inline void __fastcall OnCubeAuthOverlap(void* rawCube,void* rawPawn,void* rawItem) {
+    auto cube=static_cast<BYTE*>(rawCube),pawn=static_cast<BYTE*>(rawPawn),item=static_cast<BYTE*>(rawItem);
+    int before=0,slot=-1;unsigned first=0,second=0;bool observe=false;
+    if(TwinKartRace::CubeMode(armedMode) && InRaceWorld(item) && Live(pawn) &&
+       *reinterpret_cast<void**>(item+0xa0)==pawn && InActorRaceWorld(cube)) {
+        using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
+        auto state=reinterpret_cast<Find>((*reinterpret_cast<void***>(pawn))[0x620/8])(pawn,reinterpret_cast<Type>(image+0x23afeb0)());
+        if(Live(state))slot=*reinterpret_cast<int*>(state+0x168);
+        if(slot>=0 && slot<=7 && CubeItemCount(pawn,before)) {
+            first=cube[0x228];second=cube[0x2c0];observe=true;
+        }
+    }
+    cubeAuthOverlap(rawCube,rawPawn,rawItem);
+    int after=0;
+    if(observe && InRaceWorld(item) && CubeItemCount(pawn,after)) {
+        Emit("native_local_cube_pickup_designated_first",slot,static_cast<int>(first));
+        Emit("native_local_cube_pickup_designated_second",slot,static_cast<int>(second));
+        Emit("native_local_cube_pickup_items_before",slot,before);
+        Emit("native_local_cube_pickup_items_after",slot,after);
+    }
+}
+inline bool InstallEventDiagnostics() {
+    if(eventDiagnosticsInstalled)return true;
+    wchar_t enabled[4]{};
+    if(GetEnvironmentVariableW(L"TWIN_KART_EVENT_DIAGNOSTICS",enabled,4)!=1 || enabled[0]!=L'1')return true;
+    characterSkillQuery=reinterpret_cast<CharacterSkillQuery>(image+0x1697f40);
+    skillSpawn=reinterpret_cast<SkillSpawn>(image+0x16c1b50);
+    const BYTE cubePrefix[]={0x48,0x89,0x5c,0x24,0x18,0x48,0x89,0x74,0x24,0x20,0x57,0x48,0x83,0xec,0x30};
+    if(!characterSkillQueryPatch.Call(image+0x16c0f60,reinterpret_cast<void*>(characterSkillQuery),reinterpret_cast<void*>(OnCharacterSkillQuery)) ||
+       !skillSpawnPatch.Call(image+0x16c0fca,reinterpret_cast<void*>(skillSpawn),reinterpret_cast<void*>(OnSkillSpawn)) ||
+       !cubeAuthOverlapPatch.Entry(image+0x17a9850,cubePrefix,sizeof(cubePrefix),reinterpret_cast<void*>(OnCubeAuthOverlap),reinterpret_cast<void**>(&cubeAuthOverlap))) {
+        cubeAuthOverlapPatch.Restore();skillSpawnPatch.Restore();characterSkillQueryPatch.Restore();return false;
+    }
+    eventDiagnosticsInstalled=true;return true;
+}
 inline bool ReadEquipmentPreset(TwinKartEquipment::Preset& preset,BYTE** accountOut=nullptr) {
     __try {
         using Type=void*(__fastcall*)();auto type=reinterpret_cast<Type>(image+0x220fc90)();
@@ -199,6 +309,29 @@ inline void RegisterMissing(BYTE* actor) {
     } __finally { registrationActor=previous; }
 }
 inline void RestoreConstruction() { for(auto& patch:constructionPatches) patch.Restore(); }
+inline void* __fastcall OnItemContextConstruct(void* raw) {
+    // Only PawnComponent's original item-context construction call is hooked.
+    // Choose the original Flag subclass before NewObject and registration;
+    // native code then owns the cache, lifecycle and all targeting/SP rules.
+    // Do not replace vtables, class defaults or an already registered context.
+    auto parameters=static_cast<BYTE**>(raw);
+    if(raw && armed && TwinKartRace::FlagMode(armedMode) && GetCurrentThreadId()==owner) {
+        auto pawn=parameters[1];using Type=void*(__fastcall*)();
+        if(Live(pawn) && *reinterpret_cast<void**>(pawn+0x10)==reinterpret_cast<Type>(image+0x2413310)() &&
+           parameters[0]==reinterpret_cast<Type>(image+0x22d8460)()) {
+            if(!InActorRaceWorld(pawn))return construct(raw);
+            auto flagType=reinterpret_cast<Type>(image+0x22acef0)();
+            if(Live(static_cast<BYTE*>(flagType))) {
+                alignas(8) BYTE local[0x40];memcpy(local,raw,sizeof(local));
+                *reinterpret_cast<void**>(local)=flagType;
+                auto result=construct(local);
+                Emit("native_local_flag_ai_item_context_selected",-1,result?1:0);
+                return result;
+            }
+        }
+    }
+    return construct(raw);
+}
 inline bool __fastcall OnSpawn(void* raw,void* mode,int slot,void* start,void** pawn,bool* isAi) {
     auto rule=static_cast<BYTE*>(raw);
     if(BindWorld(rule) && isAi) {
@@ -216,6 +349,70 @@ inline bool __fastcall OnSpawn(void* raw,void* mode,int slot,void* start,void** 
 }
 inline bool OwnedComponent(BYTE* component,BYTE* pawn,void* type) {
     return Live(component) && *reinterpret_cast<void**>(component+0xa0)==pawn && *reinterpret_cast<void**>(component+0x10)==type;
+}
+inline TwinKartRace::ReturnString* __fastcall CubePathLevelName(TwinKartRace::ReturnString* output,void* raw,bool removePrefix) {
+    auto result=currentLevelName(output,raw,removePrefix);
+    auto world=static_cast<BYTE*>(raw);
+    auto cube=TwinKartRace::CubeWorldForTrack(armedMode,cubeBaseTrack);
+    if(result!=output || !output || !cube || GetCurrentThreadId()!=owner || !armed || !Live(world) ||
+       !raceWorld.Matches(world,*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0),*reinterpret_cast<int*>(image+0x69c28c4)) ||
+       !TwinKartRace::HasReturnRoute(*output))return result;
+    auto leaf=wcsrchr(cube->package,L'/');
+    if(!leaf || wcscmp(output->data,leaf+1))return result;
+    // Only AIManage::InitSplineData's current-level-name call is redirected.
+    // The real Cube world and all other level-name consumers stay unchanged.
+    // Assign through the original allocator into the original returned FString.
+    TwinKartRace::ReturnString base{cubeBaseTrack,static_cast<int>(wcslen(cubeBaseTrack)+1),static_cast<int>(wcslen(cubeBaseTrack)+1)};
+    reinterpret_cast<TwinKartRace::AssignReturnString>(image+0x9118f0)(output,&base);
+    Emit("native_local_cube_base_ai_path_selected",-1,armedMode);return result;
+}
+inline int __fastcall LocalAiSkillNetMode(void* raw) {
+    int mode=aiSkillNetMode(raw);
+    // Only AISkillComponent::TickComponent's exact native call is redirected.
+    // Its randomized release timer is restricted to NM_DedicatedServer; an
+    // owned standalone race is also authoritative. Preserve all native skill
+    // readiness, cooldown, target selection and timer/UseSkillIfCan behavior.
+    auto world=static_cast<BYTE*>(raw);
+    if(mode==0 && armed && TwinKartRace::PlayableMode(armedMode) && GetCurrentThreadId()==owner && Live(world) &&
+       !*reinterpret_cast<void**>(world+0x38) && raceWorld.Matches(world,
+           *reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0),*reinterpret_cast<int*>(image+0x69c28c4))) {
+        if(flagSkillsEnabled && eventDiagnosticsInstalled && !flagSkillTickObserved) {
+            flagSkillTickObserved=true;Emit("native_local_flag_ai_skill_tick_observed",-1,1);
+        }
+        return 1;
+    }
+    return mode;
+}
+inline void __fastcall OnAiUseSkill(void* raw) {
+    BYTE* component=static_cast<BYTE*>(raw),*skill=nullptr,*holder=nullptr;float before=0;int slot=-1;bool heldFlag=false;
+    if(InRaceWorld(component)) {
+        using Current=BYTE*(__fastcall*)(void*);using Type=void*(__fastcall*)();using Find=BYTE*(__fastcall*)(void*,void*);
+        auto collection=*reinterpret_cast<BYTE**>(component+0x130);
+        auto pawn=*reinterpret_cast<BYTE**>(component+0xa0);
+        if(Live(collection) && Live(pawn) && *reinterpret_cast<void**>(component+0x10)==reinterpret_cast<Type>(image+0x2217c80)()) {
+            skill=reinterpret_cast<Current>(image+0x1a51c70)(collection);
+            if(Live(skill))before=*reinterpret_cast<float*>(skill+0x248);else skill=nullptr;
+            auto state=reinterpret_cast<Find>((*reinterpret_cast<void***>(pawn))[0x620/8])(pawn,reinterpret_cast<Type>(image+0x23afeb0)());
+            if(Live(state))slot=*reinterpret_cast<int*>(state+0x168);
+            if(flagSkillsEnabled && eventDiagnosticsInstalled) {
+                holder=reinterpret_cast<Find>((*reinterpret_cast<void***>(pawn))[0x620/8])(pawn,reinterpret_cast<Type>(image+0x22ac760)());
+                if(Live(holder) && *reinterpret_cast<void**>(holder+0xa0)==pawn)heldFlag=holder[0x110]!=0;else holder=nullptr;
+            }
+        }
+    }
+    // Native timer/CanUseSkill/ServerUseSkill owns the action and the cost.
+    // Observe a real SP decrease; UseCount is not a cumulative action counter.
+    aiUseSkill(raw);
+    if(skill && Live(skill) && InRaceWorld(component)) {
+        float after=*reinterpret_cast<float*>(skill+0x248);
+        if(before>after && before-after<1000000) {
+            Emit("native_local_ai_skill_sp_spent",slot,static_cast<int>((before-after)*1000));
+            if(holder && Live(holder)) {
+                Emit("native_local_flag_ai_skill_held_before",slot,heldFlag?1:0);
+                Emit("native_local_flag_ai_skill_held_after",slot,holder[0x110]?1:0);
+            }
+        }
+    }
 }
 inline bool StandaloneFlagWorld(BYTE* world) {
     if(!armed || !TwinKartRace::FlagMode(armedMode) || GetCurrentThreadId()!=owner || !Live(world) ||
@@ -353,7 +550,13 @@ inline bool PrepareFlagInteractions(BYTE* pawn,int slot) {
         for(unsigned i=0;i<4;++i)
             if(EnsureFlagComponent(pawn,getters[i],i==1))ready|=1u<<i;
         Emit("native_local_flag_ai_interaction_components",slot,ready);
-        return ready==15;
+        // Flag uses SpeedSingleAiPawn, whose original local registration
+        // does not create AISkillComponent. Install the original component
+        // before SetupSkill visits the pawn; its own registration, native
+        // skill definitions and randomized timer remain authoritative.
+        bool skillReady=!flagSkillsEnabled || EnsureFlagComponent(pawn,0x2217c80)!=nullptr;
+        if(flagSkillsEnabled)Emit("native_local_flag_ai_skill_component_ready",slot,skillReady?1:0);
+        return ready==15 && skillReady;
     } __except(EXCEPTION_EXECUTE_HANDLER) {
         Emit("native_local_flag_ai_interaction_fault",slot,0);return false;
     }
@@ -504,6 +707,41 @@ inline BYTE* FlagFind(BYTE* actor,unsigned getter) {
     auto type=reinterpret_cast<Type>(image+getter)();
     auto find=reinterpret_cast<Find>((*reinterpret_cast<void***>(actor))[0x620/8]);
     auto value=find(actor,type);return OwnedComponent(value,actor,type)?value:nullptr;
+}
+inline bool __fastcall OnAiCanUseSkill(void* raw,void* optionalIndex) {
+    auto component=static_cast<BYTE*>(raw);
+    if(!flagSkillsEnabled || !TwinKartRace::FlagMode(armedMode) || !InRaceWorld(component))
+        return aiSkillCanUse(raw,optionalIndex);
+    // AISkillComponent's circuit override requires RaceProgressComponent and
+    // RaceTimeComponent; Flag has neither. Use the original shared skill
+    // readiness/cooldown contract during real Flag gameplay phases instead.
+    // UseSkillIfCan still checks CanUseSkillPrerequisite and the skill's own
+    // native targeting/cost rules. Other modes retain their original override.
+    bool active=false;auto world=World(component);
+    auto state=world?*reinterpret_cast<BYTE**>(world+0x120):nullptr;
+    auto phase=FlagFind(state,0x22ac6a0);
+    auto current=phase?*reinterpret_cast<BYTE**>(phase+0x110):nullptr;
+    if(Live(current)) {
+        using Name=void(__fastcall*)(void*,const wchar_t*,int);
+        unsigned long long game=0,overtime=0,lastSpurt=0;
+        auto name=reinterpret_cast<Name>(image+0x2589130);
+        name(&game,L"Game",0);name(&overtime,L"Overtime",0);name(&lastSpurt,L"LastSpurt",0);
+        auto actual=*reinterpret_cast<unsigned long long*>(current+0x28);
+        active=(game && actual==game) || (overtime && actual==overtime) || (lastSpurt && actual==lastSpurt);
+    }
+    bool ready=false;
+    if(active)ready=baseSkillCanUse(raw,optionalIndex);
+    else if(optionalIndex)static_cast<BYTE*>(optionalIndex)[4]=0;
+    if(eventDiagnosticsInstalled) {
+        auto pawn=*reinterpret_cast<BYTE**>(component+0xa0);
+        auto pawnState=FlagFind(pawn,0x23afeb0);
+        int slot=pawnState?*reinterpret_cast<int*>(pawnState+0x168):-1;
+        int flags=(active?1:0)|(ready?2:0);
+        if(slot>=1 && slot<=7 && flagSkillReadinessObserved[slot]!=flags) {
+            flagSkillReadinessObserved[slot]=flags;Emit("native_local_flag_ai_skill_readiness",slot,flags);
+        }
+    }
+    return ready;
 }
 inline bool FlagPosition(BYTE* actor,TwinKartRace::ArenaPoint& point,float* heading=nullptr) {
     if(!Live(actor))return false;
@@ -698,6 +936,9 @@ inline void __fastcall OnUnknown(void* raw,void* rawPawn,int slot,bool flag) {
     equipmentPawn=local && slot==0?pawn:nullptr;
     BYTE* account=nullptr;equipmentReady=equipmentPawn && ReadEquipmentPreset(equipmentPreset,&account);
     equipmentBodyReady=equipmentReady && ReadCurrentEquipmentBody(account,equipmentBody);
+    if(equipmentReady && nativeCharacterRules && !aiRoster.GetCharacter(0,equipmentPreset)) {
+        equipmentReady=equipmentBodyReady=false;Emit("native_local_event_player_character_missing",slot,0);
+    }
     if(local && aiRosterEnabled && AiSlot(slot,*reinterpret_cast<int*>(rule+0x130),*reinterpret_cast<int*>(rule+0x138))) {
         equipmentPawn=pawn;equipmentReady=aiRoster.Get(slot,equipmentPreset);equipmentBodyReady=false;
         Emit("native_local_ai_roster_slot",slot,equipmentReady?1:0);
@@ -830,8 +1071,37 @@ inline void __fastcall OnAutoDrive(void* raw,bool enabled) {
     }
     autoDrive(raw,enabled);
 }
+inline void RecordNativeFinishers(BYTE* component) {
+    if(!eventDiagnosticsInstalled || !TwinKartRace::CircuitMode(armedMode) || !InRaceWorld(component))return;
+    __try {
+        // 0x1971550 is a specific pawn-list component method, not a general
+        // world enumeration API: RaceResultComponent cannot be passed to it.
+        // Read exact live PawnState objects from the original registry instead.
+        // This is diagnostics-only, once per result; no native array is made.
+        using Type=void*(__fastcall*)();auto type=reinterpret_cast<Type>(image+0x23afeb0)();
+        auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
+        int count=*reinterpret_cast<int*>(image+0x69c28c4),observed=0;unsigned seen=0;
+        if(!type || !chunks || count<1 || count>2000000)return;
+        for(int index=0;index<count;++index) {
+                auto chunk=chunks[index/65536];if(!chunk || (chunk[index%65536].flags&0x30000000))continue;
+                auto state=static_cast<BYTE*>(chunk[index%65536].object);
+                if(!Live(state) || (*reinterpret_cast<unsigned*>(state+8)&0x18030) ||
+                   *reinterpret_cast<void**>(state+0x10)!=type || !InRaceWorld(state))continue;
+                auto progress=FlagFind(*reinterpret_cast<BYTE**>(state+0xa0),0x23cc170);
+                if(!progress || !InRaceWorld(progress))continue;
+                int slot=*reinterpret_cast<int*>(state+0x168),rank=*reinterpret_cast<int*>(progress+0x204);
+                float time=*reinterpret_cast<float*>(progress+0x20c);
+                if(slot<0 || slot>7 || (seen&(1u<<slot)) || rank<0 || rank>8 || !std::isfinite(time) || time<0 || time>86400)continue;
+                seen|=1u<<slot;++observed;
+                Emit("native_local_race_finish_rank",slot,rank);
+                Emit("native_local_race_finish_time_ms",slot,static_cast<int>(time*1000));
+        }
+        Emit("native_local_race_result_snapshot",-1,observed);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {Emit("native_local_race_result_snapshot_failed",-1,0);}
+}
 inline void __fastcall OnResultInit(void* raw,const void* resultClass,const void* playerClass,const void* pointClass,void** provider,void** styler) {
     auto component=static_cast<BYTE*>(raw);
+    RecordNativeFinishers(component);
     if(TwinKartRace::CircuitMode(armedMode) && InRaceWorld(component) && styler && !*styler) {
         // Original factories return native-owned TUniquePtr storage in
         // RDX; RCX is unused by these exact implementations. The original
@@ -906,14 +1176,29 @@ inline bool Install(BYTE* base,Event callback) {
         resultPatch.Restore();driverPatch.Restore();statePatch.Restore();spawnPatch.Restore();RestoreConstruction();return false;
     }
     flagNetMode=reinterpret_cast<NetMode>(image+0x43beaf0);
+    aiSkillNetMode=reinterpret_cast<NetMode>(image+0x43beaf0);
+    aiUseSkill=reinterpret_cast<UseSkillIfCan>(image+0x16b45e0);
+    baseSkillCanUse=reinterpret_cast<CanUseSkill>(image+0x16889a0);
+    currentLevelName=reinterpret_cast<CurrentLevelName>(image+0x3f43180);
     flagZoneNetMode=reinterpret_cast<NetMode>(image+0x3cb9a40);
     flagConfig=reinterpret_cast<FlagConfig>(image+0x186ee70);
     const BYTE flagBeginPrefix[]={0x40,0x55,0x53,0x57,0x48,0x8d,0x6c,0x24,0xb9,0x48,0x81,0xec,0x90,0x00,0x00,0x00};
+    const BYTE aiSkillCanUsePrefix[]={0x40,0x55,0x57,0x41,0x56,0x48,0x83,0xec,0x20,0x48,0x8b,0x81,0xa8,0x00,0x00,0x00};
     if(!flagBeginPatch.Entry(image+0x18f9aa0,flagBeginPrefix,sizeof(flagBeginPrefix),reinterpret_cast<void*>(OnFlagMovementBegin),reinterpret_cast<void**>(&flagMovementBegin)) ||
        !flagPhysicsPatch.Call(image+0x18f9ae3,reinterpret_cast<void*>(flagNetMode),reinterpret_cast<void*>(LocalFlagPhysicsNetMode)) ||
        !flagZonePatch.Call(image+0x18f86c6,reinterpret_cast<void*>(flagZoneNetMode),reinterpret_cast<void*>(LocalFlagZoneInitialization)) ||
        !flagConfigPatches[0].Call(image+0x18f94af,reinterpret_cast<void*>(flagConfig),reinterpret_cast<void*>(LocalFlagConfig)) ||
-       !flagConfigPatches[1].Call(image+0x18f9c78,reinterpret_cast<void*>(flagConfig),reinterpret_cast<void*>(LocalFlagConfig))) {
+       !flagConfigPatches[1].Call(image+0x18f9c78,reinterpret_cast<void*>(flagConfig),reinterpret_cast<void*>(LocalFlagConfig)) ||
+       !aiSkillModePatch.Call(image+0x14e1a0c,reinterpret_cast<void*>(aiSkillNetMode),reinterpret_cast<void*>(LocalAiSkillNetMode)) ||
+       !aiSkillUsePatch.Call(image+0x14e6389,reinterpret_cast<void*>(aiUseSkill),reinterpret_cast<void*>(OnAiUseSkill)) ||
+       !aiSkillCanUsePatch.Entry(image+0x14c0a70,aiSkillCanUsePrefix,sizeof(aiSkillCanUsePrefix),reinterpret_cast<void*>(OnAiCanUseSkill),reinterpret_cast<void**>(&aiSkillCanUse)) ||
+       !cubePathLevelPatch.Call(image+0x14d2384,reinterpret_cast<void*>(currentLevelName),reinterpret_cast<void*>(CubePathLevelName)) ||
+       !flagItemContextPatch.Call(image+0x153e6d4,reinterpret_cast<void*>(construct),reinterpret_cast<void*>(OnItemContextConstruct))) {
+        flagItemContextPatch.Restore();
+        cubePathLevelPatch.Restore();
+        aiSkillCanUsePatch.Restore();
+        aiSkillUsePatch.Restore();
+        aiSkillModePatch.Restore();
         for(auto& patch:flagConfigPatches)patch.Restore();flagZonePatch.Restore();flagPhysicsPatch.Restore();flagBeginPatch.Restore();
         bodyEquipmentPatch.Restore();characterEquipmentPatch.Restore();kartEquipmentPatch.Restore();splinePatch.Restore();activationPatch.Restore();managerPatch.Restore();
         resultPatch.Restore();driverPatch.Restore();statePatch.Restore();spawnPatch.Restore();RestoreConstruction();return false;
@@ -922,6 +1207,9 @@ inline bool Install(BYTE* base,Event callback) {
 }
 inline void Arm(int mode) {
     raceWorld.Reset();armedMode=mode;armed=TwinKartRace::PlayableMode(mode);
+    nativeCharacterRules=false;flagSkillsEnabled=false;flagSkillTickObserved=false;
+    cubeBaseTrack[0]=0;
+    for(auto& value:flagSkillReadinessObserved)value=-1;
     localAiPreparedMask=0;localStartRequested=false;
     for(auto& mirror:flagMirrors)mirror={};
     for(int i=0;i<8;++i){flagDrivers[i].Reset();flagDriverPawns[i]={};}

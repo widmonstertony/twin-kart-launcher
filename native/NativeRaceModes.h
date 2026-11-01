@@ -6,15 +6,21 @@ inline bool StandardMode(int mode) { return mode>=1 && mode<=6; }
 inline bool SpitemMode(int mode) { return mode>=105 && mode<=107; }
 inline bool InfiniteBoostMode(int mode) { return mode>=101 && mode<=103; }
 inline bool FlagMode(int mode) { return mode==104; }
+inline bool ItemLabMode(int mode) { return mode>=110 && mode<=112; }
+inline bool SpeedLabMode(int mode) { return mode>=113 && mode<=115; }
+inline bool LabMode(int mode) { return ItemLabMode(mode) || SpeedLabMode(mode); }
+// Only the solo/squad Cube assets are present in the supported original
+// catalog. Enum117 has no registered native duo asset in this client.
+inline bool CubeMode(int mode) { return mode==116 || mode==118; }
 // Spitem has distinct native game modes and result stylers, but shares the
 // RaceAiPawn/MajorConnect lifecycle. Flag and arena modes do not.
-inline bool CircuitMode(int mode) { return StandardMode(mode) || SpitemMode(mode) || InfiniteBoostMode(mode); }
+inline bool CircuitMode(int mode) { return StandardMode(mode) || SpitemMode(mode) || InfiniteBoostMode(mode) || LabMode(mode) || CubeMode(mode); }
 inline bool PlayableMode(int mode) { return CircuitMode(mode) || FlagMode(mode); }
-inline bool SpeedMode(int mode) { return (mode>=1 && mode<=3) || InfiniteBoostMode(mode); }
+inline bool SpeedMode(int mode) { return (mode>=1 && mode<=3) || InfiniteBoostMode(mode) || SpeedLabMode(mode); }
 inline int TeamSize(int mode) {
     if(FlagMode(mode))return 4;
     if(!CircuitMode(mode))return 0;
-    int group=SpitemMode(mode)?mode-105:InfiniteBoostMode(mode)?mode-101:(mode-1)%3;return group==0?1:group==1?2:4;
+    int group=CubeMode(mode)?mode-116:LabMode(mode)?(mode-110)%3:SpitemMode(mode)?mode-105:InfiniteBoostMode(mode)?mode-101:(mode-1)%3;return group==0?1:group==1?2:4;
 }
 inline bool TeamMode(int mode) { return TeamSize(mode)>1; }
 inline int TeamCount(int mode,int racers) {

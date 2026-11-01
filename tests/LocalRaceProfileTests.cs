@@ -35,6 +35,18 @@ static class LocalRaceProfileTests
                 Need(store.Load(GameEdition.Drift).Race.Mode==mode);
             }
             Need(!LocalRaceSettings.TrackSupports(32,105));
+            foreach(int mode in new[]{110,111,112,113,114,115,116,118}) {
+                var lab=new LocalRaceSettings { Mode=mode,AiCount=7 };
+                Need(lab.IsValid && LocalRaceSettings.TrackSupports(LocalRaceSettings.SpeedMode(mode)?4:2,mode));
+                Need(!LocalRaceSettings.TrackSupports(8,mode) && !LocalRaceSettings.TrackSupports(16,mode));
+                lab.AiCount=3;Need(lab.IsValid==(LocalRaceSettings.TeamSizeFor(mode)!=4));
+            }
+            foreach(int mode in new[]{100,108,109,117,119,120,121,122})Need(!new LocalRaceSettings { Mode=mode }.IsValid);
+            var eventProfile=new LocalRaceSettings { Mode=113,ModeProfile="speed_solo_ghost" };
+            profile.Race=eventProfile;store.Save(profile);Need(store.Load(GameEdition.Drift).Race.ModeProfile==eventProfile.ModeProfile);
+            eventProfile.WriteControl(Path.Combine(folder,"profile.control"));
+            Need(File.ReadAllText(Path.Combine(folder,"profile.control")).Contains(" speed_solo_ghost -\n"));
+            eventProfile.ModeProfile="ghost?game=Bad";Need(!eventProfile.IsValid);
             for(int mode=101;mode<=103;++mode) {
                 var boost=new LocalRaceSettings { Mode=mode,AiCount=7 };
                 Need(boost.IsValid && LocalRaceSettings.TrackSupports(4,mode) && !LocalRaceSettings.TrackSupports(2,mode));

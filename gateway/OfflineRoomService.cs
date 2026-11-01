@@ -189,6 +189,13 @@ namespace TwinKartLauncher.Gateway
                 character=selected.Character;costume=selected.Costume;
             }
             if(ai && aiKarts.Count!=0)kart=aiKarts[AiCatalogIndex("kart",slot,aiKarts.Count)];
+            var setting=room.Setting;
+            string required=setting==null?null:NativeRaceOptions.EventCharacter(setting.GameMode.RaceMode,setting.GameMode.Profile,slot);
+            if(required!=null && aiCharacters.Count!=0) {
+                var selected=aiCharacters.FirstOrDefault(value=>value.Character==required);
+                if(selected==null)throw new ArgumentException("本客户端缺少该活动规定的角色资源。");
+                character=selected.Character;costume=selected.Costume;
+            }
             return Object("accountId",identity,"profile",avatar,"slot",slot,"isSpectator",!ai && room.ObserverMode,
                 "joinId",slot+1,"chId",character??"","kartId",kart??"","costume",costume??"",
                 "state",1,"readyState",ai ? 0 : room.ReadyState,"crossPlay",false,"ai",ai);
@@ -281,7 +288,12 @@ namespace TwinKartLauncher.Gateway
                 var selected=ProfileJson.Object(queue[0]);object rawMode;
                 if(!selected.TryGetValue("raceMode",out rawMode) || !(rawMode is int) || !PacketJsonCodec.LocalRaceMode((int)rawMode))
                     throw new ArgumentException("Unsupported race mode.");
-                room.PrepareQuickRoom((int)rawMode,"Roulette_A01");
+                object rawProfile;string modeProfile="";
+                if(selected.TryGetValue("profile",out rawProfile) && rawProfile!=null) {
+                    if(!(rawProfile is string))throw new ArgumentException("Invalid mode profile.");
+                    modeProfile=NativeRaceOptions.Profile((string)rawProfile);
+                }
+                room.PrepareQuickRoom((int)rawMode,"Roulette_A01",modeProfile);
                 response["result"]=Object("code",0);response["mmTicket"]=room.SessionId;
                 object latency;response["useDefaultLatencyInfo"]=request.TryGetValue("useDefaultLatencyInfo",out latency) && latency is bool ? latency : true;
                 // The original client follows this notice with its native join
@@ -347,7 +359,11 @@ namespace TwinKartLauncher.Gateway
                 Environment.GetEnvironmentVariable("TWIN_KART_ROOM_CLIENT_SHA256"));
         }
         static bool Supports(Track track,int mode)
-        { return PacketJsonCodec.LocalRaceMode(mode) && (track.Mask & (1 << (mode==104?4:mode>=105?3:mode<=3 || mode>=101 && mode<=103?2:1)))!=0; }
+        {
+            if(!NativeRaceOptions.CubeTrack(mode,track.Id))return false;
+            return PacketJsonCodec.LocalTrackSupports(track.Mask,mode) ||
+                ((mode==116 || mode==118) && (track.Id=="Village_I05" || track.Id=="World_I11") && track.Mask==1);
+        }
         internal string Start(RoomState room)
         {
             lock(gate) {
@@ -363,13 +379,12 @@ namespace TwinKartLauncher.Gateway
                 // Repeated clicks cannot enqueue overlapping loading transitions.
                 if(lastIdentity!=null && !File.Exists(control+"."+lastIdentity+".result")) return "上一场开赛请求正在处理。";
                 int mode=room.RaceMode,ai=room.AiCount;
-                int group=mode>=105?mode-105:mode>=101?mode-101:(mode-1)%3;
-                int size=mode==104?4:group==0?1:group==1?2:4;
+                int size=PacketJsonCodec.LocalTeamSize(mode);
                 if(!PacketJsonCodec.LocalRaceMode(mode) || ai<1 || ai>7 ||
                     (size>1 && (ai+1<size*2 || (ai+1)%size!=0))) return "请在房间添加 AI：双人组需 3、5 或 7 个，四人组需 7 个，个人赛需 1–7 个。";
                 var setting=room.Setting;
                 string options=NativeRaceOptions.Merge(setting.LevelOption,setting.CustomGameOption);
-                string profile=NativeRaceOptions.Profile(setting.GameMode.Profile);
+                string profile=NativeRaceOptions.CanonicalProfile(mode,setting.GameMode.Profile);
                 var eligible=tracks.Where(t=>Supports(t,mode)).ToArray();
                 Track track=eligible.FirstOrDefault(t=>t.Id==setting.Track);
                 if(IsSelector(setting.Track) && eligible.Length>0) {
@@ -378,7 +393,7 @@ namespace TwinKartLauncher.Gateway
                     // observed speed/item/Spitem mask, never a wildcard for Flag.
                     if(!selectors.TryGetValue(setting.Track,out selectorMask))
                         selectorMask=setting.Track=="Roulette_A01"?14:0;
-                    if(!Supports(new Track {Mask=selectorMask},mode))return "所选随机赛道类型不支持当前模式，请重新选择。";
+                    if(!PacketJsonCodec.LocalTrackSupports(selectorMask,mode))return "所选随机赛道类型不支持当前模式，请重新选择。";
                     var pool=eligible.Where(t=>eligible.Length==1 || t.Id!=lastRandomTrack).ToArray();
                     byte[] draw=new byte[4];using(var rng=RandomNumberGenerator.Create())rng.GetBytes(draw);
                     track=pool[BitConverter.ToUInt32(draw,0)%(uint)pool.Length];

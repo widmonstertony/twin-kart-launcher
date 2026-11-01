@@ -32,7 +32,7 @@ try {
             if($LASTEXITCODE -ne 0) { throw 'Native track catalog test build failed' }
             & (Join-Path $build 'NativeTrackCatalogTests.exe')
             if($LASTEXITCODE -ne 0) { throw 'Native track catalog checks failed' }
-            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeLocalAiLifecycleTests.exe (Join-Path $projectRoot 'tests\LocalAiLifecycleTests.cpp')
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /Fo./ /FeLocalAiLifecycleTests.exe (Join-Path $projectRoot 'tests\LocalAiLifecycleTests.cpp') /link bcrypt.lib
             if($LASTEXITCODE -ne 0) { throw 'Local AI lifecycle test build failed' }
             & (Join-Path $build 'LocalAiLifecycleTests.exe')
             if($LASTEXITCODE -ne 0) { throw 'Local AI lifecycle checks failed' }

@@ -145,5 +145,32 @@ public:
         value={};for(unsigned i=0;i<6;++i)value.character[i]=Borrow(current[slot].character[i]);
         for(unsigned i=0;i<10;++i)value.kart[i]=Borrow(current[slot].kart[i]);return true;
     }
+    // Special events may repeat a prescribed character and include the local
+    // driver. Change only character descriptors; keep randomized AI karts and
+    // the driver's own kart/tuning. Validate the whole roster before commit.
+    bool ApplyCharacterRoles(const wchar_t* const* roles,Available available,void* context) {
+        if(!roles || !available || opponents<1 || opponents>7)return false;
+        auto next=current;
+        for(int slot=0;slot<=opponents;++slot) {
+            if(!roles[slot] || !roles[slot][0])continue;
+            const Character* found=nullptr;
+            for(const auto& character:characters)if(character[0]==roles[slot]) {if(found)return false;found=&character;}
+            if(!found)return false;
+            auto selected=*found;
+            for(unsigned field=0;field<6;++field) {
+                if(selected[field].empty())continue;
+                int status=available(selected[field],context);
+                if(status==1)continue;
+                if(status!=0 || field<2)return false;
+                selected[field].clear();
+            }
+            next[slot].character=std::move(selected);
+        }
+        current=std::move(next);return true;
+    }
+    bool GetCharacter(int slot,TwinKartEquipment::Preset& value) const {
+        if(slot<0 || slot>opponents || current[slot].character[0].empty())return false;
+        for(unsigned field=0;field<6;++field)value.character[field]=Borrow(current[slot].character[field]);return true;
+    }
 };
 }

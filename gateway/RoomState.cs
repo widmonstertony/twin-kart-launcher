@@ -42,14 +42,15 @@ namespace TwinKartLauncher.Gateway
         // The main-lobby mode buttons enter the original room/setup surface.
         // This prepares only its local state; the client still performs the
         // normal join, map/mode edits and Play request through original packets.
-        internal void PrepareQuickRoom(int mode, string defaultTrack)
+        internal void PrepareQuickRoom(int mode, string defaultTrack, string modeProfile = "")
         {
             if (!PacketJsonCodec.LocalRaceMode(mode) || String.IsNullOrEmpty(defaultTrack))
                 throw new ArgumentException("Invalid quick-race setup.");
+            modeProfile=NativeRaceOptions.CanonicalProfile(mode,modeProfile);
             sessionId = Guid.NewGuid().ToString("N");
             track = defaultTrack; raceMode = mode;
             setting = new CsRaceGameContract { Track = defaultTrack, Lap = 999,
-                GameMode = new KtGameModeContract { RaceMode = mode, Profile = "" } };
+                GameMode = new KtGameModeContract { RaceMode = mode, Profile = modeProfile } };
             joined = playRequested = hostMode = observerMode = hideGameKey = false;
             quickRoomPrepared = true;
             readyState = 0; aiSlots.Clear();
@@ -118,10 +119,12 @@ namespace TwinKartLauncher.Gateway
             // some client paths send their ordinary create request.  Keep the
             // issued ticket and seven preview members across that continuation.
             bool preserveQuickRoom=quickRoomPrepared && sessionId!=null;
+            string selectedProfile=preserveQuickRoom && setting!=null && setting.GameMode.RaceMode==packet.Setting.GameMode.RaceMode && String.IsNullOrEmpty(packet.Setting.GameMode.Profile)?setting.GameMode.Profile:null;
             if(!preserveQuickRoom)sessionId = Guid.NewGuid().ToString("N");
             track = packet.Setting.Track;
             raceMode = packet.Setting.GameMode.RaceMode;
             setting = Copy(packet.Setting); observerMode = packet.ObserverMode; hideGameKey = packet.HideGameKey ?? false;
+            if(!String.IsNullOrEmpty(selectedProfile))setting.GameMode.Profile=selectedProfile;
             joined = false;
             playRequested = false;
             hostMode = false;

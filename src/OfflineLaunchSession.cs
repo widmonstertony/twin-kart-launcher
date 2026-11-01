@@ -162,6 +162,10 @@ namespace TwinKartLauncher
                         start.EnvironmentVariables.Remove("TWIN_KART_ROOM_RACE_CONTROL");
                         start.EnvironmentVariables.Remove("TWIN_KART_ROOM_TRACK_REPORT");
                         start.EnvironmentVariables.Remove("TWIN_KART_ROOM_CLIENT_SHA256");
+                        start.EnvironmentVariables.Remove("TWIN_KART_EVENT_MODES");
+                        string eventModes;
+                        if(hasTrackReport && manifest.Environment!=null && manifest.Environment.TryGetValue("TWIN_KART_EVENT_MODES",out eventModes) && eventModes=="1")
+                            start.EnvironmentVariables["TWIN_KART_EVENT_MODES"]="1";
                         if(hasTrackReport) {
                             start.EnvironmentVariables["TWIN_KART_ROOM_RACE_CONTROL"]=raceControl;
                             start.EnvironmentVariables["TWIN_KART_ROOM_TRACK_REPORT"]=roomTrackReport;

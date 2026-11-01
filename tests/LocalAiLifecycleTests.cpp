@@ -15,7 +15,7 @@ std::array<TwinKartCamera::ObjectSlot,512> objectSlots{};
 TwinKartCamera::ObjectSlot* chunks[]{objectSlots.data()};
 std::vector<std::unique_ptr<BYTE[]>> objects;
 std::array<void*,200> pawnTable{};
-struct Components {BYTE* state=nullptr;BYTE* path=nullptr;BYTE* behavior=nullptr;BYTE* movement=nullptr;bool prepared=false;BYTE* kart=nullptr;BYTE* character=nullptr;BYTE* replication=nullptr;};
+struct Components {BYTE* state=nullptr;BYTE* path=nullptr;BYTE* behavior=nullptr;BYTE* movement=nullptr;bool prepared=false;BYTE* kart=nullptr;BYTE* character=nullptr;BYTE* replication=nullptr;BYTE* progress=nullptr;BYTE* slots=nullptr;};
 std::unordered_map<BYTE*,Components> components;
 std::unordered_map<void*,BYTE*> worlds;
 BYTE *world=nullptr,*otherWorld=nullptr,*major=nullptr,*phase=nullptr,*rule=nullptr,*foreignPhase=nullptr,*foreignRule=nullptr;
@@ -24,8 +24,35 @@ BYTE *speedTeamType=nullptr,*itemTeamType=nullptr;
 BYTE *phaseType=nullptr,*gameState=nullptr,*manager=nullptr,*foreignManager=nullptr;
 BYTE *playerWaitType=nullptr,*playerWait=nullptr;
 BYTE *majorType=nullptr;
+BYTE* progressType=nullptr;
+std::vector<std::array<int,2>> observedRanks,observedTimes;
+void ObserveFinish(const char* name,int slot,int value) {
+    if(!strcmp(name,"native_local_race_finish_rank"))observedRanks.push_back({slot,value});
+    if(!strcmp(name,"native_local_race_finish_time_ms"))observedTimes.push_back({slot,value});
+}
 BYTE* flagTypes[5]{};
 BYTE *flagGameModeType=nullptr,*flagConfigType=nullptr;
+BYTE *contextType=nullptr,*flagContextType=nullptr;
+BYTE *itemSlotType=nullptr,*itemStackType=nullptr,*cubeStacks[2]{};
+void* __fastcall ItemSlotType(){return itemSlotType;}void* __fastcall ItemStackType(){return itemStackType;}
+int cubeObserved[4]{-1,-1,-1,-1};unsigned cubeNativeCalls=0;
+void Check(bool value);
+void ObserveCube(const char* name,int slot,int value) {
+    Check(slot==1);
+    const char* names[]={"native_local_cube_pickup_designated_first","native_local_cube_pickup_designated_second","native_local_cube_pickup_items_before","native_local_cube_pickup_items_after"};
+    for(int i=0;i<4;++i)if(!strcmp(name,names[i]))cubeObserved[i]=value;
+}
+void __fastcall NativeCubeOverlap(void*,void*,void*) {
+    ++cubeNativeCalls;for(auto stack:cubeStacks)if(stack)*reinterpret_cast<int*>(stack+0xc8)=1;
+}
+void* __fastcall ContextType(){return contextType;}
+void* __fastcall FlagContextType(){return flagContextType;}
+unsigned contextConstructCalls=0;BYTE *seenContextType=nullptr,*seenContextOwner=nullptr;
+void* __fastcall ContextConstruct(void* raw) {
+    ++contextConstructCalls;auto values=static_cast<BYTE**>(raw);
+    seenContextType=values?values[0]:nullptr;seenContextOwner=values?values[1]:nullptr;
+    return seenContextType;
+}
 BYTE* flagZoneType=nullptr;
 alignas(8) BYTE flagNotification[0x30]{};
 int originalNetMode=0;
@@ -73,6 +100,8 @@ BYTE* Object(size_t size,BYTE* type=nullptr,BYTE* owner=nullptr,BYTE* inWorld=nu
     *reinterpret_cast<int*>(fixtureImage+0x69c28c4)=static_cast<int>(objects.size());return object;
 }
 BYTE* __fastcall World(void* object){auto found=worlds.find(object);return found==worlds.end()?nullptr:found->second;}
+unsigned contextActorWorldCalls=0;
+BYTE* __fastcall ContextActorWorld(void* object){++contextActorWorldCalls;return World(object);}
 void* __fastcall AiType(){return aiType;}void* __fastcall StateType(){return stateType;}
 void* __fastcall FlagAiType(){return flagAiType;}
 void* __fastcall FlagNotifyType(){return flagTypes[0];}
@@ -86,6 +115,22 @@ void* __fastcall SpeedTeamType(){return speedTeamType;}void* __fastcall ItemTeam
 void* __fastcall PhaseType(){return phaseType;}
 void* __fastcall PlayerWaitType(){return playerWaitType;}
 void* __fastcall MajorType(){return majorType;}
+void* __fastcall ProgressType(){return progressType;}
+unsigned originalSkillReadinessCalls=0,baseSkillReadinessCalls=0;
+bool __fastcall OriginalSkillReadiness(void*,void*){++originalSkillReadinessCalls;return false;}
+bool __fastcall SharedSkillReadiness(void*,void* index){++baseSkillReadinessCalls;static_cast<BYTE*>(index)[4]=0;return true;}
+void __fastcall FlagSkillPhaseName(void* output,const wchar_t* name,int){
+    *static_cast<unsigned long long*>(output)=!wcscmp(name,L"Game")?101:!wcscmp(name,L"Overtime")?102:!wcscmp(name,L"LastSpurt")?103:0;
+}
+wchar_t cubeFixtureName[96]=L"Cube_Desert_I06",cubeFixtureStorage[96]{};
+unsigned cubeLevelCalls=0,cubeAssignments=0;
+TwinKartRace::ReturnString* __fastcall CubeCurrentName(TwinKartRace::ReturnString* output,void*,bool) {
+    ++cubeLevelCalls;wcscpy_s(cubeFixtureStorage,cubeFixtureName);int n=static_cast<int>(wcslen(cubeFixtureStorage)+1);
+    *output={cubeFixtureStorage,n,96};return output;
+}
+void* __fastcall CubeAssignName(TwinKartRace::ReturnString* target,const TwinKartRace::ReturnString* source) {
+    ++cubeAssignments;wcscpy_s(cubeFixtureStorage,source->data);*target={cubeFixtureStorage,source->count,96};return target;
+}
 void* __fastcall PresetType(){return presetType;}void* __fastcall KartType(){return kartType;}void* __fastcall CharacterType(){return characterType;}
 void* __fastcall AccountType(){return accountType;}void* __fastcall ReplicationType(){return replicationType;}
 BYTE* __fastcall Find(void* raw,void* type) {
@@ -96,6 +141,8 @@ BYTE* __fastcall Find(void* raw,void* type) {
     if(raw==gameState && type==majorType)return major;
     auto found=components.find(static_cast<BYTE*>(raw));if(found==components.end())return nullptr;auto& c=found->second;
     if(type==stateType)return c.state;if(type==pathType)return c.path;if(type==movementType)return c.movement;
+    if(type==progressType)return c.progress;
+    if(type==itemSlotType)return c.slots;
     if(type==kartType)return c.kart;if(type==characterType)return c.character;
     if(type==replicationType)return c.replication;
     if((type==speedType || type==itemType || type==speedTeamType || type==itemTeamType) && c.behavior && *reinterpret_cast<void**>(c.behavior+0x10)==type)return c.behavior;
@@ -306,6 +353,17 @@ int main(){try{
     R::equipmentPawn=pawns[0];R::equipmentReady=R::ReadEquipmentPreset(R::equipmentPreset);
     std::thread wrongOwner([&]{alignas(8) BYTE desired[0xb8]{};R::OnKartDescriptorEqual(components[pawns[0]].kart+0x10b0,desired);});wrongOwner.join();
     Need(equipmentCopies==51,"Non-game thread applied borrowed account equipment");
+    std::string eventCatalog="TKAI1\n";
+    for(int id=1;id<=9;++id)eventCatalog+="C Character:"+std::to_string(id)+" Costume:"+std::to_string(id)+" - - - -\nK Kart:"+std::to_string(id)+" - - - - - - - - -\n";
+    auto available=[](const std::wstring&,void*)->int{return 1;};
+    Need(R::aiRoster.Load(eventCatalog.data(),eventCatalog.size()) && R::aiRoster.Prepare(7,ownerPreset,available,nullptr),"Event roster fixture preparation");
+    const wchar_t* roles[8]{};for(auto& role:roles)role=L"Character:2";
+    Need(R::aiRoster.ApplyCharacterRoles(roles,available,nullptr),"Registered event character roster");
+    R::nativeCharacterRules=true;unsigned beforeFixed=equipmentCopies;
+    R::OnUnknown(major,pawns[0],0,false);
+    Need(equipmentCopies==beforeFixed+17 && !wcscmp(observedCharacter.data,L"Character:2") && !wcscmp(observedKart.data,L"SelectedKart"),
+        "Native fixed-character rules were replaced by the player's ordinary character preset or disabled kart customization");
+    R::nativeCharacterRules=false;
     R::equipmentPawn=nullptr;R::equipmentReady=false;exerciseEquipment=false;
     speedTeamType=Object(0x40);itemTeamType=Object(0x40);
     Stub(0x2218390,reinterpret_cast<void*>(SpeedTeamType));Stub(0x22174e0,reinterpret_cast<void*>(ItemTeamType));
@@ -371,6 +429,36 @@ int main(){try{
     R::flagPhysicsScope=phase;
     Need(R::LocalFlagPhysicsNetMode(world)==3 && R::LocalFlagPhysicsNetMode(otherWorld)==0,"Local projectile selection escaped its Flag world");
     originalNetMode=2;Need(R::LocalFlagPhysicsNetMode(world)==2,"Flag physics altered a non-standalone world");originalNetMode=0;
+    R::aiSkillNetMode=NativeNetMode;
+    Need(R::LocalAiSkillNetMode(world)==1 && R::LocalAiSkillNetMode(otherWorld)==0,"Native AI skill timer authority did not stay inside its owned standalone race");
+    originalNetMode=2;Need(R::LocalAiSkillNetMode(world)==2,"AI skill timer changed a listen-server mode");originalNetMode=0;
+    int wrongThreadSkillMode=-1;std::thread skillThread([&]{wrongThreadSkillMode=R::LocalAiSkillNetMode(world);});skillThread.join();
+    Need(wrongThreadSkillMode==0,"AI skill timer authority escaped the game thread");
+    R::aiSkillCanUse=OriginalSkillReadiness;R::baseSkillCanUse=SharedSkillReadiness;
+    Stub(0x22ac6a0,reinterpret_cast<void*>(PhaseType));Stub(0x2589130,reinterpret_cast<void*>(FlagSkillPhaseName));
+    auto flagSkillPhase=Object(0x40,nullptr,nullptr,world);
+    *reinterpret_cast<BYTE**>(phase+0x110)=flagSkillPhase;
+    BYTE skillIndex[8]{};skillIndex[4]=1;
+    R::flagSkillsEnabled=false;
+    Need(!R::OnAiCanUseSkill(phase,skillIndex) && originalSkillReadinessCalls==1 && !baseSkillReadinessCalls,"Ordinary Flag readiness was replaced");
+    R::flagSkillsEnabled=true;*reinterpret_cast<unsigned long long*>(flagSkillPhase+0x28)=101;
+    Need(R::OnAiCanUseSkill(phase,skillIndex) && baseSkillReadinessCalls==1 && !skillIndex[4],"Skill Flag did not use the native shared cooldown/readiness contract during Game");
+    *reinterpret_cast<unsigned long long*>(flagSkillPhase+0x28)=102;
+    Need(R::OnAiCanUseSkill(phase,skillIndex) && baseSkillReadinessCalls==2,"Skill Flag overtime was blocked by absent circuit race timers");
+    *reinterpret_cast<unsigned long long*>(flagSkillPhase+0x28)=999;skillIndex[4]=1;
+    Need(!R::OnAiCanUseSkill(phase,skillIndex) && !skillIndex[4] && baseSkillReadinessCalls==2,"Skill Flag permitted skill readiness outside gameplay");
+    Need(!R::OnAiCanUseSkill(foreignPhase,skillIndex) && originalSkillReadinessCalls==2,"Skill Flag readiness escaped its bound world");
+    R::armedMode=113;Need(!R::OnAiCanUseSkill(phase,skillIndex) && originalSkillReadinessCalls==3,"Circuit AI readiness was replaced");
+    R::armedMode=104;R::flagSkillsEnabled=false;*reinterpret_cast<BYTE**>(phase+0x110)=nullptr;
+    R::currentLevelName=CubeCurrentName;Stub(0x9118f0,reinterpret_cast<void*>(CubeAssignName));
+    TwinKartRace::ReturnString pathName{};R::armedMode=116;wcscpy_s(R::cubeBaseTrack,L"Desert_I06");
+    Need(R::CubePathLevelName(&pathName,world,true)==&pathName && !wcscmp(pathName.data,L"Desert_I06") && cubeAssignments==1,"Cube AI path did not retain its explicit base-track resource identity");
+    Need(R::CubePathLevelName(&pathName,otherWorld,true)==&pathName && !wcscmp(pathName.data,L"Cube_Desert_I06") && cubeAssignments==1,"Cube AI path alias escaped its serial-bound world");
+    wcscpy_s(cubeFixtureName,L"Cube_Forest_I05");R::CubePathLevelName(&pathName,world,true);
+    Need(!wcscmp(pathName.data,L"Cube_Forest_I05") && cubeAssignments==1,"Cube path mapping silently normalized another world");
+    wcscpy_s(cubeFixtureName,L"Cube_Desert_I06");R::armedMode=4;R::CubePathLevelName(&pathName,world,true);
+    Need(!wcscmp(pathName.data,L"Cube_Desert_I06") && cubeAssignments==1 && cubeLevelCalls==4,"Cube path mapping changed ordinary gameplay or failed native forwarding");
+    R::armedMode=104;R::cubeBaseTrack[0]=0;
     R::flagPhysicsScope=nullptr;
     flagZoneType=Object(0x40);Stub(0x22add30,reinterpret_cast<void*>(FlagZoneType));
     auto goal=Object(0x290,flagZoneType,nullptr,world);R::flagZoneNetMode=NativeNetMode;
@@ -450,6 +538,60 @@ int main(){try{
         "Local short-room readiness submitted duplicate native start notices");
     puts("PASS team lifecycle: duo/squad speed/item, balanced human+AI teams, native team behavior and result factories, foreign-world isolation.");
     puts("PASS production equipment registration scope: current account preset/body -> human kart/character/physics hooks, preserved native channel and fallback, unchanged AI/foreign-world defaults, ambiguous/expired preset rejection, thread ownership and registration-lifetime cleanup. Synthetic interfaces only.");
+    malformed=false;progressType=Object(0x40);Stub(0x23cc170,reinterpret_cast<void*>(ProgressType));
+    for(int slot=0;slot<8;++slot) {
+        auto progress=Object(0x240,progressType,pawns[slot],world);components[pawns[slot]].progress=progress;
+        *reinterpret_cast<int*>(progress+0x204)=slot;
+        *reinterpret_cast<float*>(progress+0x20c)=slot?20.5f+slot:0;
+    }
+    R::event=ObserveFinish;R::eventDiagnosticsInstalled=true;R::armedMode=116;
+    unsigned beforeFinishQueries=queries;R::RecordNativeFinishers(phase);
+    Need(observedRanks.size()==8 && observedTimes.size()==8 && observedRanks[7][0]==7 && observedRanks[7][1]==7 && observedTimes[7][1]==27500 && queries==beforeFinishQueries,"Native result diagnostics changed rank/time or called a pawn-list method on an unrelated result component");
+    R::RecordNativeFinishers(foreignPhase);Need(observedRanks.size()==8 && queries==beforeFinishQueries,"Native result diagnostics escaped the owned world");
+    *reinterpret_cast<int*>(components[pawns[7]].progress+0x204)=99;R::RecordNativeFinishers(phase);
+    Need(observedRanks.size()==15 && *reinterpret_cast<int*>(components[pawns[7]].progress+0x204)==99,"Native result diagnostics accepted invalid ranks or rewrote gameplay");
+    auto retiredState=components[pawns[6]].state;objectSlots[*reinterpret_cast<int*>(retiredState+0xc)].flags=0x30000000;
+    worlds[components[pawns[5]].state]=otherWorld;R::RecordNativeFinishers(phase);
+    Need(observedRanks.size()==20 && queries==beforeFinishQueries && frees==queries,"Native result diagnostics accepted a retired/foreign state or allocated a native pawn list");
+    worlds[components[pawns[5]].state]=world;objectSlots[*reinterpret_cast<int*>(retiredState+0xc)].flags=0;
+    contextType=Object(0x40);flagContextType=Object(0x40);
+    Stub(0x22d8460,reinterpret_cast<void*>(ContextType));Stub(0x22acef0,reinterpret_cast<void*>(FlagContextType));
+    auto savedConstruct=R::construct;R::construct=ContextConstruct;
+    alignas(8) BYTE contextParameters[0x40]{};auto parameterValues=reinterpret_cast<BYTE**>(contextParameters);
+    parameterValues[0]=contextType;parameterValues[1]=pawns[1];contextParameters[0x30]=0xa5;
+    auto contextPawnTable=pawnTable;contextPawnTable[0x160/8]=reinterpret_cast<void*>(ContextActorWorld);
+    *reinterpret_cast<void**>(pawns[1])=contextPawnTable.data();
+    R::armedMode=104;*reinterpret_cast<void**>(pawns[1]+0x10)=flagAiType;
+    Need(R::OnItemContextConstruct(contextParameters)==flagContextType && seenContextOwner==pawns[1] && parameterValues[0]==contextType && contextParameters[0x30]==0xa5 && contextConstructCalls==1 && contextActorWorldCalls==1,"Flag AI did not use the actor-world ABI/select native context before construction or rewrote caller parameters");
+    worlds[pawns[1]]=otherWorld;R::OnItemContextConstruct(contextParameters);
+    Need(seenContextType==contextType && contextConstructCalls==2,"Flag context selection escaped its owned world");worlds[pawns[1]]=world;
+    R::armedMode=116;R::OnItemContextConstruct(contextParameters);
+    Need(seenContextType==contextType && contextConstructCalls==3,"Flag context selection changed a circuit context");
+    R::armedMode=104;parameterValues[0]=flagContextType;R::OnItemContextConstruct(contextParameters);
+    Need(seenContextType==flagContextType && contextConstructCalls==4,"Existing special context did not forward once");
+    parameterValues[0]=contextType;*reinterpret_cast<void**>(pawns[1]+0x10)=aiType;R::OnItemContextConstruct(contextParameters);
+    Need(seenContextType==contextType && contextConstructCalls==5,"Flag context selection changed a different pawn class");
+    *reinterpret_cast<void**>(pawns[1])=pawnTable.data();
+    R::construct=savedConstruct;
+    itemSlotType=Object(0x40);itemStackType=Object(0x40);
+    Stub(0x22ef370,reinterpret_cast<void*>(ItemSlotType));Stub(0x22ef0d0,reinterpret_cast<void*>(ItemStackType));
+    auto slots=Object(0x200,itemSlotType,pawns[1],world);components[pawns[1]].slots=slots;
+    struct ItemArray {BYTE** data;int count,capacity;};BYTE* chunkObjects[2]{pawns[1],pawns[1]};
+    for(int i=0;i<2;++i){cubeStacks[i]=Object(0x180,itemStackType,pawns[1],world);*reinterpret_cast<ItemArray*>(cubeStacks[i]+0xc0)={chunkObjects,0,2};}
+    *reinterpret_cast<ItemArray*>(slots+0x170)={cubeStacks,2,2};
+    auto cubeActor=Object(0x550,nullptr,nullptr,world);cubeActor[0x228]=3;cubeActor[0x2c0]=6;
+    auto itemContext=Object(0x200,nullptr,pawns[1],world);
+    R::event=ObserveCube;R::armedMode=116;R::cubeAuthOverlap=NativeCubeOverlap;
+    R::OnCubeAuthOverlap(cubeActor,pawns[1],itemContext);
+    Need(cubeNativeCalls==1 && cubeObserved[0]==3 && cubeObserved[1]==6 && cubeObserved[2]==0 && cubeObserved[3]==2,"Cube observer lost native double-item grant values or forwarding");
+    for(auto& value:cubeObserved)value=-1;worlds[cubeActor]=otherWorld;R::OnCubeAuthOverlap(cubeActor,pawns[1],itemContext);
+    Need(cubeNativeCalls==2 && cubeObserved[0]==-1,"Cube observer escaped its actor world");worlds[cubeActor]=world;
+    R::armedMode=4;R::OnCubeAuthOverlap(cubeActor,pawns[1],itemContext);
+    Need(cubeNativeCalls==3 && cubeObserved[0]==-1,"Cube observer changed ordinary item pickup");
+    R::armedMode=116;*reinterpret_cast<ItemArray*>(slots+0x170)={reinterpret_cast<BYTE**>(1),2,2};
+    R::OnCubeAuthOverlap(cubeActor,pawns[1],itemContext);
+    Need(cubeNativeCalls==4 && cubeObserved[0]==-1,"Malformed native item array leaked diagnostics or suppressed forwarding");
+    R::eventDiagnosticsInstalled=false;R::event=nullptr;
     R::armed=false;before=queries;R::OnActivationBegin(rule);Need(queries==before && !errors,"Unarmed native forwarding changed preparation");
     R::raceWorld.Reset();VirtualFree(fixtureImage,0,MEM_RELEASE);fixtureImage=nullptr;
     puts("PASS production local AI preparation and settlement boundary with original synthetic native interfaces: seven speed/item AI, client-first and async-spline ordering, native forwarding, world isolation, temporary-array cleanup, mode-aware missing-style fallback and preserved result/provider ownership. No game code, driving or fabricated results executed.");return 0;

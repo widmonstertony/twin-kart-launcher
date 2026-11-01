@@ -18,6 +18,9 @@
 #include "NativeTrackCatalog.h"
 #include "NativeReturnRoute.h"
 #include "NativeRacePreparation.h"
+#include "NativeModeBinding.h"
+#include "NativeEventMenu.h"
+#include "NativeCubeWorld.h"
 
 // Original game-thread bridge for exact-build native race preparation work.
 // Track lookup and an opt-in native local-host candidate. A travel request is
@@ -258,7 +261,7 @@ BYTE* NativeTrackSelection(BYTE* account) {
 }
 void InitializeRuntime(void* raw) {
     auto& value=*static_cast<Query*>(raw); value.executedThread=GetCurrentThreadId();
-    bool ready=TwinKartLocalRace::Install(image,RuntimeEvent);
+    bool ready=TwinKartLocalRace::Install(image,RuntimeEvent) && TwinKartLocalRace::InstallEventDiagnostics();
     wchar_t flagDiagnostic[4]{};
     if(ready && GetEnvironmentVariableW(L"TWIN_KART_FLAG_DIAGNOSTICS",flagDiagnostic,4) && flagDiagnostic[0]==L'1') {
         TwinKartLocalRace::flagDiagnostics=true;AddVectoredExceptionHandler(1,CaptureFlagFault);
@@ -274,10 +277,131 @@ int NativeFault(EXCEPTION_POINTERS* error,StartQuery& query) {
     query.faultRva=address>=base && address-base<0x8657000?address-base:0;
     return EXCEPTION_EXECUTE_HANDLER;
 }
+bool ModeNameText(unsigned long long name,wchar_t* destination,size_t capacity) {
+    NativeString value{};bool valid=false;
+    __try {
+        using Text=NativeString*(__fastcall*)(NativeString*,unsigned long long);
+        reinterpret_cast<Text>(image+0x3bcd370)(&value,name);
+        valid=value.data && value.count>1 && static_cast<size_t>(value.count)<=capacity && value.capacity>=value.count && !value.data[value.count-1];
+        if(valid)memcpy(destination,value.data,static_cast<size_t>(value.count)*sizeof(wchar_t));
+    } __finally {if(value.data)reinterpret_cast<void(__fastcall*)(void*)>(image+0x248b950)(const_cast<wchar_t*>(value.data));}
+    return valid;
+}
+bool InspectOriginalMode(void* raw,TwinKartRace::ModeDefinition& result,void*) {
+    BYTE* asset=static_cast<BYTE*>(raw);if(!TwinKartLocalRace::Live(asset) || (*reinterpret_cast<unsigned*>(asset+8)&0x18030))return false;
+    const auto& travel=*reinterpret_cast<TwinKartEquipment::String*>(asset+0x238);
+    if(!TwinKartEquipment::Valid(travel,64) || !TwinKartEquipment::Nonempty(travel))return false;
+    result.asset=asset;result.kind=*reinterpret_cast<int*>(asset+0x230);
+    result.teamSize=*reinterpret_cast<int*>(asset+0x248);result.teamCount=*reinterpret_cast<int*>(asset+0x24c);
+    memcpy(result.travelName,travel.data,static_cast<size_t>(travel.count)*sizeof(wchar_t));
+    return ModeNameText(*reinterpret_cast<unsigned long long*>(asset+0x40),result.gameClass,ARRAYSIZE(result.gameClass));
+}
+bool OriginalMode(const TwinKartRace::Request& request,TwinKartRace::ModeDefinition& result) {
+    if(GetCurrentThreadId()!=queue.ThreadId())return false;
+    using Type=void*(__fastcall*)();void* type=reinterpret_cast<Type>(image+0x22b8d70)();
+    auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
+    int count=*reinterpret_cast<int*>(image+0x69c28c4);BYTE* found=nullptr;
+    if(!type || !chunks || count<1 || count>2000000)return false;
+    for(int index=0;index<count;++index) {
+        auto chunk=chunks[index/65536];if(!chunk || (chunk[index%65536].flags&0x30000000))continue;
+        auto object=static_cast<BYTE*>(chunk[index%65536].object);
+        if(!TwinKartLocalRace::Live(object) || (*reinterpret_cast<unsigned*>(object+8)&0x18030) || *reinterpret_cast<void**>(object+0x10)!=type)continue;
+        if(found)return false;found=object;
+    }
+    if(!found)return false;
+    struct Entries {TwinKartRace::ModeMapEntry* data;int count,capacity;};
+    auto entries=*reinterpret_cast<Entries*>(found+0x80);
+    if(entries.count<1 || entries.count>512 || entries.capacity<entries.count || entries.capacity>4096)return false;
+    return TwinKartRace::ResolveModeBinding(request,entries.data,entries.count,InspectOriginalMode,nullptr,result);
+}
+bool RegisteredCubeWorld(const TwinKartRace::CubeWorld& definition) {
+    // Same pinned IAssetRegistry/GetAllAssets ABI used by this project's
+    // existing read-only inventory. Retain one bounded engine-owned snapshot
+    // until process exit: FAssetData's tag destructor ABI is not guessed here.
+    struct Assets {BYTE* data;int count,capacity;};static Assets snapshot{};
+    wchar_t expected[1024]{};if(!TwinKartRace::CubeWorldObjectPath(definition,expected,ARRAYSIZE(expected)))return false;
+    auto registry=*reinterpret_cast<BYTE**>(image+0x699f298);if(!registry)return false;
+    auto table=*reinterpret_cast<BYTE***>(registry);
+    if(table[0x60/8]<image || table[0x60/8]>=image+0x4ed0000 || table[0x248/8]<image || table[0x248/8]>=image+0x4ed0000)return false;
+    if(!snapshot.data) {
+        using Loading=bool(__fastcall*)(void*);using All=bool(__fastcall*)(void*,Assets*,bool);
+        if(reinterpret_cast<Loading>(table[0x248/8])(registry) ||
+           !reinterpret_cast<All>(table[0x60/8])(registry,&snapshot,true))return false;
+    }
+    if(!snapshot.data || snapshot.count<1 || snapshot.count>snapshot.capacity || snapshot.capacity>1000000)return false;
+    unsigned long long worldType=0;using Name=void*(__fastcall*)(void*,const wchar_t*,int);
+    reinterpret_cast<Name>(image+0x2589130)(&worldType,L"World",0);if(!worldType)return false;
+    int matches=0;
+    for(int index=0;index<snapshot.count;++index) {
+        auto asset=snapshot.data+static_cast<size_t>(index)*0x60;
+        wchar_t name[1024]{};
+        if(*reinterpret_cast<unsigned long long*>(asset+0x20)!=worldType)continue;
+        if(ModeNameText(*reinterpret_cast<unsigned long long*>(asset),name,ARRAYSIZE(name)) && !wcscmp(name,expected))++matches;
+    }
+    return matches==1;
+}
+void DumpEventProfileLabels();
+bool ApplyOriginalEventMenu() {
+    static bool completed=false;if(completed)return true;
+    wchar_t enabled[4]{};
+    if(GetEnvironmentVariableW(L"TWIN_KART_EVENT_MODES",enabled,4)!=1 || enabled[0]!=L'1')return true;
+    if(GetCurrentThreadId()!=queue.ThreadId())return false;
+    using Type=void*(__fastcall*)();auto type=reinterpret_cast<Type>(image+0x4425db0)();
+    auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
+    int count=*reinterpret_cast<int*>(image+0x69c28c4);BYTE* found=nullptr;
+    if(!type || !chunks || count<1 || count>2000000)return false;
+    for(int index=0;index<count;++index) {
+        auto chunk=chunks[index/65536];if(!chunk || (chunk[index%65536].flags&0x30000000))continue;
+        auto object=static_cast<BYTE*>(chunk[index%65536].object);
+        if(!TwinKartLocalRace::Live(object) || (*reinterpret_cast<unsigned*>(object+8)&0x18030) || *reinterpret_cast<void**>(object+0x10)!=type)continue;
+        wchar_t name[96]{};if(!ModeNameText(*reinterpret_cast<unsigned long long*>(object+0x18),name,ARRAYSIZE(name)) || wcscmp(name,L"KtModeLabSetDef"))continue;
+        auto rowType=*reinterpret_cast<BYTE**>(object+0x28);wchar_t rowName[96]{};
+        if(!TwinKartLocalRace::Live(rowType) || !ModeNameText(*reinterpret_cast<unsigned long long*>(rowType+0x18),rowName,ARRAYSIZE(rowName)) || wcscmp(rowName,L"KtClientModeLabDefSetDef"))return false;
+        if(found)return false;found=object;
+    }
+    if(!found || *reinterpret_cast<BYTE**>(found)!=image+0x5b97a00 || (*reinterpret_cast<BYTE***>(found))[0x2a8/8]!=image+0x3eac100)return false;
+    struct TableEntry {unsigned long long key;BYTE* row;int next,hash;};
+    using TableRows=TwinKartRace::MenuArray<TableEntry>;
+    auto table=*reinterpret_cast<TableRows*>(found+0x30);
+    if(!table.data || table.count!=1 || table.capacity<table.count || table.capacity>4096 || !table.data[0].row)return false;
+    auto original=*reinterpret_cast<const TwinKartRace::EventMenuRowSet*>(table.data[0].row);
+    if(!original.baseVtable || !original.rows.data || original.rows.count<1 || original.rows.count>64 || original.rows.capacity<original.rows.count)return false;
+    size_t ruleCount=0;auto rules=TwinKartRace::EventProfiles(ruleCount);
+    for(size_t i=0;i<ruleCount;++i) {
+        TwinKartRace::Request request;strcpy_s(request.identity,"00000000000000000000000000000000");strcpy_s(request.track,"Village_I04");
+        request.mode=rules[i].mode;strcpy_s(request.profile,rules[i].profile);TwinKartRace::ModeDefinition definition;
+        if(!OriginalMode(request,definition))return false;
+    }
+    TwinKartRace::EventMenuCopySource source;if(!source.Build(original.baseVtable))return false;
+    // Original AddRow removes the old row, initializes an engine-owned
+    // destination and invokes UScriptStruct::CopyScriptStruct. Our source
+    // contains only independently built menu values and borrowed string
+    // views; it never takes ownership of the old table's arrays or strings.
+    using AddRow=void(__fastcall*)(void*,unsigned long long,const void*);
+    auto key=table.data[0].key;reinterpret_cast<AddRow>(image+0x3eac100)(found,key,&source.source);
+    table=*reinterpret_cast<TableRows*>(found+0x30);
+    if(!table.data || table.count!=1 || table.data[0].key!=key || !table.data[0].row)return false;
+    auto copied=*reinterpret_cast<const TwinKartRace::EventMenuRowSet*>(table.data[0].row);
+    if(copied.rows.count!=source.source.rows.count || !copied.rows.data || copied.rows.data==source.source.rows.data)return false;
+    for(int i=0;i<copied.rows.count;++i) {
+        auto& row=copied.rows.data[i];auto& expected=source.source.rows.data[i];
+        if(!TwinKartEquipment::Valid(row.id,128) || row.id.data==expected.id.data || wcscmp(row.id.data,expected.id.data) ||
+           row.modes.count!=1 || !row.modes.data || row.modes.data==expected.modes.data ||
+           row.modes.data[0].mode!=expected.modes.data[0].mode ||
+           row.modes.data[0].profile.data==expected.modes.data[0].profile.data ||
+           wcscmp(row.modes.data[0].profile.data,expected.modes.data[0].profile.data))return false;
+    }
+    completed=true;RuntimeEvent("native_event_menu_rows_installed",-1,copied.rows.count);DumpEventProfileLabels();return true;
+}
+void DumpEventTrackResource(const wchar_t* alias,const BYTE* record);
 int NativeStart(StartQuery& query) {
     const wchar_t* track=query.track; const wchar_t* options=query.options; int mode=query.request.mode;
     __try {
         query.stage=1;
+        TwinKartRace::CanonicalModeProfile(query.request);
+        TwinKartRace::ModeDefinition modeDefinition{};
+        if(!OriginalMode(query.request,modeDefinition) || !TwinKartRace::ModeOptions(query.request,modeDefinition,query.options,ARRAYSIZE(query.options)))return -11;
+        RuntimeEvent("native_original_mode_binding_resolved",-1,query.request.mode);
         BYTE* traveler=Traveler();
         using Model=void*(__fastcall*)(void*);
         if(!traveler || !reinterpret_cast<Model>(image+0x1ba3cf0)(traveler)) return 0;
@@ -295,12 +419,20 @@ int NativeStart(StartQuery& query) {
         __try {
             const auto level=*reinterpret_cast<NativeString*>(definition);
             if(!level.data || level.count<=1 || level.count>512 || level.capacity<level.count || level.data[level.count-1])return 2;
+            if(TwinKartRace::CubeMode(mode))DumpEventTrackResource(track,definition);
             bool validModes=TwinKartRace::ReadNativeTrackModeMask(definition,sizeof(definition),query.modeMask);
-            if(!validModes || !TwinKartRace::NativeTrackSupports(query.modeMask,mode))return validModes?3:-5;
+            if(!validModes || !TwinKartRace::EventTrackSupports(query.modeMask,mode,track))return validModes?3:-5;
             using Name=void*(__fastcall*)(void*,const wchar_t*,int);
             reinterpret_cast<Name>(image+0x2589130)(&levelName,level.data,1);
         } __finally {reinterpret_cast<Destroy>(image+0x1620210)(definition);}
         query.stage=3;
+        if(TwinKartRace::CubeMode(mode)) {
+            auto cube=TwinKartRace::CubeWorldForTrack(mode,track);
+            if(!cube || !RegisteredCubeWorld(*cube))return -13;
+            using Name=void*(__fastcall*)(void*,const wchar_t*,int);
+            reinterpret_cast<Name>(image+0x2589130)(&levelName,cube->package,1);
+            RuntimeEvent("native_local_cube_exact_world_selected",-1,mode);
+        }
         if(!TwinKartLocalRace::Install(image,RuntimeEvent)) return -3;
         // Native Major-connect preparation (1bb8150) saves World.URL.Map
         // into Traveler.ReturnURL before travel. Direct local loading bypasses
@@ -349,9 +481,24 @@ int NativeStart(StartQuery& query) {
             RuntimeEvent("native_local_ai_registered_characters",-1,static_cast<int>(characters));
             RuntimeEvent("native_local_ai_registered_karts",-1,static_cast<int>(karts));
             if(!prepared)return -7;
+            auto eventRules=TwinKartRace::EventProfile(query.request.profile);
+            if(eventRules && eventRules->roster!=TwinKartRace::EventRoster::Ordinary) {
+                const wchar_t* roles[8]{};
+                for(int slot=0;slot<=query.request.ai;++slot) {
+                    roles[slot]=TwinKartRace::EventCharacter(*eventRules,slot,query.request.ai+1);
+                    if(!roles[slot])return -12;
+                }
+                if(!TwinKartLocalRace::aiRoster.ApplyCharacterRoles(roles,AuditedBelonging,&assets))return -12;
+                RuntimeEvent("native_local_event_character_roster_prepared",-1,query.request.ai+1);
+            }
             RuntimeEvent("native_local_ai_roster_randomized",-1,query.request.ai);
         }
+        if(TwinKartRace::NativeCharacterRules(query.request.profile) && !TwinKartLocalRace::aiRosterEnabled)return -12;
         TwinKartLocalRace::Arm(mode);
+        if(TwinKartRace::CubeMode(mode))wcscpy_s(TwinKartLocalRace::cubeBaseTrack,track);
+        TwinKartLocalRace::flagSkillsEnabled=TwinKartRace::FlagMode(mode) && !strcmp(query.request.profile,"s062_flag_skill");
+        TwinKartLocalRace::nativeCharacterRules=TwinKartRace::NativeCharacterRules(query.request.profile);
+        RuntimeEvent("native_local_character_rule_policy",-1,TwinKartLocalRace::nativeCharacterRules?1:0);
         // The single-player preparation path fabricates time-attack details
         // and is inappropriate for native major-connect speed/item hosts.
         // Retain the original loading/transition path, as established by the
@@ -369,6 +516,7 @@ void ExecuteStart(void* raw) {
     value.status=NativeStart(value); SetEvent(value.complete);
 }
 void CancelStart(void* raw) { auto& value=*static_cast<StartQuery*>(raw); value.status=-1; SetEvent(value.complete); }
+void DumpEventTrackResource(const wchar_t* alias,const BYTE* record);
 // 0=not ready, 1=valid native name, 2=empty native definition, -1=fault/cancel.
 int NativeTrack(const wchar_t* name,wchar_t* level,unsigned& modeMask,int& laps) {
     modeMask=0;laps=0;
@@ -389,6 +537,7 @@ int NativeTrack(const wchar_t* name,wchar_t* level,unsigned& modeMask,int& laps)
                 if(result==1) {
                     if(!TwinKartRace::ReadNativeTrackModeMask(record,sizeof(record),modeMask))result=-1;
                     memcpy(&laps,record+0x10,sizeof(laps));if(!TwinKartRace::ValidNativeTrackLaps(laps))result=-1;
+                    if(result==1)DumpEventTrackResource(name,record);
                 }
             }
         }} __finally {reinterpret_cast<Destroy>(image+0x1620210)(record);}
@@ -409,6 +558,7 @@ void ExecuteCatalog(void* raw) {
         value.status=!root?0:!TwinKartLocalRace::Live(root)?-1:TwinKartRace::EnumerateNativeTracks(root,
             reinterpret_cast<TwinKartRace::GetNativeTrackRows>(image+0x145a4a0),
             reinterpret_cast<TwinKartRace::FreeNativeTrackRows>(image+0x248b950),value.entries,value.capacity,value.summary);
+        if(value.status==1 && !ApplyOriginalEventMenu()) {value.status=-1;value.summary.failureStage=8;}
     } __except(EXCEPTION_EXECUTE_HANDLER){value.status=-1;value.summary={};}
     SetEvent(value.complete);
 }
@@ -461,6 +611,58 @@ std::string Json(const std::string& value) {
 void Log(const std::string& line) {
     std::string bytes=line+"\r\n"; DWORD written=0;
     if(!WriteFile(output,bytes.data(),static_cast<DWORD>(bytes.size()),&written,nullptr) || written!=bytes.size()) throw std::runtime_error("Bridge log write failed");
+}
+bool ModeLabelText(const BYTE* field,wchar_t* destination,size_t capacity) {
+    __try {
+        const BYTE prefix[]={0x40,0x53,0x48,0x83,0xec,0x20,0x48,0x8b,0xd9,0xe8};
+        if(GetCurrentThreadId()!=queue.ThreadId() || !field || !destination || !capacity || memcmp(image+0x24ddba0,prefix,sizeof(prefix)))return false;
+        // Original FText::ToString, independently identified through the
+        // Kismet Conv_TextToString interface. Its returned FString is borrowed
+        // from the asset's FText and must not be freed by this module.
+        using Text=const NativeString*(__fastcall*)(const void*);
+        auto value=reinterpret_cast<Text>(image+0x24ddba0)(field);
+        if(!value || value->count<0 || static_cast<size_t>(value->count)>capacity || value->capacity<value->count)return false;
+        if(!value->count){destination[0]=0;return true;}
+        if(!value->data || value->data[value->count-1])return false;
+        memcpy(destination,value->data,static_cast<size_t>(value->count)*sizeof(wchar_t));return true;
+    } __except(EXCEPTION_EXECUTE_HANDLER){return false;}
+}
+void DumpEventTrackResource(const wchar_t* alias,const BYTE* record) {
+    wchar_t enabled[4]{};
+    if(GetEnvironmentVariableW(L"TWIN_KART_EVENT_DIAGNOSTICS",enabled,4)!=1 || enabled[0]!=L'1')return;
+    const wchar_t* candidates[]={L"Desert_I06",L"Forest_I05",L"Ice_I05",L"Village_I05",L"World_I11"};
+    bool selected=false;for(auto candidate:candidates)if(!wcscmp(alias,candidate)){selected=true;break;}
+    if(!selected)return;
+    // Read copied, original-owned FKtClientTrackDef values only while the
+    // caller keeps that record alive. No borrowed pointer escapes this call.
+    wchar_t path[1024]{},label[4096]{};
+    bool pathValid=ModeNameText(*reinterpret_cast<const unsigned long long*>(record+0x98),path,ARRAYSIZE(path));
+    bool labelValid=ModeLabelText(record+0x40,label,ARRAYSIZE(label));
+    Log("{\"event\":\"native_event_track_resource\",\"alias\":"+Json(Utf8(alias))+
+        ",\"world_path\":"+(pathValid?Json(Utf8(path)):"null")+
+        ",\"track_name\":"+(labelValid?Json(Utf8(label)):"null")+"}");
+}
+void DumpEventProfileLabels() {
+    wchar_t enabled[4]{};
+    if(GetEnvironmentVariableW(L"TWIN_KART_EVENT_DIAGNOSTICS",enabled,4)!=1 || enabled[0]!=L'1')return;
+    try {
+        size_t count=0;auto rules=TwinKartRace::EventProfiles(count);
+        std::vector<std::pair<int,const char*>> profiles;
+        for(size_t i=0;i<count;++i)profiles.emplace_back(rules[i].mode,rules[i].profile);
+        profiles.emplace_back(105,"spitem_solo_mayorzipi");profiles.emplace_back(5,"item_duo_tanya_spirit");profiles.emplace_back(4,"item_solo_randomskill");
+        for(auto profile:profiles) {
+            TwinKartRace::Request request;strcpy_s(request.identity,"00000000000000000000000000000000");strcpy_s(request.track,"Village_I04");
+            request.mode=profile.first;strcpy_s(request.profile,profile.second);TwinKartRace::ModeDefinition definition;
+            if(!OriginalMode(request,definition))continue;
+            std::string row="{\"event\":\"native_event_profile_labels\",\"profile\":"+Json(profile.second);
+            const char* keys[]={"full_name","description","detail","guide"};const unsigned fields[]={0x70,0x188,0x170,0x218};
+            for(unsigned field=0;field<4;++field) {
+                wchar_t label[4096]{};bool valid=ModeLabelText(static_cast<BYTE*>(definition.asset)+fields[field],label,ARRAYSIZE(label));
+                row+=",\""+std::string(keys[field])+"\":"+(valid?Json(Utf8(label)):"null");
+            }
+            Log(row+"}");
+        }
+    } catch(const std::exception&) {RuntimeEvent("native_event_profile_labels_failed",-1,0);}
 }
 std::vector<std::string> Queries(const wchar_t* path) {
     HANDLE file=CreateFileW(path,GENERIC_READ,FILE_SHARE_READ,nullptr,OPEN_EXISTING,0,nullptr);
@@ -597,6 +799,14 @@ DWORD WINAPI Worker(void*) {
                 Log("{\"event\":\"native_track_catalog_entry\",\"track_id\":"+Json(alias)+",\"native_mode_mask\":"+std::to_string(entry.modeMask)+
                     ",\"native_laps\":"+std::to_string(entry.laps)+",\"game_thread\":"+std::to_string(catalog.executedThread)+"}");
                 if(known.insert(alias).second)aliases.push_back(alias);
+            }
+            wchar_t events[4]{};
+            if(GetEnvironmentVariableW(L"TWIN_KART_EVENT_MODES",events,4)==1 && events[0]==L'1') {
+                // Two audited Cube bases carry ENone and are excluded from
+                // ordinary racing enumeration. Query these exact aliases too,
+                // preserving their raw mask/resource facts for event selection.
+                const char* cubeBases[]={"Desert_I06","Forest_I05","Ice_I05","Village_I05","World_I11"};
+                for(auto alias:cubeBases)if(known.insert(alias).second)aliases.push_back(alias);
             }
             Log("{\"event\":\"native_track_catalog_complete\",\"count\":"+std::to_string(summary.count)+",\"game_thread\":"+std::to_string(catalog.executedThread)+"}");
         }

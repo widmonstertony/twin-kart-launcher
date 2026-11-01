@@ -205,6 +205,18 @@ static class GatewayTests
         try { new DynamicDataCatalog(new[] { documents[0], documents[0] }); }
         catch (ArgumentException) { duplicateRejected = true; }
         Check(duplicateRejected, "duplicate catalog key");
+        var localModes=new DynamicDataCatalog(documents,true);
+        Check(documents[0].Content=="{}" && localModes.TryReply("example.json",1,out dataReply) && (string)dataReply["data"]=="{}","Offline event setup mutated unrelated caller data");
+        Check(localModes.TryReply("ModeLabSet",2,out dataReply),"Original local event document missing");
+        var eventRoot=(Dictionary<string,object>)Json.DeserializeObject((string)dataReply["data"]);
+        var events=(object[])eventRoot["events"];Check(events.Length==12,"Wrong offline event menu count");
+        var eventIds=new HashSet<string>();
+        foreach(var value in events) {
+            var row=(Dictionary<string,object>)value;var mode=(Dictionary<string,object>)row["gameMode"];
+            Check(eventIds.Add((string)row["id"]) && (string)row["id"]=="TwinKart_"+(string)mode["profile"],"Duplicate event or native menu/profile mismatch");
+            Check(PacketJsonCodec.LocalRaceMode((int)mode["raceMode"]) && (int)row["sortIndex"]>=1,"Unavailable native mode injected");
+            Check(((object[])row["openTime"]).Length==1 && ((string)((object[])row["openTime"])[0]).Contains("2099-12-31"),"Local event inherited expired regional schedule");
+        }
         for (int run = 0; run < 2; run++)
         {
             var session = new LocalAccountSession(s, catalog);

@@ -173,7 +173,7 @@ namespace TwinKartLauncher.Gateway
                 if (!WireCodec.TryEncode(json.Serialize(document), null, key, out dataWire, out error))
                     return GatewayReply.Close(1011, "response_encoding_failed");
                 lastRequest = id;
-                return GatewayReply.Message(dataWire, "dynamic_data_served");
+                return GatewayReply.Message(dataWire, "dynamic_data_served"+(Object.Equals(Field(request,"name"),"ModeLabSet")?"_ModeLabSet":""));
             }
             string expected = stage == 1 ? "PqAuthNxA" : stage == 2 ? "PqAccountLinkCheck" : "PqAuthComplete";
             if (type != expected) return GatewayReply.Close(1008, "unexpected_auth_step");

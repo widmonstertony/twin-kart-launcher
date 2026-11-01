@@ -21,7 +21,8 @@ namespace TwinKartLauncher.Gateway
                 if (settings == null) throw new ArgumentException("Missing config");
                 settings.Validate();
                 if (localAccount) settings.ValidateLocalAccount();
-                var catalog = localAccount && !string.IsNullOrEmpty(settings.DynamicDataPath) ? DynamicDataCatalog.Load(settings.DynamicDataPath) : null;
+                bool offlineEvents=offline && Environment.GetEnvironmentVariable("TWIN_KART_EVENT_MODES")=="1";
+                var catalog = localAccount && !string.IsNullOrEmpty(settings.DynamicDataPath) ? DynamicDataCatalog.Load(settings.DynamicDataPath,offlineEvents) : null;
                 using (var ping = offline ? new LocalPingServer() : null)
                 {
                 OfflineProfileStore profile = null;

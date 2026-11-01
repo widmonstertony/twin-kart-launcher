@@ -55,5 +55,17 @@ int main(){try {
         TwinKartEquipment::Preset outfit;Need(roster.Get(slot,outfit));
         for(unsigned field=2;field<6;++field)Need(!TwinKartEquipment::Nonempty(outfit.character[field]));
     }
+    const wchar_t* roles[8]={L"Character:2",L"Character:2",L"Character:3",L"Character:3",L"Character:2",L"Character:2",L"Character:3",L"Character:3"};
+    Need(roster.Get(1,saved));std::wstring savedKart=saved.kart[0].data;
+    Need(roster.ApplyCharacterRoles(roles,NoMotions,nullptr));
+    for(int slot=0;slot<8;++slot) {
+        TwinKartEquipment::Preset outfit;outfit.kart[0]=human.kart[0];
+        Need(roster.GetCharacter(slot,outfit) && !wcscmp(outfit.character[0].data,roles[slot]) && !wcscmp(outfit.kart[0].data,human.kart[0].data));
+        Need(!outfit.character[2].data[0]);
+    }
+    Need(roster.Get(1,saved) && savedKart==saved.kart[0].data);
+    roles[7]=L"Character:999";Need(!roster.ApplyCharacterRoles(roles,All,nullptr));
+    Need(roster.GetCharacter(7,saved) && !wcscmp(saved.character[0].data,L"Character:3"));
+    Need(roster.Prepare(7,human,NoMotions,nullptr) && !roster.GetCharacter(0,saved));
     puts("PASS AI roster: 100 races, distinct characters/karts, compatible costumes, player exclusion, per-slot variation and rejected-input rollback. No game started.");return 0;
 }catch(const std::exception& e){puts(e.what());return 1;}}

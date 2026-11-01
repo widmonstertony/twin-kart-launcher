@@ -1,5 +1,14 @@
 # Twin Kart Launcher
 
+## Subsequent source checkpoint: event compatibility (unreleased)
+
+- Add 12 independently described event rules with exact native profile/class bindings, role assignments, bounded room-option conversion and event-menu data. The menu remains opt-in through `TWIN_KART_EVENT_MODES=1`; menu interaction is not accepted yet.
+- Repair native Skill Flag AI component registration, Flag item contexts and skill timer/readiness paths. Real captures show seven AI recovering SP, repeatedly spending skills and reaching native overtime, winner and result phases. Skill-hit flag drops and overtime SP resets still need targeted evidence.
+- Connect all five original Multi Cube worlds to their original AI paths. All five produced native AI finish ranks and result evidence; native double pickups increased item counts from zero to two. This does not establish every interaction or player acceptance.
+- Fix report parsing for exact audited event supplements while keeping 100 ordinary definitions separate from two event-only supplements. All 12 event configurations have native result-phase evidence, not complete hidden-mode acceptance.
+
+Factory Run, Chaser, HideNSeek, Multi Cube duo, additional special profiles and later regional modes with missing resources remain incomplete. This source commit does not replace the desktop installation or Release and makes no new graphics acceptance claim.
+
 [简体中文](README.md) | English
 
 ## v0.2.0-alpha.2: custom modes and random-track repair (2026-11-01)

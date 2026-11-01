@@ -74,6 +74,29 @@ static class NativeTrackSessionCatalogTests
                     "Native event-map discovery rejected or changed its mode metadata");
             }
             Need(mismatch,"Different client's report seeded native lookup");
+            string eventWorld="{\"event\":\"native_asset\",\"class\":\"World\",\"object_path\":\"/Game/ART/Env/Theme_World/World_I11/World_I11.World_I11\"}\n";
+            string eventAi="{\"event\":\"native_asset\",\"class\":\"AIPathDataAsset\",\"object_path\":\"/Game/DataTable/AI_Data/PathData/World_I11.World_I11\"}\n";
+            string eventInventory=inventory.Replace("{\"event\":\"asset_registry_complete\"",eventWorld+eventAi+"{\"event\":\"asset_registry_complete\"")
+                .Replace("\"worlds\":2","\"worlds\":3").Replace("\"ai_path_assets\":2","\"ai_path_assets\":3");
+            var eventReport=TrackSupportAudit.Read(eventInventory,Catalog,Hash);
+            string eventBase=Path.Combine(folder,"event-base.json");File.WriteAllText(eventBase,json.Serialize(eventReport));
+            string eventDefinition=Definition("World_I11",1,"World_I11",1,3);
+            string eventComplete=complete.Replace("\"found\":2","\"found\":3");
+            File.WriteAllText(capture,log+eventDefinition+eventComplete);
+            Need(NativeTrackSessionCatalog.TryRefresh(eventBase,Hash,capture,Path.Combine(folder,"cube-base.json"),out refreshed),"Audited Cube ENone base was rejected");
+            var cube=refreshed.Tracks.Single(t=>t.TrackId=="World_I11");
+            Need(refreshed.NativeCatalogDefinitions==2 && refreshed.NativeCatalogNonRacing==1 && refreshed.NativeEventSupplementDefinitions==1 &&
+                cube.NativeEventSupplement && !cube.NativeCatalogDiscovered && !cube.ExternalCatalogMember && cube.NativeModeMask==1 && !cube.DrivingVerified,
+                "Cube supplement changed ordinary catalog counts, raw mask or driving acceptance");
+            foreach(string badDefinition in new[]{Definition("Unknown_I11",1,"Unknown_I11",1,3),Definition("World_I11",1,"World_I11",2,3),Definition("World_I11",1,"World_I12",1,3)}) {
+                File.WriteAllText(capture,log+badDefinition+eventComplete);bool rejected=false;
+                try{NativeTrackSessionCatalog.TryRefresh(eventBase,Hash,capture,Path.Combine(folder,Guid.NewGuid().ToString("N")),out refreshed);}catch(FormatException){rejected=true;}
+                Need(rejected,"Unknown, non-ENone or mismatched event supplement was accepted");
+            }
+            eventReport.NativeWorldCandidates.Single(t=>t.TrackId=="World_I11").AiPathObjectPath=null;
+            File.WriteAllText(eventBase,json.Serialize(eventReport));File.WriteAllText(capture,log+eventDefinition+eventComplete);
+            bool missingAi=false;try{NativeTrackSessionCatalog.TryRefresh(eventBase,Hash,capture,Path.Combine(folder,"missing-ai.json"),out refreshed);}catch(FormatException){missingAi=true;}
+            Need(missingAi && !File.Exists(Path.Combine(folder,"missing-ai.json")),"Event supplement without exact AI resources was published");
             Console.WriteLine("PASS native track session integration: seed queries, original table/exact lookup agreement, extra native world discovery, game-thread/build/count gates, partial/failed capture isolation, atomic private report and no fabricated loading/driving. No game started.");return 0;
         } catch(Exception error){Console.Error.WriteLine(error);return 1;}
         finally {if(Path.GetFullPath(folder).StartsWith(scratch+Path.DirectorySeparatorChar,StringComparison.OrdinalIgnoreCase) && Directory.Exists(folder))Directory.Delete(folder,true);}

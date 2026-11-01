@@ -14,6 +14,7 @@ namespace TwinKartLauncher.Gateway
         public string NativeDefinitionStatus,NativeLevelName;
         public int? NativeModeMask,NativeLaps;
         public bool NativeCatalogDiscovered;
+        public bool NativeEventSupplement;
         public bool ExternalCatalogMember=true;
     }
     public sealed class TrackSupportReport
@@ -29,6 +30,7 @@ namespace TwinKartLauncher.Gateway
         public TrackResourceEvidence[] Tracks;
         public bool NativeCatalogComplete;
         public int NativeCatalogRows,NativeCatalogDefinitions,NativeCatalogNonRacing,NativeDefinitionsOutsideExternalCatalog;
+        public int NativeEventSupplementDefinitions;
         public TrackResourceEvidence[] NativeWorldCandidates;
     }
     // Class/path inventory establishes resource records, not successful loading,
@@ -41,6 +43,7 @@ namespace TwinKartLauncher.Gateway
             var json=new JavaScriptSerializer { MaxJsonLength=16384 };
             var definitions=new Dictionary<string,Dictionary<string,object>>(StringComparer.Ordinal);
             var catalog=new Dictionary<string,Dictionary<string,object>>(StringComparer.Ordinal);
+            var supplements=new HashSet<string>(StringComparer.Ordinal);
             var known=new HashSet<string>(report.Tracks.Select(t=>t.TrackId),StringComparer.Ordinal);
             if(known.Count!=report.Tracks.Length || known.Count>10000)throw new FormatException("Invalid base track catalog.");
             var spellings=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -73,8 +76,11 @@ namespace TwinKartLauncher.Gateway
                     } else if(kind=="native_track_definition") {
                         if(!ready || Number(row,"game_thread")!=thread) throw new FormatException("Native lookup thread mismatch.");
                         string id=Text(row,"track_id"),level=Text(row,"native_level_name"); int status=Number(row,"status");
+                        bool supplement=catalogComplete && status==1 && level==id &&
+                            row.ContainsKey("native_mode_mask") && Number(row,"native_mode_mask")==1 &&
+                            EventSupplementResource(report,id)!=null;
                         if(definitions.Count>=10000 || definitions.ContainsKey(id) || (status!=1 && status!=2) ||
-                            (catalogStarted && !catalogComplete) || (!known.Contains(id) && !catalog.ContainsKey(id)) ||
+                            (catalogStarted && !catalogComplete) || (!known.Contains(id) && !catalog.ContainsKey(id) && !supplement) ||
                             (status==1 && !(TrackName.IsMatch(level) || (catalog.ContainsKey(id) && level==id))) || (status==2 && level.Length!=0)) throw new FormatException("Invalid native track definition.");
                         // Older exact-build captures did not record mode/lap
                         // metadata. Preserve unknown rather than deriving it
@@ -83,10 +89,11 @@ namespace TwinKartLauncher.Gateway
                         if(modes!=laps || (modes && (Number(row,"native_mode_mask")>31 || (Number(row,"native_laps")>99 && Number(row,"native_laps")!=999) ||
                             (status==2 && (Number(row,"native_mode_mask")!=0 || Number(row,"native_laps")!=0)))))
                             throw new FormatException("Invalid native track mode/lap evidence.");
+                        if(supplement && !known.Contains(id) && !catalog.ContainsKey(id))supplements.Add(id);
                         definitions.Add(id,row); if(status==1) ++found; else ++empty;
                     } else if(kind=="native_track_queries_complete") {
                         if(!ready || (catalogStarted && !catalogComplete) || Number(row,"found")!=found || Number(row,"empty")!=empty ||
-                            definitions.Count!=known.Count+catalog.Keys.Count(id=>!known.Contains(id))) throw new FormatException("Incomplete native definition counts.");
+                            definitions.Count!=known.Count+catalog.Keys.Count(id=>!known.Contains(id))+supplements.Count) throw new FormatException("Incomplete native definition counts.");
                         complete=true;
                     } else throw new FormatException("Failed or unknown native definition event.");
                 }
@@ -100,7 +107,7 @@ namespace TwinKartLauncher.Gateway
             }
             // Commit only after the entire capture has passed validation.
             var combined=report.Tracks.ToList();
-            foreach(string id in catalog.Keys.Where(id=>!known.Contains(id)).OrderBy(id=>id,StringComparer.Ordinal)) {
+            foreach(string id in catalog.Keys.Concat(supplements).Where(id=>!known.Contains(id)).OrderBy(id=>id,StringComparer.Ordinal)) {
                 var resources=report.NativeWorldCandidates==null?null:report.NativeWorldCandidates.FirstOrDefault(t=>t.TrackId==id);
                 var extra=resources??new TrackResourceEvidence {TrackId=id,BaseAlias=id,WorldMatch="not-audited",AiPathMatch="not-audited"};
                 extra.ExternalCatalogMember=false;combined.Add(extra);
@@ -110,15 +117,32 @@ namespace TwinKartLauncher.Gateway
                 track.NativeModeMask=row.ContainsKey("native_mode_mask")?(int?)Number(row,"native_mode_mask"):null;
                 track.NativeLaps=row.ContainsKey("native_laps")?(int?)Number(row,"native_laps"):null;
                 track.NativeCatalogDiscovered=catalog.ContainsKey(track.TrackId);
+                track.NativeEventSupplement=!track.NativeCatalogDiscovered && track.NativeModeMask==1 && EventSupplementResource(report,track.TrackId)!=null;
                 track.NativeDefinitionStatus=Number(row,"status")==1?"native-definition-present":
                     track.MirrorRequested || track.ReverseRequested?"variant-definition-unresolved":"no-native-definition-in-client";
             }
             report.Tracks=combined.ToArray();report.NativeCatalogComplete=catalogComplete;report.NativeCatalogRows=catalogRows;
             report.NativeCatalogDefinitions=catalog.Count;report.NativeCatalogNonRacing=catalogNonRacing;
+            report.NativeEventSupplementDefinitions=combined.Count(t=>t.NativeEventSupplement);
             report.NativeDefinitionsOutsideExternalCatalog=combined.Count(t=>!t.ExternalCatalogMember);
             report.NativeDefinitionsComplete=true; report.NativeDefinitionsAvailable=found; report.NativeDefinitionsEmpty=empty;
         }
         static readonly Regex NativeAlias=new Regex("^[A-Za-z][A-Za-z0-9_]{0,95}$",RegexOptions.CultureInvariant);
+        static TrackResourceEvidence EventSupplementResource(TrackSupportReport report,string id)
+        {
+            // Exact released Cube bases whose ordinary table entries are ENone.
+            // Their raw definitions remain separate from the racing table and
+            // require matching original world AND AI-path inventory evidence.
+            string world=id=="World_I11"?"/Game/ART/Env/Theme_World/World_I11/World_I11.World_I11":
+                id=="Village_I05"?"/Game/ART/Env/Theme_Village/village_I05/village_I05.Village_I05":null;
+            if(world==null)return null;
+            var matches=report.Tracks.Where(t=>t.TrackId==id).ToArray();
+            if(matches.Length==0)matches=(report.NativeWorldCandidates??new TrackResourceEvidence[0]).Where(t=>t.TrackId==id).ToArray();
+            if(matches.Length!=1)return null;var item=matches[0];
+            return item.BaseAlias==id && !item.MirrorRequested && !item.ReverseRequested &&
+                item.WorldMatch=="exact-base-world-record" && item.AiPathMatch=="exact-base-ai-record" &&
+                item.WorldObjectPath==world && item.AiPathObjectPath=="/Game/DataTable/AI_Data/PathData/"+id+"."+id?item:null;
+        }
         static readonly Regex TrackName=new Regex("^[A-Za-z]+_[IR][0-9]+(?:_rvs)?$",RegexOptions.CultureInvariant);
         static string Text(Dictionary<string,object> row,string key)
         { object value; if(!row.TryGetValue(key,out value) || !(value is string)) throw new FormatException("Missing inventory text field: "+key); return (string)value; }

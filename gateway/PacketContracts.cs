@@ -8,6 +8,14 @@ namespace TwinKartLauncher.Gateway
 {
     internal static class NativeRaceOptions
     {
+        internal static bool CubeTrack(int mode,string track)
+        {
+            if(mode!=116 && mode!=118)return true;
+            return track=="Desert_I06" || track=="Forest_I05" || track=="Ice_I05" || track=="Village_I05" || track=="World_I11";
+        }
+        static readonly HashSet<string> NativeKeys=new HashSet<string>(new[]{"game.ignorefaraway","game.ignorealways","game.useitem",
+            "game.itemcube","game.useskill","game.customitem","game.skill.activesp","game.skill.activeinitialsp",
+            "game.skill.percentage100","game.booster","game.teambooster","game.draft","game.leadcompensation","game.showskillinfo"},StringComparer.OrdinalIgnoreCase);
         internal static string Merge(string level,string custom)
         {
             var keys=new HashSet<string>(StringComparer.OrdinalIgnoreCase);string result="";
@@ -15,8 +23,11 @@ namespace TwinKartLauncher.Gateway
                 if(String.IsNullOrEmpty(input))continue;
                 if(input.Length>512 || input[0]!='?')throw new ArgumentException("Invalid native gameplay options.");
                 foreach(string pair in input.Substring(1).Split('?')) {
-                    var match=Regex.Match(pair,@"\A((?:item|speed|spitem|flag|modeLab|infinitybooster|track)\.[A-Za-z][A-Za-z0-9_]{0,47})=([A-Za-z0-9_,.+-]{1,96})\z",RegexOptions.IgnoreCase|RegexOptions.CultureInvariant);
+                    var match=Regex.Match(pair,@"\A([A-Za-z][A-Za-z0-9_.]{0,63})=([A-Za-z0-9_,.+-]{1,96})\z",RegexOptions.CultureInvariant);
                     if(!match.Success || match.Groups[1].Length>=65 || keys.Count>=32 || !keys.Add(match.Groups[1].Value))throw new ArgumentException("Invalid or repeated native gameplay option.");
+                    string key=match.Groups[1].Value;
+                    if(!NativeKeys.Contains(key) && !Regex.IsMatch(key,@"\A(?:item|speed|spitem|flag|modeLab|infinitybooster|track)\.[A-Za-z][A-Za-z0-9_]{0,47}\z",RegexOptions.IgnoreCase|RegexOptions.CultureInvariant))
+                        throw new ArgumentException("Unknown native gameplay option key.");
                     result+="?"+pair;
                 }
             }
@@ -28,6 +39,26 @@ namespace TwinKartLauncher.Gateway
             if(String.IsNullOrEmpty(value))return "";
             if(!Regex.IsMatch(value,@"\A[A-Za-z][A-Za-z0-9_]{0,95}\z"))throw new ArgumentException("Invalid native mode profile.");
             return value;
+        }
+        internal static string EventCharacter(int mode,string profile,int slot)
+        {
+            profile=CanonicalProfile(mode,profile);
+            if(slot<0 || slot>7)return null;
+            if(mode==113 && profile=="s062_speed_solo_dao")return "Character:100000001";
+            if(mode==110 && profile=="item_solo_brodi")return "Character:100000003";
+            if(mode==113 && profile=="speed_solo_derek")return "Character:100000025";
+            if(mode==112 && profile=="item_squad_miso_tiera")return slot%2==0?"Character:100000043":"Character:100000006";
+            if(mode==112 && profile=="s062_item_squad_runner_attacker") {
+                string[] roles={"Character:100000043","Character:100000001","Character:100000013","Character:100000025",
+                    "Character:100000037","Character:100000005","Character:100000017","Character:100000027"};
+                return roles[slot];
+            }
+            return null;
+        }
+        internal static string CanonicalProfile(int mode,string profile)
+        {
+            profile=Profile(profile);
+            return mode==110 && profile=="s062_item_solo_brodi"?"item_solo_brodi":profile;
         }
     }
     // Object-level JSON contracts only. The original client's SHA-256/AES-CBC
@@ -277,7 +308,18 @@ namespace TwinKartLauncher.Gateway
         // Only _type, track, gameMode and raceMode are required by this
         // independently observed subset. Optional fields are checked when
         // present; omitted values are not silently guessed.
-        public static bool LocalRaceMode(int mode) { return (mode>=1 && mode<=6) || (mode>=101 && mode<=107); }
+        public static bool LocalRaceMode(int mode) { return (mode>=1 && mode<=6) || (mode>=101 && mode<=107) || (mode>=110 && mode<=116) || mode==118; }
+        public static bool LocalSpeedMode(int mode) { return (mode>=1 && mode<=3) || (mode>=101 && mode<=103) || (mode>=113 && mode<=115); }
+        public static int LocalTeamSize(int mode) {
+            if(!LocalRaceMode(mode))return 0;
+            if(mode==104)return 4;
+            int group=mode>=116?mode-116:mode>=110?(mode-110)%3:mode>=105?mode-105:mode>=101?mode-101:(mode-1)%3;
+            return group==0?1:group==1?2:4;
+        }
+        public static bool LocalTrackSupports(int mask,int mode) {
+            return mask>=0 && mask<=31 && LocalRaceMode(mode) &&
+                (mask&(1<<(mode==104?4:mode>=105 && mode<=107?3:LocalSpeedMode(mode)?2:1)))!=0;
+        }
         static bool TryReadRaceGame(Dictionary<string, object> source, out CsRaceGameContract race, out string error)
         {
             race = null; error = null;
@@ -295,6 +337,8 @@ namespace TwinKartLauncher.Gateway
                 !OptionalString(source, "levelOption", out level) ||
                 !OptionalString(source, "customGameOption", out custom))
             { error = "CsRaceGame observed fields have invalid types or mode/track bounds."; return false; }
+            try { NativeRaceOptions.Profile(profile); }
+            catch(ArgumentException) { error="Invalid native mode profile."; return false; }
             race = new CsRaceGameContract { Track = track,
                 GameMode = new KtGameModeContract { RaceMode = raceMode, Profile = profile },
                 Lap = source.ContainsKey("lap") ? (int?)lap : null,

@@ -1,5 +1,13 @@
 # Changelog / 更新记录
 
+## Unreleased — event compatibility source checkpoint / 活动适配源码检查点
+
+- Add 12 opt-in native event definitions, exact profile/class binding, role assignments and bounded room-option translation. / 新增 12 个可选原生活动定义、精确 profile／类绑定、阵容与受限房间参数转换。
+- Repair Skill Flag AI context/skill initialization and native skill scheduling; capture actual SP recovery/spending and overtime/results. Skill-hit drops and overtime SP reset remain unverified. / 修复技能夺旗 AI 上下文、技能初始化与计时；观察到实际 SP 恢复／消耗与加时／结算，技能命中掉旗和加时 SP 重置仍未验收。
+- Bind five dedicated Multi Cube worlds to original AI paths; record native finish ranks on all five and actual double-item grants. / 连接五张多重道具箱专用地图及原厂 AI 路线，记录五图原厂完赛排名和实际双道具拾取。
+- Distinguish audited event-only track supplements from ordinary definitions and capture native rank/time fields without fabricating results. / 区分已核对的活动专属补充赛道与普通定义，读取原厂排名／用时，不伪造结果。
+- Keep Factory Run, Chaser, HideNSeek, Cube duo and other unresolved modes explicitly incomplete; desktop and release remain unchanged. / 工厂逃脱、追逐、躲猫猫、多重道具箱双人组等仍明确未完成，桌面与发布包不变。
+
 ## v0.2.0-alpha.2 — 2026-11-01
 
 - Repair native roulette/random selectors using mode-compatible physical-map pools and no immediate repeats. / 修复原厂转盘／随机选图，按模式匹配实际地图并避免连续重复。

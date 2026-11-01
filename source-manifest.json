@@ -9,7 +9,7 @@
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "2411b78b52446ec6ddbdc145db747904d3e515d15976d6bc9700afb8dadbba14"
+    "sha256": "612277a37e3a169b9178e4de98f8fe6b12f6cfb10761d65a8ba47133ad17ded2"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -17,11 +17,11 @@
   },
   {
     "file": "gateway/DynamicDataCatalog.cs",
-    "sha256": "e686865208c0ac147af72fc725b5ac903baca569eafedbb283244c6f365301b5"
+    "sha256": "e81de7a6497cb958d07ef8ad1929ceed1392393414259b1c64a75b72520e1da9"
   },
   {
     "file": "gateway/GatewayHost.cs",
-    "sha256": "df805dbac927175ea2f09bef42181f8cbc454399472f293a2862fe1dc3c94b76"
+    "sha256": "8ef662b7eb8f1f52e85b3cc9604761712556ee56c8912a8e99efd122d247d380"
   },
   {
     "file": "gateway/InventoryUnlocks.cs",
@@ -29,7 +29,7 @@
   },
   {
     "file": "gateway/LocalAccountSession.cs",
-    "sha256": "ae3aaca81df5c558d019d310cffb74016b3e145af1f43f7521c91636c4781c01"
+    "sha256": "ca5d71684d0ef0f48ecf07cc76de00db1ed92fe4751709b97fdd1563f6b1e1cb"
   },
   {
     "file": "gateway/LocalPingServer.cs",
@@ -53,7 +53,7 @@
   },
   {
     "file": "gateway/OfflineRoomService.cs",
-    "sha256": "d526f037da3104c3aecae5614af74a04f60d0ff2b094c5a4b179d8f54b371679"
+    "sha256": "856e9eca3a4f4fd6f2801ef1c5445cfd0d73d82a33d1e41af927fda3faf3103b"
   },
   {
     "file": "gateway/OfflineTuning.cs",
@@ -65,7 +65,7 @@
   },
   {
     "file": "gateway/PacketContracts.cs",
-    "sha256": "5707f236481138bcd5f4282f107f5aa8d229f0f0b932ca7371f2f21b3226aed4"
+    "sha256": "b45246cce80526aea481b5243358bdbde47d930e856fd6a460f55df9a00295b1"
   },
   {
     "file": "gateway/PreAuthSession.cs",
@@ -81,7 +81,7 @@
   },
   {
     "file": "gateway/RoomState.cs",
-    "sha256": "6f05e749e382914701159dabb243ab1fc124d8eba0eb66b8b9b7bc60bb0a392e"
+    "sha256": "4992483722ccd7fadeb0789edf40166a1ba1357f731cdd3e2c4f5788a9bff0ca"
   },
   {
     "file": "gateway/test-body-layout.ps1",
@@ -117,7 +117,7 @@
   },
   {
     "file": "gateway/TrackSupportAudit.cs",
-    "sha256": "e28f44a815c9c4b27cd5aea6be878a67e315adb364bc6b6ec0e890e4a27753b3"
+    "sha256": "4279eecd20ea2f507589d98dcb2a9b1e6c75068acae25f0b27ab1ef436e19319"
   },
   {
     "file": "gateway/WireCodec.cs",
@@ -153,7 +153,7 @@
   },
   {
     "file": "native/build-race-bridge.ps1",
-    "sha256": "6617d362de17e4c0ec063e0fd8d2661bbe00bb78397dd5b3e410f96f2cd81c10"
+    "sha256": "c62430109c3d88ce11fafb49a8a9abe46c3a552c7e5bbf195bd68120b78ef987"
   },
   {
     "file": "native/build-reconstruction-probe.ps1",
@@ -185,7 +185,7 @@
   },
   {
     "file": "native/DriftAssetInventory.cpp",
-    "sha256": "14ede86064f5caf3ab41f40910f35fdf05adc76a71bf563eb3d71a5198cd638d"
+    "sha256": "8e2c9b58e02dbdea0d45f9d657596d44565aecb57b16413c4e96766e7650053a"
   },
   {
     "file": "native/DriftCamera.cpp",
@@ -197,7 +197,7 @@
   },
   {
     "file": "native/DriftRaceBridge.cpp",
-    "sha256": "271edce0d3accc2d84d06361cc4eb242e967cca8f235177c2b673eaf0efaa72a"
+    "sha256": "5474efbc061aa9ee15562c22a9ed4b1c6edd35e6088d75316db34060272ae2bb"
   },
   {
     "file": "native/DriftRenderProbe.cpp",
@@ -233,7 +233,7 @@
   },
   {
     "file": "native/LocalRaceRuntime.h",
-    "sha256": "5d55fca0a678c0a9f6d374c5ccef5af6776113c7e5a6d7c14d71e8ab70cb534d"
+    "sha256": "c0d5d67c9fc92e8a07dc6c8055addfd8e1631dd4da4acc6e95c92dae18ed592f"
   },
   {
     "file": "native/LocalRaceWorld.h",
@@ -245,7 +245,11 @@
   },
   {
     "file": "native/NativeAiRoster.h",
-    "sha256": "c8fd2a5f02502b61739ed3b2445e8808866e16caef23af84a78ff276f8b22d71"
+    "sha256": "58992754e47ce8573d4636b7e04e64e3117c9141087404d031052a4c8b56e75e"
+  },
+  {
+    "file": "native/NativeCubeWorld.h",
+    "sha256": "da08154892f311b2cbca9288c99e00b0f890ac0a07751e1f5b4bcb667ac1fee3"
   },
   {
     "file": "native/NativeDeviceIdentity.h",
@@ -254,6 +258,14 @@
   {
     "file": "native/NativeEquipmentPreset.h",
     "sha256": "9ac8f9ced84f7e07918a4dfd0eb1908008a80cf4a6b06ee616163408ad8fccfc"
+  },
+  {
+    "file": "native/NativeEventMenu.h",
+    "sha256": "54979b613ab17239e91bbcc397591183517c0b80b1d357e78510bace3ace43bd"
+  },
+  {
+    "file": "native/NativeEventRules.h",
+    "sha256": "5635f6fab14734a792ba8a118701107f2414bdd56f39ccb839e7dbfd1019c1e2"
   },
   {
     "file": "native/NativeFrameMarkers.cpp",
@@ -276,6 +288,10 @@
     "sha256": "ff9a76876330c7fdeaf8e387e049e6255a49519dcde065dec652844244faceba"
   },
   {
+    "file": "native/NativeModeBinding.h",
+    "sha256": "068124d4911d61f33aa26232ce8b0c2552cda7c82f3f500001c5c4415f759e29"
+  },
+  {
     "file": "native/NativeNeuralPass.cpp",
     "sha256": "349e62cb32a5840b521551e8d1cb3e6d2ad297038850a7e5d0cd960bc9d42bf5"
   },
@@ -293,7 +309,7 @@
   },
   {
     "file": "native/NativeRaceModes.h",
-    "sha256": "51ec9d394a5bfa1166769d9cb070e7947d4c431d9ff71fddb268c32124ee2595"
+    "sha256": "f20fa3b7ae56f9400e64d2d2ebc9e8597fa2ec09af5068cc6a4eab6c078b5948"
   },
   {
     "file": "native/NativeRacePhase.h",
@@ -340,6 +356,10 @@
     "sha256": "f19d7f815592a3e03d22365682694035a66c042664cd2681ee1ec97d1a1fd3b2"
   },
   {
+    "file": "native/NativeUiOptions.h",
+    "sha256": "1d4de92c193a5d00a0cb425cc80cce9149c9611d3dd62c55f6114b2511c8e925"
+  },
+  {
     "file": "native/NativeVelocity.h",
     "sha256": "61aeb871ad0e82b52a82377786d7fd3ffb9cae63779b5aa1873b026375cac6ef"
   },
@@ -361,7 +381,7 @@
   },
   {
     "file": "native/RaceControl.h",
-    "sha256": "7ec8f407785a4d67519dea25c9b27dab00c19696ff60125ff1d5620b64b06386"
+    "sha256": "2a8811fe6d27932126a7c3657c345ee35c62a31d38f7cf02f9b95d8b820f36e9"
   },
   {
     "file": "native/RenderActivity.h",
@@ -405,15 +425,15 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "c107648808281c27e4a3cc6edffcd6288b65a031f14c8b83afec70fc7929d511"
+    "sha256": "d684453b9a05bad0889ff73ac7888f33e309bbeb73da01245d55a8b4e8a9341e"
   },
   {
     "file": "README.md",
-    "sha256": "38a8d1d2f9b683ba93ea67e2bd94c3a278591d95403541f1e7a4821e5124bc6d"
+    "sha256": "ba23cffa224e76dd3ea9b34bb6823f1415a739fb3a6ec3af496b79f1aa8ef44d"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
-    "sha256": "c80098008af58350ba308d331011959460a692312ba7f1802377e3964a16338b"
+    "sha256": "3a6b032b376fed8677e0f7c3aca8c3249a2326c49b8266b933db3e07ed1c0dfa"
   },
   {
     "file": "src/AiRosterCatalog.cs",
@@ -473,7 +493,7 @@
   },
   {
     "file": "src/OfflineLaunchSession.cs",
-    "sha256": "37342317705d678313292f8d804628b6e26519fd457db23498309945e284288e"
+    "sha256": "c603087c810652887a4ab8e0d6fd6c32884f94cf55bb46898b76faa6b351cd02"
   },
   {
     "file": "src/OwnedGameModule.cs",
@@ -485,7 +505,7 @@
   },
   {
     "file": "src/Profiles.cs",
-    "sha256": "3dec1a14fd908eebacdd14b6beff8ef5e195b882936cd52e14049d54ad39c4f1"
+    "sha256": "9f67997b4be096e8dad4ab59fee9ebbe282b141f65b8911f27cf873e80f08e36"
   },
   {
     "file": "src/SharedPad.cs",
@@ -525,7 +545,7 @@
   },
   {
     "file": "tests/GatewayTests.cs",
-    "sha256": "0ae2d1734b92ea54ea7a67e0b93df6e31e2d5d41b2a3ada6296aaf7447b24abe"
+    "sha256": "ce64dfe3ba542a9b9bf5dff704a256c0a1093b75f5c7463aad0bf7d0735c248d"
   },
   {
     "file": "tests/GraphicsProfileTests.cs",
@@ -541,15 +561,15 @@
   },
   {
     "file": "tests/LocalAiLifecycleTests.cpp",
-    "sha256": "421a86621d01e562615dd0b087f140d90ac87eca40e867e227a0b9047c240b12"
+    "sha256": "ea90f22c518f088a0cfdfd8b871b07ed361457ee0268c94575e94b252a963f0b"
   },
   {
     "file": "tests/LocalRaceProfileTests.cs",
-    "sha256": "b955d087b97c38f075ca4aaa75573fe7346ef35a5a098c4dc802d1686d1abcad"
+    "sha256": "a24b461b78208928f1bf51ff467be3711441d0f45309e14db353b9df4e1a15e1"
   },
   {
     "file": "tests/NativeAiRosterTests.cpp",
-    "sha256": "b2edffc8e8c0fb3586d2a646a60c694af473b036811b2638ee670824f1bfbb79"
+    "sha256": "6970f5386870d8e3738cdb5b3f7ff0b5418e33b5bef4ecd939f5e9c0fb67f707"
   },
   {
     "file": "tests/NativeEquipmentPresetTests.cpp",
@@ -577,7 +597,7 @@
   },
   {
     "file": "tests/NativeTrackSessionCatalogTests.cs",
-    "sha256": "714e0e0f0f1416b10e8d6e27d5c54245fee24ad23627e64f6d181894ef6ba777"
+    "sha256": "5d11376f1588cde6d136b8570167940029c1afeacedf79119558f11e3ecc799f"
   },
   {
     "file": "tests/NativeViewMathTests.cpp",
@@ -585,7 +605,7 @@
   },
   {
     "file": "tests/OfflineBackendTests.cs",
-    "sha256": "0fa72992e7cdf5fdd027e2338eb0a6b81c61274aca60e439ed159dd5b141094b"
+    "sha256": "9f712375ff2a11d7e14a87fab7e69b3dfee161dd72e915b24c35d24fd470d7fc"
   },
   {
     "file": "tests/OfflineGraphicsOptionsTests.cs",
@@ -625,7 +645,7 @@
   },
   {
     "file": "tests/RaceControlTests.cpp",
-    "sha256": "1de89ddf82ce01a36ac3ad5397ea45ade478f97eb3d5342471f9c1f088f6391d"
+    "sha256": "25ae04bfd3f451b795f8f02f892f201fbe98373fe001458174389b216bc6a021"
   },
   {
     "file": "tests/RenderPassTraceTests.cpp",

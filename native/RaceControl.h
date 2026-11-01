@@ -34,6 +34,13 @@ inline bool ValidCustomOptions(const char* value) {
             for(size_t i=first;i<keySize;++i)if(!((key[i]>='A'&&key[i]<='Z') || (key[i]>='a'&&key[i]<='z') || (i>first && ((key[i]>='0'&&key[i]<='9') || key[i]=='_'))))return false;
             allowed=true;break;
         }
+        // Original FGameSettingOptions keys. Keep this exact allowlist:
+        // accepting the game.* prefix broadly would also admit unrelated
+        // engine options. Nested skill keys are genuine native interfaces.
+        const char* nativeKeys[]={"game.ignorefaraway","game.ignorealways","game.useitem","game.itemcube","game.useskill",
+            "game.customitem","game.skill.activesp","game.skill.activeinitialsp","game.skill.percentage100",
+            "game.booster","game.teambooster","game.draft","game.leadcompensation","game.showskillinfo"};
+        for(auto name:nativeKeys)if(!_stricmp(key,name)){allowed=true;break;}
         if(!allowed)return false;
         for(unsigned i=0;i<count;++i)if(!_stricmp(keys[i],key))return false;
         strcpy_s(keys[count++],key);start=++pos;
