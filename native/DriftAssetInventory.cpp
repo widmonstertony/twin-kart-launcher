@@ -3,10 +3,12 @@
 #include <bcrypt.h>
 #include <cstdio>
 #include <cstring>
+#include <cwchar>
 #include <string>
 #include <unordered_map>
 #include <stdexcept>
 #include "ClientBuildGuard.h"
+#include "NativeAssetTags.h"
 
 // Read-only inventory through the installed client's IAssetRegistry. No Pak
 // key extraction, resource export, map travel or world/gameplay mutation.
@@ -82,6 +84,38 @@ bool AssetNames(int index,unsigned long long* object,unsigned long long* type) {
         *type=*reinterpret_cast<unsigned long long*>(asset+0x20); return true;
     } __except(EXCEPTION_EXECUTE_HANDLER) { return false; }
 }
+void ReadBundleMetadata(int index,const std::string& objectPath,unsigned& queries,unsigned& values,unsigned& rejected) {
+    // Exact reflected GetTagValue exec wrapper calls this const-reference
+    // adapter, which then forwards the FName value to the registry tag reader.
+    // The whole client is pinned above; additionally reject an altered stub.
+    const BYTE entry[]={0x48,0x8b,0x12,0xe9};
+    if(memcmp(image+0x3ba6dc0,entry,sizeof(entry)))throw std::runtime_error("native asset tag interface mismatch");
+    using NameValue=void*(__fastcall*)(void*,const wchar_t*,int);
+    auto read=reinterpret_cast<TwinKartAssets::GetTagValue>(image+0x3ba6dc0);
+    auto release=reinterpret_cast<TwinKartAssets::FreeTagString>(image+0x248b950);
+    // Metadata only, at most four bounded tags on explicitly selected FX assets.
+    // Keep the actual primary type/name alongside bundle tags: an object's
+    // filename is not proof of the primary ID used by the original loader.
+    // This does not load the asset, resolve its references or certify a bundle.
+    std::wstring buffer(65536,L'\0');
+    for(const wchar_t* key:{L"PrimaryAssetType",L"PrimaryAssetName",L"AssetBundleData",L"AssetBundles"}) {
+        std::uint64_t tag=0;reinterpret_cast<NameValue>(image+0x2589130)(&tag,key,1);
+        TwinKartAssets::TagReadResult result;
+        int status=tag?TwinKartAssets::CopyTagValue(snapshot.data+static_cast<size_t>(index)*0x60,tag,
+            read,release,&buffer[0],buffer.size(),result):0;++queries;
+        std::string value;
+        if(status==1 && result.characters) {
+            int bytes=WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,buffer.data(),result.characters,nullptr,0,nullptr,nullptr);
+            if(bytes<=0)status=-1;
+            else {value.resize(bytes);if(WideCharToMultiByte(CP_UTF8,WC_ERR_INVALID_CHARS,buffer.data(),result.characters,&value[0],bytes,nullptr,nullptr)!=bytes)status=-1;}
+        }
+        if(status==1)++values;else if(status<0)++rejected;
+        std::string keyText;for(auto character=key;*character;++character)keyText+=static_cast<char>(*character);
+        char metadata[160];sprintf_s(metadata,",\"status\":%d,\"characters\":%u,\"references_validated\":false",status,result.characters);
+        Log(std::string("{\"event\":\"native_asset_bundle_tag\",\"object_path\":")+Json(objectPath)+",\"tag\":"+Json(keyText)+
+            ",\"value\":"+Json(status==1?value:std::string())+metadata+"}");
+    }
+}
 DWORD WINAPI Worker(void*) {
     wchar_t path[32768]; DWORD size=GetEnvironmentVariableW(L"TWIN_KART_ASSET_LOG",path,ARRAYSIZE(path));
     if(!size || size>=ARRAYSIZE(path) || !TwinKartClient::Allowed(ClientSha)) return 1;
@@ -90,13 +124,15 @@ DWORD WINAPI Worker(void*) {
     image=reinterpret_cast<BYTE*>(GetModuleHandleW(nullptr));
     wchar_t modeAudit[4]{};
     bool includeModeData=GetEnvironmentVariableW(L"TWIN_KART_MODE_ASSET_AUDIT",modeAudit,4)==1 && modeAudit[0]==L'1';
+    wchar_t bundleAudit[4]{};
+    bool includeBundles=GetEnvironmentVariableW(L"TWIN_KART_ASSET_BUNDLE_AUDIT",bundleAudit,4)==1 && bundleAudit[0]==L'1';
     try {
         Log(std::string("{\"event\":\"asset_registry_begin\",\"client_sha256\":\"")+ClientSha+"\",\"source\":\"native IAssetRegistry\"}");
         void* registry=nullptr;
         for(int attempt=0;attempt<720 && !registry;++attempt) { if(SignaturesReady()) RegistryReady(&registry); if(!registry) Sleep(250); }
         if(!registry || !ReadSnapshot(registry)) throw std::runtime_error("native registry unavailable or incomplete");
         std::unordered_map<unsigned long long,std::string> classes;
-        unsigned worlds=0,paths=0,vehicleAssets=0,modeAssets=0;
+        unsigned worlds=0,paths=0,vehicleAssets=0,modeAssets=0,bundleAssets=0,tagQueries=0,tagValues=0,tagRejected=0;
         for(int index=0;index<snapshot.count;++index) {
             unsigned long long object=0,type=0;
             if(!AssetNames(index,&object,&type)) throw std::runtime_error("invalid native asset record");
@@ -112,11 +148,17 @@ DWORD WINAPI Worker(void*) {
             // rule/blueprint records without exporting their proprietary data.
             bool modeData=includeModeData && (item->second.find("DataAsset")!=std::string::npos ||
                 item->second.find("Config")!=std::string::npos || item->second.find("Param")!=std::string::npos ||
-                item->second=="Blueprint" || item->second=="DataTable");
-            if(!world && !ai && !vehicle && !modeData) continue;
+                item->second=="Blueprint" || item->second=="WidgetBlueprint" || item->second=="DataTable" || item->second=="LevelSequence" ||
+                item->second=="SpawnablePropList");
+            bool bundleData=includeBundles && item->second=="MaterialFxDataAsset";
+            if(!world && !ai && !vehicle && !modeData && !bundleData) continue;
             std::string objectPath=Name(object);
             if(objectPath.empty() || objectPath[0]!='/') throw std::runtime_error("unexpected native asset path");
             Log(std::string("{\"event\":\"native_asset\",\"class\":")+Json(item->second)+",\"object_path\":"+Json(objectPath)+"}");
+            if(bundleData) {
+                if(++bundleAssets>64)throw std::runtime_error("FX asset bundle audit bound exceeded");
+                ReadBundleMetadata(index,objectPath,tagQueries,tagValues,tagRejected);
+            }
             if(world) ++worlds; else if(ai) ++paths; else if(vehicle) ++vehicleAssets;else ++modeAssets;
         }
         if(!worlds) throw std::runtime_error("native snapshot did not contain world assets");
@@ -124,6 +166,9 @@ DWORD WINAPI Worker(void*) {
         sprintf_s(end,"{\"event\":\"asset_registry_complete\",\"assets\":%d,\"worlds\":%u,\"ai_path_assets\":%u,\"vehicle_assets\":%u,\"mode_data_assets\":%u,\"retained_snapshot_bytes\":%llu,\"all_tracks_driven\":false}",
             snapshot.count,worlds,paths,vehicleAssets,modeAssets,static_cast<unsigned long long>(snapshot.capacity)*0x60);
         Log(end);
+        if(includeBundles) {
+            char tags[256];sprintf_s(tags,"{\"event\":\"asset_bundle_tag_audit_complete\",\"assets\":%u,\"queries\":%u,\"present\":%u,\"rejected\":%u,\"references_validated\":false}",bundleAssets,tagQueries,tagValues,tagRejected);Log(tags);
+        }
     } catch(const std::exception&) {
         const char failure[]="{\"event\":\"asset_registry_failed\",\"complete\":false}\r\n"; DWORD written; WriteFile(logFile,failure,sizeof(failure)-1,&written,nullptr);
     }

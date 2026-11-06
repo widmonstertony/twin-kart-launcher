@@ -7,24 +7,53 @@
 #include <cmath>
 #include <cstring>
 #include <stdexcept>
+#include <string>
+#include <vector>
+#include <io.h>
 #include "../native/FrameGenerationD3D12.h"
 #include "../native/NativeViewMath.h"
 using Microsoft::WRL::ComPtr;
 void Need(HRESULT result) { if(FAILED(result)) throw std::runtime_error("Frame-generation fixture API failed"); }
 void Ok(unsigned result) { if(result) { fprintf(stderr,"Streamline result %u\n",result); throw std::runtime_error("Frame-generation fixture contract rejected"); } }
+bool InteractiveFixtureDesktop() {
+    USEROBJECTFLAGS flags{};BOOL input=FALSE;DWORD bytes=0,session=0;
+    bool station=GetUserObjectInformationW(GetProcessWindowStation(),UOI_FLAGS,&flags,sizeof(flags),&bytes)!=FALSE;
+    bool desktop=GetUserObjectInformationW(GetThreadDesktop(GetCurrentThreadId()),UOI_IO,&input,sizeof(input),&bytes)!=FALSE;
+    ProcessIdToSessionId(GetCurrentProcessId(),&session);
+    bool visible=station && (flags.dwFlags&WSF_VISIBLE)!=0;
+    printf("{\"event\":\"fg_fixture_desktop_preflight\",\"process_session\":%lu,\"station_query_ok\":%s,\"station_visible\":%s,\"desktop_query_ok\":%s,\"desktop_receives_input\":%s,\"game_started\":false}\n",
+        session,station?"true":"false",visible?"true":"false",desktop?"true":"false",input?"true":"false");fflush(stdout);
+    return visible && desktop && input;
+}
 unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFactory6* factory,ID3D12Device* device,bool focused) {
     WNDCLASSW windowClass{}; windowClass.lpfnWndProc=DefWindowProcW; windowClass.hInstance=GetModuleHandleW(nullptr); windowClass.lpszClassName=L"TwinKartHiddenGraphicsFixture";
     if(!RegisterClassW(&windowClass)) throw std::runtime_error("Hidden graphics fixture window unavailable");
     HWND previous=GetForegroundWindow();
-    HWND window=CreateWindowExW(focused?WS_EX_TOOLWINDOW:WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW,windowClass.lpszClassName,
-        L"Twin Kart GPU test (synthetic, no game)",focused?WS_OVERLAPPEDWINDOW:WS_POPUP,80,80,1280,720,nullptr,nullptr,windowClass.hInstance,nullptr);
+    // A visible foreground fixture must be a normal targetable application
+    // window. TOOLWINDOW hides it from normal app/window selection surfaces.
+    DWORD extended=focused?WS_EX_APPWINDOW:WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW;
+    DWORD style=focused?WS_OVERLAPPEDWINDOW:WS_POPUP;
+    RECT bounds{0,0,1280,720};
+    if(!AdjustWindowRectEx(&bounds,style,FALSE,extended))throw std::runtime_error("Graphics fixture client bounds unavailable");
+    HWND window=CreateWindowExW(extended,windowClass.lpszClassName,
+        L"Twin Kart GPU test (synthetic, no game)",style,80,80,bounds.right-bounds.left,bounds.bottom-bounds.top,nullptr,nullptr,windowClass.hInstance,nullptr);
     if(!window) throw std::runtime_error("Hidden graphics fixture creation failed");
     struct WindowOwner { HWND window,previous; ~WindowOwner() { bool restore=GetForegroundWindow()==window;if(IsWindow(window))DestroyWindow(window);
         if(restore && IsWindow(previous))SetForegroundWindow(previous);UnregisterClassW(L"TwinKartHiddenGraphicsFixture",GetModuleHandleW(nullptr)); } } owner{window,previous};
     if(focused) {
         ShowWindow(window,SW_SHOWNORMAL);UpdateWindow(window);SetForegroundWindow(window);
-        MSG message;while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
-        if(GetForegroundWindow()!=window)throw std::runtime_error("Focused fixture could not obtain actual window focus; no generated frames claimed");
+        printf("{\"event\":\"fg_fixture_waiting_for_focus\",\"process_id\":%lu,\"timeout_ms\":45000,\"game_started\":false}\n",GetCurrentProcessId());fflush(stdout);
+        ULONGLONG deadline=GetTickCount64()+45000;
+        do {
+            MSG message;while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
+            if(!IsWindow(window))throw std::runtime_error("Focused fixture closed before rendering");
+            if(GetForegroundWindow()==window && IsWindowVisible(window) && !IsIconic(window))break;
+            // Pump while the normal window-selection API activates this exact
+            // fixture. Do not send synthetic input or steal another app's focus.
+            MsgWaitForMultipleObjects(0,nullptr,FALSE,20,QS_ALLINPUT);
+        } while(GetTickCount64()<deadline);
+        if(GetForegroundWindow()!=window || !IsWindowVisible(window) || IsIconic(window))
+            throw std::runtime_error("Focused fixture could not obtain actual window focus; no generated frames claimed");
     }
     ComPtr<ID3D12CommandQueue> queue; D3D12_COMMAND_QUEUE_DESC queueDesc{}; Need(device->CreateCommandQueue(&queueDesc,IID_PPV_ARGS(&queue)));
     ComPtr<ID3D12CommandAllocator> allocator; ComPtr<ID3D12GraphicsCommandList> commands; ComPtr<ID3D12Fence> fence;
@@ -65,6 +94,8 @@ unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFacto
             MSG message;while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)){TranslateMessage(&message);DispatchMessageW(&message);}
             if(!IsWindow(window))throw std::runtime_error("Focused fixture was closed");
             Sleep(16);
+            if(GetForegroundWindow()!=window || !IsWindowVisible(window) || IsIconic(window))
+                throw std::runtime_error("Focused fixture lost focus; generation evidence rejected");
         }
         MSG message; while(PeekMessageW(&message,nullptr,0,0,PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
         camera.reset=frame<2; Ok(generation.BeginFrame(frame,camera)); Ok(generation.Marker(TwinKartGraphics::FrameStage::SimulationStart));
@@ -91,7 +122,11 @@ unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFacto
         Need(commands->Close()); Ok(generation.Marker(TwinKartGraphics::FrameStage::RenderSubmitStart));
         ID3D12CommandList* lists[]={commands.Get()}; queue->ExecuteCommandLists(1,lists); Ok(generation.Marker(TwinKartGraphics::FrameStage::RenderSubmitEnd));
         Ok(generation.Marker(TwinKartGraphics::FrameStage::PresentStart)); HRESULT presented=swapchain->Present(0,0); Ok(generation.Marker(TwinKartGraphics::FrameStage::PresentEnd));
-        auto state=generation.Presented(); if(state.lastPresented>=2) ++framesWithGenerated; total+=state.lastPresented;
+        Need(presented);
+        auto state=generation.Presented();
+        if(state.result || state.status)throw std::runtime_error("Frame-generation runtime reported an unsuccessful frame; evidence rejected");
+        if(presented==S_OK && !camera.reset && state.lastPresented>=2) ++framesWithGenerated;
+        if(presented==S_OK)total+=state.lastPresented;
         if(state.inputCompletionFence && state.inputCompletionValue) Need(queue->Wait(state.inputCompletionFence,state.inputCompletionValue));
         Need(queue->Signal(fence.Get(),frame+1)); HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr); if(!event) throw std::runtime_error("FG fixture fence event failed");
         Need(fence->SetEventOnCompletion(frame+1,event)); DWORD waited=WaitForSingleObject(event,10000); CloseHandle(event); if(waited!=WAIT_OBJECT_0) throw std::runtime_error("FG fixture GPU wait timed out");
@@ -101,8 +136,34 @@ unsigned PresentFixture(TwinKartGraphics::FrameGeneration& generation,IDXGIFacto
     return framesWithGenerated;
 }
 int wmain(int argc,wchar_t** argv) {
+    // The desktop window launcher accepts an executable path only. An
+    // explicit private sidecar selects this synthetic fixture's external
+    // signed runtime and a fresh report; it cannot name a game or backend.
+    std::vector<std::wstring> desktopArguments;std::vector<wchar_t*> desktopPointers;
+    if(argc==1) {
+        wchar_t module[32768]{};DWORD length=GetModuleFileNameW(nullptr,module,32768);
+        if(!length || length>=32768)return 2;
+        std::wstring path(module,length);auto slash=path.find_last_of(L"\\/");if(slash==std::wstring::npos)return 2;
+        std::wstring ini=path.substr(0,slash+1)+L"ProbeFrameGeneration.local.ini";
+        auto field=[&](const wchar_t* key){wchar_t value[32768]{};DWORD size=GetPrivateProfileStringW(L"FrameGenerationProbe",key,L"",value,32768,ini.c_str());
+            return size && size<32767?std::wstring(value,size):std::wstring{};};
+        auto runtime=field(L"StreamlineProvider"),logs=field(L"Logs"),report=field(L"Report");
+        if(runtime.empty() || logs.empty() || report.empty() || GetFileAttributesW(report.c_str())!=INVALID_FILE_ATTRIBUTES)return 2;
+        FILE* file=nullptr;if(_wfreopen_s(&file,report.c_str(),L"w",stdout) || !file)return 2;
+        // A GUI process can have no inherited stderr descriptor. Share the
+        // report's descriptor, never independent overlapping file positions.
+        setvbuf(stdout,nullptr,_IONBF,0);_dup2(_fileno(stdout),2);
+        HANDLE reportHandle=reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(stdout)));
+        SetStdHandle(STD_OUTPUT_HANDLE,reportHandle);SetStdHandle(STD_ERROR_HANDLE,reportHandle);
+        desktopArguments={path,runtime,logs,L"--focused-present-fixture"};
+        for(auto& argument:desktopArguments)desktopPointers.push_back(argument.data());
+        argc=static_cast<int>(desktopPointers.size());argv=desktopPointers.data();
+    }
     bool cameraOnly=argc==4 && !wcscmp(argv[3],L"--camera-contract");
     if(argc!=3 && !(argc==4 && (cameraOnly || !wcscmp(argv[3],L"--present-fixture") || !wcscmp(argv[3],L"--focused-present-fixture")))) { puts("Usage: ProbeFrameGeneration.exe <external-Streamline-directory> <existing-private-log-directory> [--camera-contract | --present-fixture | --focused-present-fixture]"); return 2; }
+    if(argc==4 && !wcscmp(argv[3],L"--focused-present-fixture") && !InteractiveFixtureDesktop()) {
+        fputs("Focused fixture has no visible input desktop; runtime not loaded and no generated frames claimed\n",stderr);return 7;
+    }
     TwinKartGraphics::FrameGeneration generation;
     unsigned loaded=generation.Load(argv[1],argv[2]); printf("{\"event\":\"fg_runtime_init\",\"result\":%u}\n",loaded); fflush(stdout);
     if(loaded) return 3;

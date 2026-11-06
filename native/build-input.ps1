@@ -1,12 +1,13 @@
 param(
     [string]$VcRoot,
     [string]$SdkRoot,
-    [string]$SdkVersion
+    [string]$SdkVersion,
+    [string]$OutputDirectory
 )
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
-$buildDir = Join-Path $projectRoot 'build'
+$buildDir = if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $projectRoot 'build'}
 $source = Join-Path $PSScriptRoot 'InputDevice.cpp'
 $programFilesX86 = ${env:ProgramFiles(x86)}
 if (-not $programFilesX86) { $programFilesX86 = 'C:\Program Files (x86)' }

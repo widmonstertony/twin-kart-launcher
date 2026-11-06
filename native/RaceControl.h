@@ -13,6 +13,9 @@ struct Request {
     int mode=1, ai=7, laps=3;
     char profile[97]{},custom[513]{};
 };
+inline constexpr char FreeDriveProfile[]="twin_kart_free_drive";
+inline constexpr wchar_t FreeDriveProfileWide[]=L"twin_kart_free_drive";
+inline bool FreeDrive(const Request& request) { return request.mode==1 && !strcmp(request.profile,FreeDriveProfile); }
 inline bool ValidProfile(const char* value) {
     size_t n=strnlen_s(value,97);if(n>96)return false;
     for(size_t i=0;i<n;++i)if(!((value[i]>='A'&&value[i]<='Z') || (value[i]>='a'&&value[i]<='z') ||
@@ -53,8 +56,10 @@ inline bool ValidCustomOptions(const char* value) {
 }
 inline bool Valid(const Request& request) {
     if(strlen(request.identity)!=32 || !request.track[0] || strlen(request.track)>96 ||
-       !PopulationValid(request.mode,request.ai) || request.laps<1 || request.laps>9 ||
+       (FreeDrive(request)?request.ai!=0 || request.custom[0]:!PopulationValid(request.mode,request.ai)) || request.laps<1 || request.laps>9 ||
        !ValidProfile(request.profile) || !ValidCustomOptions(request.custom)) return false;
+    // Exact original-art compatibility arena, not an alias for every Flag map.
+    if(ChaserMode(request.mode) && (strcmp(request.track,"Flag_F01") || request.profile[0] || request.custom[0]))return false;
     for(char ch:request.identity) if(ch && !((ch>='a' && ch<='f') || (ch>='0' && ch<='9'))) return false;
     if(!((request.track[0]>='A' && request.track[0]<='Z') || (request.track[0]>='a' && request.track[0]<='z'))) return false;
     for(char ch:request.track) if(ch && !((ch>='A' && ch<='Z') || (ch>='a' && ch<='z') || (ch>='0' && ch<='9') || ch=='_')) return false;
@@ -72,11 +77,13 @@ inline bool Parse(const char* text,Request* request) {
 }
 inline bool Options(const Request& request,wchar_t* target,size_t capacity) {
     if(!Valid(request) || !target || capacity<2) return false;
+    if(FreeDrive(request)){target[0]=0;return true;} // original AccountTimeAttack owns travel
     const wchar_t* mode=ModeName(request.mode);
     // PC MajorConnectRule::ApplyOptions consumes players and ais separately.
     // This creates an experimental local host; it does not establish racing,
     // AI movement, item rules, finish order or settlement acceptance.
-    wchar_t base[512]{};int written=FlagMode(request.mode)?
+    wchar_t base[512]{};int written=ChaserMode(request.mode)?
+        swprintf_s(base,L"game=/Script/KartDrift.ChaserGameMode?gamemode=Chaser?team=1?teamsize=16?players=1?observers=0?ais=%d?racemode=108",request.ai):FlagMode(request.mode)?
         swprintf_s(base,L"game=/Script/KartDrift.FlagGameMode?gamemode=FlagSquad?team=2?teamsize=4?players=1?observers=0?ais=7"):
         swprintf_s(base,L"game=/Script/KartDrift.%sGameMode?gamemode=%s?team=%d?teamsize=%d?players=1?observers=0?ais=%d?lap=%d",GameModeClass(request.mode),mode,TeamCount(request.mode,request.ai+1),TeamSize(request.mode),request.ai,request.laps);
     size_t customSize=strlen(request.custom);if(written<=0 || static_cast<size_t>(written)+customSize>=capacity)return false;

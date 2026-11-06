@@ -20,6 +20,12 @@ int wmain(int argc,wchar_t** argv) {
         enabled=0;auto keyRevision=TwinKartCameraHistoryRevision();ToggleCamera();
         Need(enabled==1 && TwinKartCameraHistoryRevision()>keyRevision,"Message toggle did not reset temporal history");
         ToggleCamera();Need(enabled==0,"Second press cannot restore third person");
+        TwinKartCamera::ArrowLook look;
+        Need(look.Update(100,true,-1,0)==1 && look.horizontal==-1,"Left look did not engage");
+        Need(look.Update(200,true,0,0)==1 && look.Update(800,true,0,0)==1,"Look returned without the release delay");
+        float returning=look.Update(1000,true,0,0);
+        Need(returning>0 && returning<1 && look.Update(1200,true,0,0)==0,"Look did not blend back and clear");
+        Need(look.Update(1300,false,1,0)==0 && look.horizontal==0,"Look leaked outside the driving view");
         TwinKartCamera::Settings value{};
         TwinKartCamera::Settings defaults{1,-30,140,-10,90,1,12,8};
         auto tall=TwinKartCamera::VehicleSettings(defaults,true);

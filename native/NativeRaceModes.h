@@ -6,6 +6,7 @@ inline bool StandardMode(int mode) { return mode>=1 && mode<=6; }
 inline bool SpitemMode(int mode) { return mode>=105 && mode<=107; }
 inline bool InfiniteBoostMode(int mode) { return mode>=101 && mode<=103; }
 inline bool FlagMode(int mode) { return mode==104; }
+inline bool ChaserMode(int mode) { return mode==108; }
 inline bool ItemLabMode(int mode) { return mode>=110 && mode<=112; }
 inline bool SpeedLabMode(int mode) { return mode>=113 && mode<=115; }
 inline bool LabMode(int mode) { return ItemLabMode(mode) || SpeedLabMode(mode); }
@@ -15,20 +16,23 @@ inline bool CubeMode(int mode) { return mode==116 || mode==118; }
 // Spitem has distinct native game modes and result stylers, but shares the
 // RaceAiPawn/MajorConnect lifecycle. Flag and arena modes do not.
 inline bool CircuitMode(int mode) { return StandardMode(mode) || SpitemMode(mode) || InfiniteBoostMode(mode) || LabMode(mode) || CubeMode(mode); }
-inline bool PlayableMode(int mode) { return CircuitMode(mode) || FlagMode(mode); }
+inline bool PlayableMode(int mode) { return CircuitMode(mode) || FlagMode(mode) || ChaserMode(mode); }
 inline bool SpeedMode(int mode) { return (mode>=1 && mode<=3) || InfiniteBoostMode(mode) || SpeedLabMode(mode); }
 inline int TeamSize(int mode) {
     if(FlagMode(mode))return 4;
+    if(ChaserMode(mode))return 16; // Native lobby group capacity; not infection roles.
     if(!CircuitMode(mode))return 0;
     int group=CubeMode(mode)?mode-116:LabMode(mode)?(mode-110)%3:SpitemMode(mode)?mode-105:InfiniteBoostMode(mode)?mode-101:(mode-1)%3;return group==0?1:group==1?2:4;
 }
-inline bool TeamMode(int mode) { return TeamSize(mode)>1; }
+inline bool TeamMode(int mode) { return !ChaserMode(mode) && TeamSize(mode)>1; }
 inline int TeamCount(int mode,int racers) {
+    if(ChaserMode(mode))return racers>=2 && racers<=8?1:0;
     int size=TeamSize(mode);
     return size>1 && racers>=size*2 && racers<=8 && racers%size==0?racers/size:0;
 }
 inline bool PopulationValid(int mode,int ai) {
     if(FlagMode(mode))return ai==7;
+    if(ChaserMode(mode))return ai>=1 && ai<=7;
     return CircuitMode(mode) && ai>=1 && ai<=7 && (!TeamMode(mode) || TeamCount(mode,ai+1)>0);
 }
 inline int SlotTeam(int mode,int slot,int racers) {
@@ -38,6 +42,7 @@ inline int SlotTeam(int mode,int slot,int racers) {
 }
 inline const wchar_t* ModeName(int mode) {
     if(FlagMode(mode))return L"FlagSquad";
+    if(ChaserMode(mode))return L"Chaser";
     if(!CircuitMode(mode))return nullptr;
     if(InfiniteBoostMode(mode))return L"InfinityBooster";
     if(SpitemMode(mode))return TeamMode(mode)?L"SpitemTeam":L"SpitemSingle";

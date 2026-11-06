@@ -12,6 +12,7 @@ namespace TwinKartLauncher
         static readonly string[] AxisEntries={
             "AxisMappings=(AxisName=\"MoveForward\",Scale=1.000000,Key=W)",
             "AxisMappings=(AxisName=\"MoveForward\",Scale=-2.000000,Key=S)",
+            "AxisMappings=(AxisName=\"MoveBackward_Ver2\",Scale=-1.000000,Key=S)",
             "AxisMappings=(AxisName=\"MoveLeft_NewCutting\",Scale=-1.000000,Key=A)",
             "AxisMappings=(AxisName=\"MoveRight\",Scale=-1.000000,Key=A)",
             "AxisMappings=(AxisName=\"MoveRight\",Scale=1.000000,Key=D)",
@@ -20,11 +21,13 @@ namespace TwinKartLauncher
         static readonly string[] PresetEntries={
             "(AxisName=\"MoveForward\",Scale=1.000000,Key=W)",
             "(AxisName=\"MoveForward\",Scale=-2.000000,Key=S)",
+            "(AxisName=\"MoveBackward_Ver2\",Scale=-1.000000,Key=S)",
             "(AxisName=\"MoveLeft_NewCutting\",Scale=-1.000000,Key=A)",
             "(AxisName=\"MoveRight\",Scale=-1.000000,Key=A)",
             "(AxisName=\"MoveRight\",Scale=1.000000,Key=D)",
             "(AxisName=\"MoveRight_NewCutting\",Scale=1.000000,Key=D)" };
         const string RightShiftDriftPreset="(ActionName=\"Drift\",Key=RightShift)";
+        static readonly Regex DrivingArrow=new Regex(@"^\(AxisName=""(?:MoveForward|MoveBackward_Ver2|MoveRight|MoveLeft_NewCutting|MoveRight_NewCutting)""[^()]*\bKey=(?:Up|Down|Left|Right)(?:[,)]|$)",RegexOptions.CultureInvariant|RegexOptions.IgnoreCase);
         static string Decode(byte[] original)
         { return new UTF8Encoding(false,true).GetString(original??new byte[0]).TrimStart('\ufeff').Replace("\r\n","\n"); }
         static bool Mapping(string line,string axis,string key)
@@ -47,6 +50,11 @@ namespace TwinKartLauncher
                 }
             }
             if(section<0){if(lines.Count==1 && lines[0].Length==0)lines.Clear();lines.Add("[/Script/Engine.InputSettings]");section=lines.Count-1;end=lines.Count;}
+            for(int i=end-1;i>section;--i) {
+                string entry=lines[i].Trim().TrimStart('+');
+                const string axis="AxisMappings=";
+                if(entry.StartsWith(axis,StringComparison.OrdinalIgnoreCase) && DrivingArrow.IsMatch(entry.Substring(axis.Length))) {lines.RemoveAt(i);--end;}
+            }
             var additions=new List<string>();
             foreach(string entry in AxisEntries) {
                 var match=Regex.Match(entry,"AxisName=\\\"([^\\\"]+)\\\".*Key=([^,)]+)");bool present=false;
@@ -72,6 +80,20 @@ namespace TwinKartLauncher
             lines[active]="ActivePreset=Traditional";
             string row=lines[traditional],marker="),ActionOverrides=(";int split=row.IndexOf(marker,StringComparison.Ordinal);
             if(split<0 || row.IndexOf(marker,split+1,StringComparison.Ordinal)>=0)throw new InvalidDataException("Malformed traditional preset overrides.");
+            const string axisMarker="AxisOverrides=(";
+            int axisStart=row.IndexOf(axisMarker,StringComparison.Ordinal)+axisMarker.Length;
+            if(axisStart<axisMarker.Length || axisStart>split)throw new InvalidDataException("Malformed traditional axis overrides.");
+            string axisList=row.Substring(axisStart,split-axisStart);
+            var entries=new List<string>();int consumed=0;
+            foreach(Match entry in Regex.Matches(axisList,@"\([^()]*\)")) {
+                if(entry.Index!=consumed || !entry.Value.StartsWith("(AxisName=",StringComparison.Ordinal))throw new InvalidDataException("Malformed axis entry.");
+                if(!DrivingArrow.IsMatch(entry.Value))entries.Add(entry.Value);
+                consumed=entry.Index+entry.Length;
+                if(consumed<axisList.Length && axisList[consumed]==',')++consumed;
+            }
+            if(consumed!=axisList.Length)throw new InvalidDataException("Malformed axis entries.");
+            row=row.Substring(0,axisStart)+String.Join(",",entries)+row.Substring(split);
+            split=row.IndexOf(marker,StringComparison.Ordinal);
             var add=new List<string>();
             foreach(string entry in PresetEntries) {
                 var match=Regex.Match(entry,"AxisName=\\\"([^\\\"]+)\\\".*Key=([^,)]+)");

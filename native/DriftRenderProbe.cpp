@@ -450,11 +450,13 @@ HRESULT STDMETHODCALLTYPE OnPresent(IDXGISwapChain* swap, UINT interval, UINT fl
         char row[192];sprintf_s(row,"{\"event\":\"native_present_failed\",\"frame\":%ld,\"thread\":%lu,\"hresult\":%ld}\r\n",nrRenderFrame,GetCurrentThreadId(),presented);Log(row);
     }
     if(srBackbuffer && (nrRenderFrame%120==0 || FAILED(presented))) {
-        char line[320];sprintf_s(line,"{\"event\":\"sr_native_backbuffer_present\",\"render_frame\":%ld,\"present_hresult\":%ld,\"same_output_resource\":true,\"quality_verified\":false}\r\n",nrRenderFrame,presented);Log(line);
+        bool accepted=SUCCEEDED(presented) && presented!=DXGI_STATUS_OCCLUDED;
+        char line[384];sprintf_s(line,"{\"event\":\"sr_native_backbuffer_present\",\"render_frame\":%ld,\"present_hresult\":%ld,\"same_output_resource\":true,\"game_acceptance\":%s,\"quality_verified\":false}\r\n",nrRenderFrame,presented,accepted?"true":"false");Log(line);
     }
     if(!(flags&DXGI_PRESENT_TEST)) TwinKartGraphics::FinishNativeNeuralFrame(static_cast<unsigned>(nrRenderFrame));
     if(nrBackbuffer && (nrRenderFrame%120==0 || FAILED(presented))) {
-        char line[320];sprintf_s(line,"{\"event\":\"nr_native_backbuffer_present\",\"render_frame\":%ld,\"present_hresult\":%ld,\"same_output_resource\":true,\"quality_verified\":false}\r\n",nrRenderFrame,presented);Log(line);
+        bool accepted=SUCCEEDED(presented) && presented!=DXGI_STATUS_OCCLUDED;
+        char line[384];sprintf_s(line,"{\"event\":\"nr_native_backbuffer_present\",\"render_frame\":%ld,\"present_hresult\":%ld,\"same_output_resource\":true,\"game_acceptance\":%s,\"quality_verified\":false}\r\n",nrRenderFrame,presented,accepted?"true":"false");Log(line);
     }
     return presented;
 }
@@ -495,7 +497,12 @@ DWORD WINAPI Worker(void*) {
         Log(TwinKartGraphics::ConfigureTemporalCapture(capturePath,selectedHash,2,true)?"{\"event\":\"temporal_capture_waiting_for_request\",\"guides_validated\":false}\r\n":"{\"event\":\"temporal_capture_rejected\"}\r\n");
     }
     wchar_t neuralModule[32768]{},neuralProvider[32768]{},neuralCache[32768]{};
+    wchar_t pipelineFlag[8]{};
+    DWORD pipelineLength=GetEnvironmentVariableW(L"TWIN_KART_RECONSTRUCTION_ENABLED",pipelineFlag,ARRAYSIZE(pipelineFlag));
+    bool pipelinePolicyValid=!pipelineLength || (pipelineLength==1 && (pipelineFlag[0]==L'0' || pipelineFlag[0]==L'1'));
+    bool pipelineEnabled=pipelinePolicyValid && (!pipelineLength || pipelineFlag[0]==L'1');
     DWORD neuralLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_MODULE",neuralModule,ARRAYSIZE(neuralModule));
+    if(!pipelineEnabled)neuralLength=0;
     DWORD providerLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_PROVIDER",neuralProvider,ARRAYSIZE(neuralProvider));
     DWORD cacheLength=GetEnvironmentVariableW(L"TWIN_KART_DLSS_CACHE",neuralCache,ARRAYSIZE(neuralCache));
     if(neuralLength && neuralLength<ARRAYSIZE(neuralModule) && providerLength && providerLength<ARRAYSIZE(neuralProvider) && cacheLength && cacheLength<ARRAYSIZE(neuralCache)) {
@@ -503,14 +510,18 @@ DWORD WINAPI Worker(void*) {
         DWORD neuralHashLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_MODULE_SHA256",expected,ARRAYSIZE(expected));
         if(neuralHashLength==64)for(unsigned i=0;i<64;++i)sha[i]=expected[i]<128?static_cast<char>(expected[i]):'!';
         neuralReady=TwinKartGraphics::ConfigureNativeNeuralPass(neuralModule,sha,neuralProvider,neuralCache,Log,TwinKartGraphics::NativePresentationOwnsNgxDevice);
-        Log(neuralReady?"{\"event\":\"nr_native_pass_configured\",\"game_acceptance\":false}\r\n":"{\"event\":\"nr_native_pass_configuration_rejected\"}\r\n");
+        wchar_t nrFlag[8]{};GetEnvironmentVariableW(L"TWIN_KART_NEURAL_RENDERING",nrFlag,ARRAYSIZE(nrFlag));
+        Log(neuralReady?(!wcscmp(nrFlag,L"0")?
+            "{\"event\":\"sr_guides_pipeline_configured_without_nr\",\"game_acceptance\":false}\r\n":
+            "{\"event\":\"nr_native_pass_configured\",\"game_acceptance\":false}\r\n"):
+            "{\"event\":\"nr_native_pass_configuration_rejected\"}\r\n");
     }
     wchar_t modulePath[32768]{};
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_MODULE", modulePath, ARRAYSIZE(modulePath));
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_CACHE", dlssCache, ARRAYSIZE(dlssCache));
     GetEnvironmentVariableW(L"TWIN_KART_DLSS_PROVIDER", dlssProvider, ARRAYSIZE(dlssProvider));
     wchar_t srFlag[8]{};GetEnvironmentVariableW(L"TWIN_KART_SUPER_RESOLUTION",srFlag,ARRAYSIZE(srFlag));
-    if(!wcscmp(srFlag,L"1")) {
+    if(pipelineEnabled && !wcscmp(srFlag,L"1")) {
         wchar_t moduleSha[65]{};char sha[65]{};
         DWORD length=GetEnvironmentVariableW(L"TWIN_KART_DLSS_MODULE_SHA256",moduleSha,ARRAYSIZE(moduleSha));
         if(length==64)for(unsigned i=0;i<64;++i)sha[i]=moduleSha[i]<128?static_cast<char>(moduleSha[i]):'!';
@@ -518,7 +529,7 @@ DWORD WINAPI Worker(void*) {
         Log(temporalReady?
             "{\"event\":\"sr_native_temporal_pass_configured\",\"game_acceptance\":false}\r\n":
             "{\"event\":\"sr_native_temporal_pass_rejected\"}\r\n");
-    } else if (modulePath[0] && dlssCache[0] && dlssProvider[0]) {
+    } else if (!pipelineLength && modulePath[0] && dlssCache[0] && dlssProvider[0]) {
         HMODULE module = LoadLibraryExW(modulePath, nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
         if (module) {
             initializeDlss = reinterpret_cast<DlssInitialize>(GetProcAddress(module, "TwinKartDlssInitialize"));
@@ -542,7 +553,7 @@ DWORD WINAPI Worker(void*) {
         bool b=HookContext(context);
         bool c=HookDevice(device);
         Log(a && b && c ? "{\"event\":\"observer_installed\",\"is_dlss_implementation\":false}\r\n" : "{\"event\":\"observer_partial_install\"}\r\n");
-        bool requestedReady=(wcscmp(fgRequested,L"1") || presentationReady) &&
+        bool requestedReady=pipelinePolicyValid && (wcscmp(fgRequested,L"1") || presentationReady) &&
             (!neuralLength || neuralReady) && (wcscmp(srFlag,L"1") || temporalReady);
         if(a && b && c && requestedReady) {
             wchar_t readyName[128]{};

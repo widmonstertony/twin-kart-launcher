@@ -6,6 +6,8 @@ This project is an **independent public repository, not a fork**. The code liste
 
 | Module | Original work in this project | Standard dependencies |
 |---|---|---|
+| `native/NativeObjectiveCapture.h`, `NativeHideRules.h` and scoped Hide adapters in `DriftRaceBridge.cpp` | Independently written exact development-world requests, FString transfer, sparse role-count validation, native controller initialization/local-session selection, a configured search deadline, previous-round pawn retirement and scoped original appearance preparation. The optional local bot policy uses sampled road paths and evasion/search inputs. Only an original overlap query or observed blocking contact can request deferred native pawn destruction, after revalidating current role and child identities. Selected primary assets and their soft mesh/physics/animation dependencies load through original engine interfaces; borrowed and owned strings retain separate lifetimes. Equal descriptors with absent meshes can request a scoped original rebuild, with bounded retries and separate kart/character asset-readiness reporting. Ordinary race requests reject explicit developer-world paths. Interface addresses/layouts come from the owner's client; no native function bodies are included. The diagnostic-only deadline triggers the original end expression; it supplies no winner/score, and retirement requires a complete replacement roster. Complete objective AI, formal-map compatibility and gameplay acceptance remain unfinished. | C++17, Windows SDK; owned original client/resources supplied externally. |
+| `native/NativeFactoryPopulation.h` and Factory adapters in `LocalRaceRuntime.h` | Independent forty-seat serial census, four-racer roster and cooperative control boundary; exact native component construction/reuse, missing manager preparation, original readiness and unavailable intro/podium handling. Restores native visibility only for the four intro-hidden racers when no movie plays; pauses remote smoothing tick only on local cooperative racers. Rule bodies, proprietary sequences and game assets are not reproduced. Full Factory gameplay remains incomplete. | C++17, Windows SDK; original client/assets supplied externally. |
 | `native/NativeEventRules.h`, `NativeEventMenu.h`, `NativeModeBinding.h`, `NativeUiOptions.h`, `NativeCubeWorld.h` and scoped `LocalRaceRuntime.h` adapters | Independently described historical event rules, original menu-copy sources, exact profile/class binding, room-to-native option conversion, dedicated Cube world/base-path mapping and original Flag item-context selection. Diagnostic observers read native skill spending, item grants and rank/time fields; they do not fabricate actions or results. Addresses, layouts and short compatibility signatures are independently observed interface facts. Hidden-mode completion remains incomplete. | C++17 and .NET; original client/resources supplied externally. |
 | `native/FlagArenaDriver.h`, `FlagGroundNavigation.h`, `NativeRoadQuery.h`, `NativeRacePreparation.h` | Independently authored arena feedback control, sampled height-field A* routing, gentle-ramp checks and native-allocator request preparation. The road query ABI and Flag interaction lifecycle are facts observed from the owner's client; no vendor navigation algorithm, map geometry, function body or third-party launcher implementation is included. F01 and F02 captures record native pickups, scores, winner and result phases. | C++17, Windows SDK; original client and its road collision supplied externally. |
 | `native/NativeAiRoster.h`, `native/NativeAiAssets.h`, `src/AiRosterCatalog.cs`, `tests/NativeAiRosterTests.cpp`, `tests/AiRosterCatalogTests.cs` | Original per-race selection with cryptographic entropy, same-race uniqueness, human exclusion and previous-slot avoidance. Compatible default costumes/parts come from external private definitions and are filtered by the PC client's native primary-asset registry before selection; native descriptors retain their original allocation ownership. iOS was studied for behavior, with no imported implementation. Registered paths are not proof of successful dependency loading or race rendering. | C++17, BCrypt, .NET JSON; user-supplied private resource metadata. |
@@ -40,6 +42,19 @@ This project is an **independent public repository, not a fork**. The code liste
 `build.ps1`, `native/build-*.ps1`, `test-*.ps1`, `gateway/test-room.ps1`, `gateway/test-wire.ps1`, `.gitignore`, `README.md`, `gateway/PROBE.md`, `LICENSE` and this file are first-party build, test and explanatory materials. `src/ClientDiscovery.cs` and its test contain the SHA-256 of one installed Drift build as a compatibility identifier; that hash is not an account identifier or credential. The `D:\Games\...` path in `README.md` is a generic command example, not the user's machine path.
 
 ## External components and ownership boundary
+
+`native/NativeObjectiveArena.h` and the exact-scene Hide adapter independently
+describe a compatibility layout on an existing installed formal-art arena.
+Spawn locations are authored procedural offsets projected through the original
+road query; no vendor map geometry, transforms or art are embedded. Original
+deferred actor spawning, tagged start discovery, rule classes and prop assets
+remain in the external client. A pinned six-byte virtual-call adapter preserves
+the original hidden-return-buffer ABI and changes only the requested local
+arena's class selection. Native begun-play and initialized phase-map checks
+precede wait release. This is an experimental compatibility arena, not a claim
+that a finished original HideNSeek map was shipped. Model dependency failures
+can replace only the affected randomized AI outfit group; other AI and the
+human preset are preserved. Full gameplay and visual acceptance remain pending.
 
 `NeuralD3D12.*`, `FrameGenerationD3D12.*`, `SharedTextureBridge.*` and the three standalone graphics probes are original integration code. Public NVIDIA/Windows SDK declarations are supplied externally at build time; their implementations and runtimes are not copied into this tree. The hash-limited, opt-in NR path uses private exports of the externally supplied neural model. Its `Init_Ext` ABI differs from the core SDK API. The adapter's distinct `TwinKart..._nvngx.dll` filename satisfies that snippet's component-name convention; no system NVIDIA DLL, driver, signature policy or model file is replaced or patched. The model remains external, is not distributed, and an unknown model hash is rejected by this private path. A successful synthetic GPU fixture does not establish game guide correctness, visible composition or quality.
 
@@ -154,6 +169,77 @@ Before any public push, review the staged file list and scan **that staged tree*
 
 ## Audit result on 2026-10-28
 
+The November 2 objective-input repair reuses the original APawn::DisableInput
+interface for current, serial-validated, unconnected local bots only. Its
+world/thread/controller guards, bounded diagnostics and road-derived compact
+arena layout are independently authored. Body/costume preparation preserves the
+owner's native optional finish-motion descriptors. No original movement function
+body, mobile package, capture, credential or reference launcher implementation is
+included. Actual model/contact observations and the local antivirus interruption
+remain private research evidence; they do not certify full gameplay or rendering.
+
+The independently authored `NativeFactoryPopulation.h` and scoped Factory adapters describe the original four-racer/thirty-six-Android interface boundary, exact role classes, original component APIs and a diagnostic-only loading request. Fixed four-racer role identifiers were checked against the owner's original localization and registered resources. Native scenario, driving, elimination and result implementations remain in the externally supplied client; forty native objects or component bindings do not establish a complete Factory match. Private live captures, native disassembly and original resources remain excluded.
+
+The independently authored `NativeChaserMode.h` and scoped mode-lookup adapter preserve the original lookup and may resolve a missing default Chaser definition through the original native class-default lifecycle. The PC storage and lazy-construction interfaces were independently checked; no vendor constructor or rule body is reproduced. The adapter checks native ownership, exact type and descriptor fields without editing cooked data or class defaults. It does not establish a Chaser world, native asset-bundle completeness, role assignment, AI driving or a completed match. It defaults off and has only passed software/static checks.
+
+The same original adapter now validates the complete local Chaser seat list before invoking the original SetConnect notification for unknown bot connections. Native connected/disconnected states, human connections, random role selection and native role-component construction are preserved. It requires an explicitly armed Chaser request, exact native rules/mode classes, an isolated serial-identified world and current pawn/state identities; the ordinary request contract still does not expose Chaser. The PC connection getter/setter and native selector interfaces were checked against original metadata and corroborating mobile symbols, without copying their implementations. Software fixtures do not certify native role execution or a playable match.
+
+The Chaser spawn classifier supplies only the local human/AI slot decision before the original MajorConnect spawn, under exact mode/world/thread and population checks. A single original Tagger BeginPlay network query now admits the owned standalone world to its original authority-binding branch; native client/server queries elsewhere are preserved. The camera/render activity gate uses the original Chaser phase component and statically corroborated Game FName, excluding loading, role selection and results. These original source adapters and their software tests do not establish native infection, objective AI navigation or end-to-end Chaser gameplay. No native rule body, cooked phase asset or third-party launcher implementation is included.
+
+The independently authored `NativeWorldBounds.h` and `ChaserArenaDriver.h` aggregate currently loaded native collision bounds and choose pursuit/escape routes through this project's existing sampled-road graph and feedback controller. Native actor enumeration, bounds-query and allocation-cleanup interfaces were independently checked from the exact PC reflected wrappers. All per-pawn control remains behind serial/world/thread/native-role checks; this adapter uses original throttle/steering and pauses only conflicting local AI controller/smoothing components. It does not write a pawn transform, assign infection or manufacture results. Synthetic geometry/role fixtures establish the local policy and storage contract, not native driving, complete road coverage, stacked-road support, objective items or a completed Chaser match. Original world geometry and native captures are excluded from publication.
+
+The independently authored `LayeredRoadNavigation.h` and `RoadSegmentSupport.h`
+retain distinct sampled road decks, require resolved native collision links and
+check bounded centerline support between Chaser nodes. The native route keeps
+every support-checked edge; geometric shortcut smoothing is disabled there.
+Exact contact storage and initial-penetration field facts were independently
+checked against the owner's PC reflection metadata. Synthetic stacked decks,
+ramps, gaps and malformed contacts test our graph and boundary policy only.
+They do not prove continuous ground, vehicle-volume clearance, native driving,
+all-track coverage or measured game performance. No road geometry or native
+navigation implementation is copied into the source.
+
+Private resource research now validates the owner's encrypted primary and full
+directory indexes against their stored SHA1 digests. Selected original map
+headers are decoded in memory with a separately installed proprietary codec to
+compare name-table/reference metadata. The codec, key material, decrypted index
+bytes, asset payloads, phone paths and detailed vendor catalogs are excluded
+from source publication. This metadata research does not add a new official
+scene or certify that a listed asset renders or that a mode is playable.
+
+The original Hide initial-prop policy preserves selected/pending native props,
+waits through the human selection phase and uses the original selection API
+only for a still-empty role. Its bounded retries and serial-identified
+controller/component lifetime guards are authored here. No vendor prop body,
+blueprint graph or material is reproduced. Metadata from original packages
+motivates the boundary, but neither class selection nor a child pointer proves
+that a missing mesh/material has been repaired or that a player is visible.
+
+`ScopedMaterialRepair.h` and `NativeStaticMaterials.h` independently implement
+bounded native material snapshots, exact slot-identity matching and an owned
+component override lease. Their source adapters reuse existing original ART
+materials for the two known development meshes without replacing their meshes,
+transforms or collision configuration. Only missing defaults and identified
+engine loader fallbacks on those exact meshes qualify; existing overrides and
+healthy defaults are preserved. Original component setters own render updates.
+Reflected layouts, getter/setter ABI and serialized slot-name correspondences
+were independently checked from the owner's client. Synthetic callback tests
+cover failure rollback, changed native state, ownership expiry and cleanup;
+they do not prove visible props, physics equivalence or complete native matches.
+All original package bytes, decoded exports, codec/runtime binaries and detailed
+asset catalogs remain private and excluded. Resource names here are interface
+identifiers, not copied model/material implementations.
+
+The independently authored `ChaserObjectives.h` and extended objective driver
+read serial-identified original vault/zone observations and choose reachable
+pickup/delivery approaches. They never set a holder, actor transform, native
+reward, level, score, infection or result. Native class/field and authority
+interface facts were checked from the owner's PC/Android binaries. Original
+vault authority queries already admit standalone and are preserved. Synthetic
+objective/road fixtures establish our bounded goal policy and invalidation,
+not native pickups, item use, rewards or a completed Chaser match. All native
+call observations, decoded catalogs and binary research remain excluded.
+
 The original `NativeRacePhase.h` classifier uses interface facts independently derived from the local PC client's property type/offset metadata, phase-construction call sites and FName initializers. It includes no vendor function body, native capture, asset or reference launcher implementation. Synthetic fixtures explicitly distinguish a phase object from its transition rule; they do not establish live phase or frame-generation acceptance.
 
 The HDR temporal adapter, input/output rectangle and exposure validator, raw/resolved guide conversion, camera history revisions and WARP boundary fixtures are original code written in this project. Local captures were used only to inspect layouts and reject false 1:1 SR claims. No captured shader instructions, game textures, native function bodies or reference launcher code are published. Optional shader-layout diagnostics require an explicit exact hash and existing private directory; their bounded local disassembly is research evidence excluded from every source package. The fixture consumer writes a known pattern; it is explicitly not NVIDIA output. Native shader hashes and interface addresses select the supported external build and are not a substitute for game acceptance.
@@ -162,10 +248,95 @@ The separate original offscreen temporal SR probe dynamically calls our hash-che
 
 The independently authored native reconstruction probe exercises the production SR/NR resource path with synthetic draw-produced color, padded native-style rectangles and immutable View buffers. Its optional standalone focused presentation chains the actual production reconstruction output into the separately supplied frame-generation runtime. Native shader identity guards are retained; fixture shaders cannot enter the public game path. Reports distinguish synthetic inputs/markers and measured GPU evaluations/presentations from game acceptance. Private INI arguments, captures, runtime libraries and models are excluded.
 
+The original `NativeAssetTags.h` adapter reads bounded asset-registry metadata
+through the supported client's public const-reference tag interface and releases
+only its returned string through the original allocator. Optional FX bundle
+audits preserve missing/empty/malformed/truncated distinctions and report primary
+type/name independently of filenames. Synthetic callbacks verify ownership and
+snapshot immutability; they do not certify an actual bundle or gameplay. The
+compiled build guard and interface addresses were derived from local reflection
+and calling-interface facts. Private tag values, phone reports, archive-index
+experiments, encryption material and proprietary assets are excluded from all
+source/release packages. No resource payload or vendor implementation is included.
+
+The same original `NativeHudAlphaShader.h` is compiled by presentation and the
+offscreen reconstruction fixture. Synthetic late-UI patches verify full-size
+HUDless retention and exact alpha classification after low-resolution NR and SR,
+including resize and stale-frame rejection. No shader bytecode from the client
+or external rendering implementation is included; this fixture is not a visual
+quality or game-frame-generation acceptance result.
+
+The independent NR Off path retains this project's pinned reconstruction
+consumer for genuine SR and FG input transport. It skips NR creation/evaluation
+and disallows private NR provider initialization. Standalone GPU assertions
+verify zero NR work/private-model loading while official SR still evaluates,
+and verify untouched output with full-size guides when both NR and SR are off.
+An explicit All Off gate suppresses reconstruction setup without destroying
+saved module pins. No external implementation or runtime was added to source.
+
 Native track-mode compatibility is read from the supported client's FKtTrackDef byte-enum array. Enum facts and field offsets were independently mapped from the owner's executable, rather than inferred from track-name suffixes. Launcher and native request validation preserve unknown metadata in historical reports and reject unsupported explicit combinations. No vendor table contents or function implementations are included.
 
 The new native presentation, camera-matrix decoder, owned suspended-startup loader, graphics INI policy and interoperation fixtures were independently authored here. PC interface addresses, mode-selection behavior and native setter layouts were derived from the owner's local client. The owner's iOS project is a behavioral reference, not imported launcher source. The Streamline/NGX headers and implementations remain separately supplied dependencies. Source fixtures create only their own tiny executable/DLL or hidden WARP resources; they do not launch vendor games or establish gameplay/visual acceptance.
 
 The selected-equipment adapter uses the account UObject owning the preset. A private read-only capture distinguished that owner from its embedded interface; the regression fixture preserves this distinction and rejects non-account and interior pointers. No captured account payload, preset contents or memory dump is included in source packages.
+
+The independently authored `ChaserItemInput.h` schedules local AI item intent
+over serial identities and a bounded round-robin pump. The native adapter uses
+the original Chaser pawn's configured item context, first-slot permission and
+original AI-use API, leaving native item selection, aim timers, targeting,
+casting and consumption external. Existing native item controllers and their
+subclasses suppress fallback intent. Synthetic checks cover fairness, bounded
+requests, expired inventory, role/respawn/pause, callback reset/reentry and clock
+bounds; they are not native item-use or full-match acceptance.
+
+The independently authored Chaser Loading qualifier forwards the original
+counter predicate and holds only the exact owned Loading transition until our
+already connected navigation preparation is complete. Original counters,
+streaming completion, role/random selection, race timers and results are not
+written. The tiny native predicate's verified instruction boundary and padding
+are interface metadata; a separate synthetic executable-buffer fixture checks
+its return-before-padding trampoline and adjacent-code preservation. Neither
+that fixture nor the software readiness checks executes an original game.
+Actual preparation latency and a complete native phase sequence remain open.
+
+The independently authored `NativeVehicleSweep.h` implements a checked original
+box-query boundary with borrowed input arrays, owned value-argument copies,
+the complete native hit ABI and a caller-supplied world/physics lease. Synthetic
+checks distinguish blocking, penetrating and invalid/untouched outputs, guard
+against adjacent hit-storage writes and verify the x64 callback argument
+contract. This supplies no estimated vehicle dimensions or replacement physics
+body and is not yet enabled as a Chaser route gate. Exact vehicle-body geometry,
+pose/road mapping, native queries and physical routes remain unaccepted. The
+interface facts were independently derived from the owner's PC executable and
+mobile native symbols; no external implementation or asset is included.
+
+The independently authored `NativeComponentSweep.h` calls the original
+component-body sweep using original query constructors, per-component setup,
+physics geometry and responses. Its scratch and result allocations are released
+on both C++ and SEH exits. `NativeBodyGeometry.h` observes supported original
+shape identities/types inside the original physics read callback, contains
+callback exceptions so the native unlock remains reachable, and releases only
+optional pointer-list storage. It does not own or destroy original shapes.
+The Chaser binding leases current native pawn/root/body/actor/scene/pose and role;
+it does not replace a pawn class, physical body, transform or collision filter.
+These interfaces and storage layouts were independently checked against the
+owned PC image and mobile symbol facts. Synthetic fixtures verify calling,
+storage, exception and rejection contracts. Road-to-body pose mapping and AI
+route gating are still unconnected; no native body, complete physical route,
+game or performance result is accepted by these fixtures. Shape fingerprints
+identify handles/types, not byte-exact geometry contents or an asset recovery.
+
+The original Chaser constructor independently identifies ChaserPawn for the
+player and SpeedSingleAiPawn for AI. The latter retains the base ItemComponent
+context default. Our independently authored construction qualifier selects the
+original Chaser item-context subclass only for that original AI class requesting
+a base context in the enabled, serial-owned Chaser world. It changes only the
+stack copy passed to the existing native construction call; original pawn type,
+class defaults, request fields and original registration/cache lifecycle remain
+external. Chaser is excluded from circuit component/result leases, including
+old same-world leases. A fixture invokes the production construction function
+against synthetic native classes/worlds to verify one forwarding call, scope,
+immutability and existing-context preservation. No native item use or completed
+Chaser match is established by it.
 
 The first-party source allowlist contains no observed personal absolute path, email address, real token, API key, password or embedded vendor binary. Test-only `SECRET_*` values are synthetic redaction assertions. `build/` already contains multiple compiled `.exe`, `.dll`, `.obj`, `.lib` and `.exp` files; they are excluded. `research/` contains generated client/phone metadata and machine-specific user-profile and installed-game paths, so it is excluded as a whole. This is a source-tree review, not a provenance warranty for future additions or proof of offline gameplay.

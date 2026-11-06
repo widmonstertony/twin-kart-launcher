@@ -37,6 +37,20 @@ namespace TwinKartLauncher
     }
     public static class OfflineLaunchSession
     {
+        // Both processes receive the same explicitly selected prototype
+        // capabilities. Never inherit a previous shell's enabled mode.
+        internal static void ConfigurePrototypeBackendEnvironment(ProcessStartInfo start,IDictionary<string,string> selected,bool ready)
+        {
+            string[] flags={"TWIN_KART_CHASER_COMPAT","TWIN_KART_CHASER_ARENA","TWIN_KART_HIDE_COMPAT","TWIN_KART_HIDE_REPAIRED_SCENE"};
+            foreach(string flag in flags)start.EnvironmentVariables.Remove(flag);
+            if(!ready || selected==null)return;
+            for(int i=0;i<flags.Length;i+=2) {
+                string first,second;
+                if(selected.TryGetValue(flags[i],out first) && first=="1" && selected.TryGetValue(flags[i+1],out second) && second=="1") {
+                    start.EnvironmentVariables[flags[i]]="1";start.EnvironmentVariables[flags[i+1]]="1";
+                }
+            }
+        }
         [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] static extern bool QueryFullProcessImageName(IntPtr process,uint flags,StringBuilder path,ref uint length);
         static readonly JavaScriptSerializer Json=new JavaScriptSerializer { MaxJsonLength=1024*1024 };
         static readonly object cameraGate=new object();
@@ -83,14 +97,24 @@ namespace TwinKartLauncher
             if(inside || !found) foreach(var entry in values) output.Add(entry.Key+"="+entry.Value);
             return new UTF8Encoding(true).GetPreamble().Concat(Encoding.UTF8.GetBytes(String.Join("\r\n",output))).ToArray();
         }
-        static void StopOwned(Process process, string path)
+        internal static void StopOwned(Process process, string path)
         {
-            if(process==null || process.HasExited) return;
+            if(process==null) return;
+            // Start may have thrown before this Process acquired an identity.
+            // HasExited throws for that case and must not hide the Start error.
+            try { int identity=process.Id; }
+            catch(InvalidOperationException) { return; }
+            if(process.HasExited) return;
             // This also works before primary-thread loader initialization,
             // when a suspended process may have no PEB module enumeration yet.
             var image=new StringBuilder(32768);uint length=(uint)image.Capacity;
             if(!QueryFullProcessImageName(process.Handle,0,image,ref length) || !String.Equals(image.ToString(),path,StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Refusing to stop a different process.");
             process.Kill(); if(!process.WaitForExit(10000)) throw new TimeoutException("Owned process did not stop.");
+        }
+        internal static bool CleanupStep(Action action,IDictionary<string,object> report,string key)
+        {
+            try { action(); return true; }
+            catch(Exception error) { report[key]=error.GetType().Name; return false; }
         }
         public static string Run(string manifestPath, Action<string> progress, CancellationToken cancellation, CockpitSettings cockpit=null)
         {
@@ -150,8 +174,13 @@ namespace TwinKartLauncher
                 var report=new Dictionary<string,object> { {"original_backend",true},{"original_launcher",true},{"external_sdk_provenance",manifest.ExternalSdkProvenance??"unspecified"},{"restored",false},{"started_utc",DateTime.UtcNow.ToString("o")},{"game_sha256",manifest.GameSha256},{"backend_sha256",manifest.GatewaySha256} };
                 Save(pending,new { ConfigDirectory=config,RunDirectory=run,Before=hashes });
                 Process server=null,gameProcess=null;
+                bool failed=false;
+                string stage="session_prepared";
                 try
                 {
+                    // Identify even sessions failing before backend readiness.
+                    Save(Path.Combine(run,"report.json"),report);
+                    progress("原创启动器会话："+run);
                     var ready=new ManualResetEvent(false);
                     using(var serverLog=new StreamWriter(Path.Combine(run,"backend.jsonl"),false,new UTF8Encoding(false)))
                     {
@@ -163,9 +192,14 @@ namespace TwinKartLauncher
                         start.EnvironmentVariables.Remove("TWIN_KART_ROOM_TRACK_REPORT");
                         start.EnvironmentVariables.Remove("TWIN_KART_ROOM_CLIENT_SHA256");
                         start.EnvironmentVariables.Remove("TWIN_KART_EVENT_MODES");
+                        start.EnvironmentVariables.Remove("TWIN_KART_FACTORY_COMPAT");
+                        ConfigurePrototypeBackendEnvironment(start,manifest.Environment,hasTrackReport);
                         string eventModes;
                         if(hasTrackReport && manifest.Environment!=null && manifest.Environment.TryGetValue("TWIN_KART_EVENT_MODES",out eventModes) && eventModes=="1")
                             start.EnvironmentVariables["TWIN_KART_EVENT_MODES"]="1";
+                        string factoryCompat;
+                        if(hasTrackReport && manifest.Environment!=null && manifest.Environment.TryGetValue("TWIN_KART_FACTORY_COMPAT",out factoryCompat) && factoryCompat=="1")
+                            start.EnvironmentVariables["TWIN_KART_FACTORY_COMPAT"]="1";
                         if(hasTrackReport) {
                             start.EnvironmentVariables["TWIN_KART_ROOM_RACE_CONTROL"]=raceControl;
                             start.EnvironmentVariables["TWIN_KART_ROOM_TRACK_REPORT"]=roomTrackReport;
@@ -174,10 +208,13 @@ namespace TwinKartLauncher
                         server=new Process { StartInfo=start };
                         DataReceivedEventHandler capture=(sender,args)=>{ if(args.Data==null) return; try { lock(logGate){serverLog.WriteLine(args.Data);serverLog.Flush();} } catch(ObjectDisposedException) { } if(args.Data.Contains("\"event\":\"ready\"")) ready.Set(); };
                         server.OutputDataReceived+=capture; server.ErrorDataReceived+=capture;
+                        stage="backend_start";
                         if(!server.Start()) throw new InvalidOperationException("Backend process did not start.");
                         server.BeginOutputReadLine(); server.BeginErrorReadLine(); report["server_pid"]=server.Id;
+                        stage="backend_readiness";
                         if(!ready.WaitOne(15000) || server.HasExited) throw new InvalidOperationException("Original backend did not become ready; inspect session log.");
                         cancellation.ThrowIfCancellationRequested();
+                        stage="configuration_route";
                         string gameIni=Path.Combine(config,"Game.ini");
                         File.WriteAllBytes(gameIni,Route(File.Exists(gameIni)?File.ReadAllBytes(gameIni):null,manifest.ServerSection));
                         {
@@ -201,6 +238,7 @@ namespace TwinKartLauncher
                         }
                         var launch=new ProcessStartInfo(game,manifest.Language.ApplyArguments(manifest.GameArguments)) { UseShellExecute=false,WorkingDirectory=Path.GetDirectoryName(game) };
                         if(manifest.Environment!=null) foreach(var variable in manifest.Environment) launch.EnvironmentVariables[variable.Key]=variable.Value;
+                        ConfigurePrototypeBackendEnvironment(launch,manifest.Environment,hasTrackReport);
                         if(manifest.Graphics!=null) {
                             var graphicsEnvironment=new Dictionary<string,string>();
                             foreach(string key in launch.EnvironmentVariables.Keys)graphicsEnvironment[key]=launch.EnvironmentVariables[key];
@@ -210,6 +248,7 @@ namespace TwinKartLauncher
                         launch.EnvironmentVariables["TWIN_KART_ALLOWED_GAME"]=game;
                         launch.EnvironmentVariables["TWIN_KART_CAMERA_LOG"]=Path.Combine(run,"camera.jsonl");
                         launch.EnvironmentVariables["TWIN_KART_CAMERA_CONTROL"]=cameraControl;
+                        launch.EnvironmentVariables["TWIN_KART_ARROW_LOOK"]=manifest.Keyboard!=null && manifest.Keyboard.AddWasd?"1":"0";
                         launch.EnvironmentVariables["TWIN_KART_ASSET_LOG"]=Path.Combine(run,"assets.jsonl");
                         launch.EnvironmentVariables["TWIN_KART_RACE_BRIDGE_LOG"]=Path.Combine(run,"race-bridge.jsonl");
                         if(manifest.EnableExperimentalRaceHost) {
@@ -224,6 +263,7 @@ namespace TwinKartLauncher
                         launch.EnvironmentVariables["TWIN_KART_RENDER_LOG"]=Path.Combine(run,"render.jsonl");
                         launch.EnvironmentVariables["TWIN_KART_RENDER_PASSES"]="1";
                         launch.EnvironmentVariables["TWIN_KART_DLSS_CACHE"]=Path.Combine(run,"ngx-cache"); Directory.CreateDirectory(Path.Combine(run,"ngx-cache"));
+                        stage="game_start";
                         if(manifest.Graphics!=null && manifest.Graphics.NeedsRenderer) {
                             string readyName="Local\\TwinKartRenderReady-"+Guid.NewGuid().ToString("N");
                             using(var graphicsReady=new EventWaitHandle(false,EventResetMode.ManualReset,readyName)) {
@@ -246,10 +286,17 @@ namespace TwinKartLauncher
                         if(manifest.EnableExperimentalRaceHost && manifest.Modules!=null && manifest.Modules.Any(module=>String.Equals(Path.GetFileName(module.Path),"TwinKartDriftRaceBridge.dll",StringComparison.OrdinalIgnoreCase)))
                             lock(cameraGate) {activeRaceControl=raceControl;if(hasTrackReport)activeTrackReport=roomTrackReport;}
                         progress("原创启动器已启动原创后端和原厂游戏；会话："+run);
+                        stage="game_session";
                         var timer=Stopwatch.StartNew();
                         while(!gameProcess.WaitForExit(250))
                         {
-                            cancellation.ThrowIfCancellationRequested();if(server.HasExited)throw new InvalidOperationException("Original backend exited during game session.");
+                            cancellation.ThrowIfCancellationRequested();
+                            if(server.HasExited) {
+                                server.WaitForExit(); // Drain both redirected diagnostic streams.
+                                report["server_exit_code"]=server.ExitCode;
+                                if(gameProcess.HasExited)report["game_exit_code"]=gameProcess.ExitCode;
+                                throw new InvalidOperationException("Original backend exited during game session.");
+                            }
                             if(refreshTracks && !tracksFinished) {
                                 try {
                                     TwinKartLauncher.Gateway.TrackSupportReport captured;
@@ -268,21 +315,47 @@ namespace TwinKartLauncher
                         StopOwned(gameProcess,game); StopOwned(server,backend); server.WaitForExit();
                     }
                 }
-                catch(Exception problem) { report["failure_type"]=problem.GetType().Name; throw; }
+                catch(Exception problem) {
+                    failed=true;
+                    report["failure_type"]=problem.GetType().Name;
+                    report["failure_stage"]=stage;
+                    report["failure_hresult"]=problem.HResult;
+                    var native=problem as System.ComponentModel.Win32Exception;
+                    if(native!=null)report["failure_native_error_code"]=native.NativeErrorCode;
+                    CleanupStep(()=>Save(Path.Combine(run,"report.json"),report),report,"failure_report_save_error");
+                    throw;
+                }
                 finally
                 {
                     lock(cameraGate) { if(activeCameraControl==cameraControl) activeCameraControl=null; }
                     lock(cameraGate) { if(activeRaceControl==raceControl) {activeRaceControl=null;activeTrackReport=null;} }
-                    StopOwned(gameProcess,game); StopOwned(server,backend);
-                    foreach(string file in Directory.GetFiles(config,"*.ini"))
-                    { string name=Path.GetFileName(file); File.Copy(file,Path.Combine(after,name),true); if(!hashes.ContainsKey(name)) File.Delete(file); }
-                    foreach(string name in hashes.Keys) File.Copy(Path.Combine(before,name),Path.Combine(config,name),true);
-                    bool restored=hashes.All(pair=>ProfileStore.Fingerprint(Path.Combine(config,pair.Key))==pair.Value);
+                    // Try both stops even if one fails. Never rewrite INIs while
+                    // an owned process could still be using them; retain pending.
+                    bool gameStopped=CleanupStep(()=>StopOwned(gameProcess,game),report,"game_stop_error");
+                    bool backendStopped=CleanupStep(()=>StopOwned(server,backend),report,"backend_stop_error");
+                    bool restored=false;
+                    if(gameStopped && backendStopped) {
+                        string[] current=null;
+                        CleanupStep(()=>current=Directory.GetFiles(config,"*.ini"),report,"config_list_error");
+                        if(current!=null)foreach(string file in current) {
+                            string name=Path.GetFileName(file);
+                            // A failed diagnostic copy must not suppress the
+                            // restoration of this or any other original INI.
+                            CleanupStep(()=>File.Copy(file,Path.Combine(after,name),true),report,"config_after_copy_error");
+                            if(!hashes.ContainsKey(name))CleanupStep(()=>File.Delete(file),report,"config_extra_delete_error");
+                        }
+                        foreach(string name in hashes.Keys)
+                            CleanupStep(()=>File.Copy(Path.Combine(before,name),Path.Combine(config,name),true),report,"config_restore_error");
+                        CleanupStep(()=>restored=hashes.All(pair=>ProfileStore.Fingerprint(Path.Combine(config,pair.Key))==pair.Value) &&
+                            Directory.GetFiles(config,"*.ini").Length==hashes.Count,report,"config_verify_error");
+                    }
                     report["restored"]=restored; report["ended_utc"]=DateTime.UtcNow.ToString("o");
-                    Save(Path.Combine(run,"report.json"),report);
-                    if(restored) File.Delete(pending);
-                    if(gameProcess!=null) gameProcess.Dispose(); if(server!=null) server.Dispose();
-                    progress(restored?"本轮测试结束，配置已完整恢复。":"配置恢复失败，请保留会话日志。");
+                    bool saved=CleanupStep(()=>Save(Path.Combine(run,"report.json"),report),report,"final_report_save_error");
+                    bool cleared=restored && saved && CleanupStep(()=>File.Delete(pending),report,"pending_clear_error");
+                    if(gameProcess!=null)CleanupStep(()=>gameProcess.Dispose(),report,"game_dispose_error");
+                    if(server!=null)CleanupStep(()=>server.Dispose(),report,"backend_dispose_error");
+                    CleanupStep(()=>progress(restored?"本轮测试结束，配置已完整恢复。":"配置恢复失败，请保留会话日志。"),report,"progress_error");
+                    if(!failed && !cleared)throw new InvalidOperationException("Session cleanup remains pending; inspect its report before starting another session.");
                 }
                 return run;
             }

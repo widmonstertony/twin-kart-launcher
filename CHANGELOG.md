@@ -1,5 +1,11 @@
 # Changelog / 更新记录
 
+## Unreleased — PC gameplay fixes / PC 玩法修订
+
+- Add lobby Free Drive track selection, keep restarts unranked, and restore native reverse. Guard the Time Attack result callback for the current practice world; the native final lap still needs a live check. / 增加大厅自由驾驶选图，保留重开不计成绩，接通原厂倒车。为当前练习局增加原厂结算保护，待实测原定终点。
+- Connect the human player's Chaser second slot to the original boost handler; two actual casts succeeded and the match reached its infection result. / 接通追逐玩家第二槽，实测两次原厂加速，并完成感染结算。
+- Keep repaired HideNSeek seekers within the arena and restore their patrol near the perimeter; verify the two-round flow and return to the lobby. / 修复版躲猫猫阻止搜索者出界、恢复边界附近的 AI 巡逻；已实测两轮并返回大厅。
+
 ## Unreleased — event compatibility source checkpoint / 活动适配源码检查点
 
 - Add 12 opt-in native event definitions, exact profile/class binding, role assignments and bounded room-option translation. / 新增 12 个可选原生活动定义、精确 profile／类绑定、阵容与受限房间参数转换。

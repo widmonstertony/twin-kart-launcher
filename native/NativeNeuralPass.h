@@ -6,9 +6,13 @@ using NativeNeuralLog=void(*)(const char*);
 using NativeNeuralCoreOwner=bool(*)(ID3D12Device*);
 bool ConfigureNativeNeuralPass(const wchar_t* module,const char* expectedModuleSha256,const wchar_t* provider,const wchar_t* cache,NativeNeuralLog,NativeNeuralCoreOwner=nullptr);
 // Exact-build experimental pre-HUD integration. The compute callback retains
-// the current native guides; only the pixel callback submits NR output.
+// current native guides. The pixel callback performs requested NR/SR or exports
+// unchanged full-size scene inputs for FG. TWIN_KART_NEURAL_RENDERING=0 skips
+// NR feature creation/evaluation and private-model initialization, retaining SR
+// and guides in the same pinned original consumer.
 bool ProcessNativeNeuralPass(ID3D11DeviceContext*,unsigned frame);
 bool ProcessNativeNeuralPixelPass(ID3D11DeviceContext*,unsigned frame);
+// False when NR is disabled, even if SR or guide export succeeded.
 bool NativeNeuralOutputMatches(ID3D11Resource*,unsigned frame);
 bool NativeSuperResolutionOutputMatches(ID3D11Resource*,unsigned frame);
 struct NativePresentationInputs {

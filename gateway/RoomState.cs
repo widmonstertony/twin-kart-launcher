@@ -33,10 +33,12 @@ namespace TwinKartLauncher.Gateway
         public int[] AiSlots { get { var values = new List<int>(aiSlots); values.Sort(); return values.ToArray(); } }
         public int AiCount { get { return aiSlots.Count; } }
         public bool HasAiSlot(int slot) { return aiSlots.Contains(slot); }
+        internal bool FreeDrive { get { return setting!=null && NativeRaceOptions.FreeDrive(raceMode,setting.GameMode.Profile); } }
+        internal int MaximumRacers { get { return FreeDrive?1:raceMode==100?4:8; } }
         internal void PopulateOfflineAi()
         {
             if(sessionId==null || observerMode)return;
-            for(int slot=1;slot<=7;++slot)aiSlots.Add(slot);
+            for(int slot=1;slot<MaximumRacers;++slot)aiSlots.Add(slot);
         }
 
         // The main-lobby mode buttons enter the original room/setup surface.
@@ -54,9 +56,18 @@ namespace TwinKartLauncher.Gateway
             joined = playRequested = hostMode = observerMode = hideGameKey = false;
             quickRoomPrepared = true;
             readyState = 0; aiSlots.Clear();
-            for (int slot=1; slot<=7; ++slot) aiSlots.Add(slot);
+            for (int slot=1; slot<MaximumRacers; ++slot) aiSlots.Add(slot);
         }
 
+        // This dedicated original mode has one authored test scene, not an
+        // ordinary FKtTrackDef/map picker. A lobby Play intent can prepare its
+        // exact eight-seat local session without inventing a cooked track row.
+        internal void JoinPreparedHideScene()
+        {
+            if(!quickRoomPrepared || sessionId==null || raceMode!=109 || track!="HideNSeekTestLevel" || aiSlots.Count!=7)
+                throw new ArgumentException("Invalid repaired Hide session.");
+            joined=true;hostMode=true;observerMode=false;quickRoomPrepared=false;
+        }
         public GatewayTransition Apply(string requestJson)
         {
             RoomPacketContract request;
@@ -89,7 +100,12 @@ namespace TwinKartLauncher.Gateway
             if (change != null)
             {
                 if (!joined) return GatewayTransition.Reject("Join a local room first.", request.PacketType, request.RequestId);
+                int previousMode=raceMode;
+                bool wasFreeDrive=FreeDrive;
                 setting = Copy(change.Setting); track = setting.Track; raceMode = setting.GameMode.RaceMode; playRequested = false; readyState = 0;
+                if(wasFreeDrive && raceMode==1 && String.IsNullOrEmpty(setting.GameMode.Profile))setting.GameMode.Profile=NativeRaceOptions.FreeDriveProfile;
+                aiSlots.RemoveWhere(slot=>slot>=MaximumRacers);
+                if((wasFreeDrive && !FreeDrive) || (previousMode!=raceMode && (previousMode==100 || raceMode==100)))PopulateOfflineAi();
                 return GatewayTransition.Accept(request.PacketType, request.RequestId, "Local room setting changed.");
             }
             if (request is ExitCustomGameContract)
@@ -130,6 +146,7 @@ namespace TwinKartLauncher.Gateway
             hostMode = false;
             readyState = 0;
             if(!preserveQuickRoom)aiSlots.Clear();
+            aiSlots.RemoveWhere(slot=>slot>=MaximumRacers);
             return GatewayTransition.Accept(packet.PacketType, packet.RequestId, "Room draft created locally; no client reply sent.");
         }
 
@@ -148,7 +165,7 @@ namespace TwinKartLauncher.Gateway
         GatewayTransition AddAi(AddCustomGameAiContract packet)
         {
             if (!joined) return GatewayTransition.Reject("Join a local room first.", packet.PacketType, packet.RequestId);
-            if (packet.Slot < 1 || packet.Slot > 7) return GatewayTransition.Reject("AI slot must be 1..7; slot zero belongs to the local driver.", packet.PacketType, packet.RequestId);
+            if (packet.Slot < 1 || packet.Slot >= MaximumRacers) return GatewayTransition.Reject("AI slot is outside this mode's racer grid; slot zero belongs to the local driver.", packet.PacketType, packet.RequestId);
             if (!aiSlots.Add(packet.Slot))
                 return GatewayTransition.Reject("Slot already contains an AI draft.", packet.PacketType, packet.RequestId);
             playRequested = false; readyState = 0;

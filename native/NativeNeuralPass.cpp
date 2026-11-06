@@ -35,7 +35,7 @@ struct RuntimeUse {
     bool entered=TryAcquireSRWLockExclusive(&runtimeLock)!=FALSE;
     ~RuntimeUse(){if(entered)ReleaseSRWLockExclusive(&runtimeLock);}
 };
-bool wantSuperResolution=false;
+bool wantSuperResolution=false,neuralEnabled=true;
 unsigned requestedNrPasses=1,requestedNrStyle=0;
 unsigned guideAttemptFrame=0,guideAttempts=0,guideSuccesses=0;int guideRejectStage=0;
 thread_local bool processing=false;
@@ -93,7 +93,7 @@ struct Runtime {
     Shutdown shutdown=nullptr;
     ShutdownDrained shutdownDrained=nullptr;
     unsigned inputWidth=0,inputHeight=0,lastSuperFrame=0;
-    UINT64 superEvaluations=0;
+    UINT64 superEvaluations=0,processedFrames=0;
     LARGE_INTEGER frequency{},lastTime{};
     CameraFrame camera{};bool cameraValid=false;unsigned cameraWidth=0,cameraHeight=0;
     TemporalHistory history;
@@ -124,50 +124,10 @@ void Event(const char* event,unsigned frame,unsigned value=0,void* target=nullpt
     bool sr=runtime && frame && runtime->superEvaluations && runtime->lastSuperFrame==frame;
     sprintf_s(text,"{\"event\":\"%s\",\"frame\":%u,\"result\":%u,\"target_resource\":\"%p\",\"game_acceptance\":false,\"sr_evaluated\":%s,\"nr_generated_frames\":0}\r\n",event,frame,value,target,sr?"true":"false"); logger(text);
 }
-bool ValidateView(ID3D11DeviceContext* context,ID3D11Device* device,ID3D11Buffer* buffer,unsigned width,unsigned height,float* jitter=nullptr,CameraFrame* camera=nullptr,bool reset=false) {
-    if(!buffer)return false; D3D11_BUFFER_DESC desc{}; buffer->GetDesc(&desc);
-    if(desc.ByteWidth!=8192)return false;
-    D3D11_BUFFER_DESC staging=desc; staging.Usage=D3D11_USAGE_STAGING; staging.BindFlags=0; staging.CPUAccessFlags=D3D11_CPU_ACCESS_READ; staging.MiscFlags=0;
-    ComPtr<ID3D11Buffer> copy; if(FAILED(device->CreateBuffer(&staging,nullptr,&copy)))return false;
-    context->CopyResource(copy.Get(),buffer); D3D11_MAPPED_SUBRESOURCE mapped{};
-    if(FAILED(context->Map(copy.Get(),0,D3D11_MAP_READ,0,&mapped)))return false;
-    float view[576]; memcpy(view,mapped.pData,sizeof(view)); context->Unmap(copy.Get(),0);
-    for(float value:view)if(!std::isfinite(value))return false;
-    // Exact native ViewSizeAndInvSize, inverted-Z perspective and temporal
-    // jitter layout confirmed against two captured real race frames.
-    bool valid=view[536]==static_cast<float>(width) && view[537]==static_cast<float>(height) &&
-        fabsf(view[538]*width-1)<0.001f && fabsf(view[539]*height-1)<0.001f &&
-        view[142]==10 && view[143]==0 && view[139]==1 && view[138]==0 &&
-        fabsf(view[520])<0.01f && fabsf(view[521])<0.01f &&
-        fabsf(view[519])>0.1f && fabsf(view[519])<10;
-    // The supplied current/previous no-AA transforms must also agree with
-    // ClipToPrevClip. Inversion is avoided: A*ClipToPrevClip must equal B.
-    if(valid) {
-        double current[4][4],previous[4][4];
-        for(int r=0;r<4;++r)for(int c=0;c<4;++c) {
-            current[r][c]=view[32+r*4+c]; previous[r][c]=view[316+r*4+c];
-        }
-        for(int r=0;r<4;++r) {
-            current[r][0]-=current[r][3]*view[520]; current[r][1]-=current[r][3]*view[521];
-            previous[r][0]-=previous[r][3]*view[522]; previous[r][1]-=previous[r][3]*view[523];
-        }
-        for(int r=0;r<4;++r)for(int c=0;c<4;++c) {
-            double value=0; for(int k=0;k<4;++k)value+=current[r][k]*view[504+k*4+c];
-            if(fabs(value-previous[r][c])>0.02*(1+fabs(previous[r][c])))valid=false;
-        }
-    }
-    if(valid && jitter) {
-        // Native NDC jitter converted to the actual low-resolution input's
-        // pixel coordinates; not guessed from the display resolution.
-        jitter[0]=-view[520]*width*0.5f;jitter[1]=view[521]*height*0.5f;
-    }
-    if(valid && camera)valid=DecodeNativeCamera(view,width,height,reset,*camera);
-    return valid;
-}
-bool Initialize(Runtime& r,ID3D11DeviceContext* context,ID3D11Buffer* view,unsigned width,unsigned height,unsigned guideWidth,unsigned guideHeight,bool lowResolutionNeural) {
+bool Initialize(Runtime& r,ID3D11DeviceContext* context,ID3D11Buffer* view,unsigned frame,unsigned width,unsigned height,unsigned guideWidth,unsigned guideHeight,bool lowResolutionNeural) {
     context->GetDevice(&r.device11); r.owner=GetCurrentThreadId(); r.width=width; r.height=height;
     r.lowResolutionNeural=lowResolutionNeural;r.nrWidth=lowResolutionNeural?guideWidth:width;r.nrHeight=lowResolutionNeural?guideHeight:height;
-    if(!ValidateView(context,r.device11.Get(),view,guideWidth,guideHeight)) { Event("nr_native_view_layout_rejected",0);return false; }
+    if(!ReadNativeGuideSnapshotView(context,view,guideFrame,frame,guideWidth,guideHeight)) { Event("nr_native_view_layout_rejected",0);return false; }
     ComPtr<IDXGIDevice> dxgi; ComPtr<IDXGIAdapter> adapter;
     if(FAILED(r.device11.As(&dxgi)) || FAILED(dxgi->GetAdapter(&adapter)) ||
        FAILED(D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&r.device12))))return false;
@@ -190,12 +150,17 @@ bool Initialize(Runtime& r,ID3D11DeviceContext* context,ID3D11Buffer* view,unsig
     r.shutdown=reinterpret_cast<Shutdown>(GetProcAddress(r.module,"TwinKartNeuralShutdown"));
     r.shutdownDrained=reinterpret_cast<ShutdownDrained>(GetProcAddress(r.module,"TwinKartNeuralShutdownDrained"));
     if(!r.init || !r.create || !r.evaluate || !r.shutdown || !r.shutdownDrained || !r.configure || !r.readState)return false;
-    unsigned initialized=r.init(r.device12.Get(),cachePath.c_str(),providerPath.c_str(),nullptr,true); Event("nr_real_game_initialize",0,initialized);
+    unsigned initialized=r.init(r.device12.Get(),cachePath.c_str(),providerPath.c_str(),nullptr,neuralEnabled);
+    Event(neuralEnabled?"nr_real_game_initialize":"sr_guides_core_initialize_without_nr",0,initialized);
     if(initialized!=1)return false;
-    if(!r.configure(requestedNrPasses,requestedNrStyle))return false;
-    Event(r.borrowedCore?"nr_presentation_ngx_core_borrowed":"nr_standalone_ngx_core_owned",0,initialized);
-    unsigned created=r.create(r.commands.Get(),r.nrWidth,r.nrHeight); Event("nr_real_game_create",0,created);
-    if(!r.Submit() || created!=1)return false;
+    Event(neuralEnabled?(r.borrowedCore?"nr_presentation_ngx_core_borrowed":"nr_standalone_ngx_core_owned"):
+        (r.borrowedCore?"sr_guides_presentation_core_borrowed":"sr_guides_standalone_core_owned"),0,initialized);
+    if(neuralEnabled) {
+        if(!r.configure(requestedNrPasses,requestedNrStyle))return false;
+        unsigned created=r.create(r.commands.Get(),r.nrWidth,r.nrHeight);Event("nr_real_game_create",0,created);
+        if(created!=1)return false;
+    }
+    if(!r.Submit())return false;
     ComPtr<ID3DBlob> code,errors;
     if(FAILED(D3DCompile(NativeGuideShader,sizeof(NativeGuideShader),nullptr,nullptr,nullptr,"main","cs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&code,&errors)) ||
        FAILED(r.device11->CreateComputeShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&r.convert)))return false;
@@ -285,6 +250,9 @@ bool ConfigureNativeNeuralPass(const wchar_t* module,const char* expectedModuleS
     if(configured || !module || !provider || !cache || !*provider || !*cache || !TwinKartClient::FileHasHash(module,expectedModuleSha256))return false;
     wchar_t srFlag[8]{};GetEnvironmentVariableW(L"TWIN_KART_SUPER_RESOLUTION",srFlag,ARRAYSIZE(srFlag));
     wantSuperResolution=!wcscmp(srFlag,L"1");
+    wchar_t nrFlag[8]{};DWORD nrLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_RENDERING",nrFlag,ARRAYSIZE(nrFlag));
+    if(nrLength && (nrLength!=1 || (nrFlag[0]!=L'0' && nrFlag[0]!=L'1')))return false;
+    neuralEnabled=!nrLength || nrFlag[0]==L'1';
     wchar_t passes[8]{},style[8]{};
     DWORD pn=GetEnvironmentVariableW(L"TWIN_KART_NR_PASSES",passes,ARRAYSIZE(passes));
     DWORD sn=GetEnvironmentVariableW(L"TWIN_KART_NR_STYLE",style,ARRAYSIZE(style));
@@ -395,7 +363,7 @@ bool ProcessQualifiedNeuralPixelPassUnlocked(ID3D11DeviceContext* context,unsign
     }
     if(!runtime) {
         runtime=new Runtime;
-        if(!Initialize(*runtime,context,nativeView.Get(),width,height,guideWidth,guideHeight,useSr)) {disabled=true;Event("nr_native_pass_initialize_failed",frame);return false;}
+        if(!Initialize(*runtime,context,nativeView.Get(),frame,width,height,guideWidth,guideHeight,useSr)) {disabled=true;Event("nr_native_pass_initialize_failed",frame);return false;}
         Event("nr_native_pass_initialized",frame);
     }
     auto& r=*runtime;
@@ -405,7 +373,7 @@ bool ProcessQualifiedNeuralPixelPassUnlocked(ID3D11DeviceContext* context,unsign
         disabled=true;Event("sr_native_prepare_failed",frame);return false;
     }
     float jitter[2]{};
-    r.cameraValid=ValidateView(context,r.device11.Get(),nativeView.Get(),guideWidth,guideHeight,jitter,&r.camera,false);
+    r.cameraValid=ReadNativeGuideSnapshotView(context,nativeView.Get(),guideFrame,frame,guideWidth,guideHeight,jitter,&r.camera,false);
     r.cameraWidth=guideWidth;r.cameraHeight=guideHeight;
     if(!r.cameraValid) {
         if(frame%120==0)Event("native_current_view_rejected",frame);return false;
@@ -418,7 +386,7 @@ bool ProcessQualifiedNeuralPixelPassUnlocked(ID3D11DeviceContext* context,unsign
     r.camera.reset=reset;
     r.lastFrame=frame;
     unsigned before[1024]{},after[1024]{};
-    bool verify=r.evaluations<3 && ReadPatch(context,r.device11.Get(),target.Get(),before);
+    bool verify=r.processedFrames<3 && ReadPatch(context,r.device11.Get(),target.Get(),before);
     ID3D11ShaderResourceView* empty[128]{}; ID3D11UnorderedAccessView* noWrites[8]{};
     context->CSSetShaderResources(0,128,empty);context->CSSetUnorderedAccessViews(0,8,noWrites,nullptr);
     ID3D11ShaderResourceView* guides[]{nativeDepth.Get(),nativeVelocity.Get()};ID3D11UnorderedAccessView* writes[]{r.depthUav.Get(),r.motionUav.Get()};
@@ -440,63 +408,69 @@ bool ProcessQualifiedNeuralPixelPassUnlocked(ID3D11DeviceContext* context,unsign
            FAILED(r.srMotionBridge.CopyTo12(r.srMotion.Get()))) {disabled=true;Event("sr_native_handoff_failed",frame);return false;}
     }
     if(FAILED(r.colorBridge.CopyTo12(target.Get())) || FAILED(r.depthBridge.CopyTo12(r.depth.Get())) ||
-       FAILED(r.motionBridge.CopyTo12(r.motion.Get())) || FAILED(r.outputBridge.CopyTo12(useSr?r.srColor.Get():target.Get())) ||
+       FAILED(r.motionBridge.CopyTo12(r.motion.Get())) || (neuralEnabled && FAILED(r.outputBridge.CopyTo12(useSr?r.srColor.Get():target.Get()))) ||
        FAILED(r.allocator->Reset()) || FAILED(r.commands->Reset(r.allocator.Get(),nullptr))) {disabled=true;Event("nr_native_resource_handoff_failed",frame);return false;}
     ID3D12Resource* fullInputs[]{r.colorBridge.Texture12(),r.depthBridge.Texture12(),r.motionBridge.Texture12()};
     ID3D12Resource* lowInputs[]{r.srColorBridge.Texture12(),r.srDepthBridge.Texture12(),r.srMotionBridge.Texture12()};
     ID3D12Resource** nrInputs=useSr?lowInputs:fullInputs;
-    for(unsigned i=0;i<3;++i)Transition(r.commands.Get(),nrInputs[i],D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    if(neuralEnabled || useSr)for(unsigned i=0;i<3;++i)Transition(r.commands.Get(),nrInputs[i],D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
     LARGE_INTEGER now{};QueryPerformanceCounter(&now);
     float milliseconds=r.lastTime.QuadPart?static_cast<float>(1000.0*(now.QuadPart-r.lastTime.QuadPart)/r.frequency.QuadPart):16.666667f;
     r.lastTime=now;
-    auto output=r.outputBridge.Texture12();Transition(r.commands.Get(),output,D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
-    TwinKartNeuralFrame request{sizeof(TwinKartNeuralFrame),r.commands.Get(),nrInputs[0],nrInputs[1],nrInputs[2],output,1,1,1,reset,true,true};
-    unsigned nrResult=r.evaluate(&request),srResult=0;
+    auto output=r.outputBridge.Texture12();unsigned nrResult=1,srResult=0;
+    if(neuralEnabled) {
+        Transition(r.commands.Get(),output,D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
+        TwinKartNeuralFrame request{sizeof(TwinKartNeuralFrame),r.commands.Get(),nrInputs[0],nrInputs[1],nrInputs[2],output,1,1,1,reset,true,true};
+        nrResult=r.evaluate(&request);
+    }
     if(useSr && nrResult==1) {
         // Both NR features run on the genuine lower-resolution scene and
         // guides. Only their refined result is reconstructed to the display.
         // This keeps every requested pass while avoiding two full-4K NR runs.
-        Transition(r.commands.Get(),output,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        if(neuralEnabled)Transition(r.commands.Get(),output,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
         Transition(r.commands.Get(),fullInputs[0],D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_UNORDERED_ACCESS);
         // This exact native source has already been tone mapped. Exposure is
         // baked into its SDR samples; do not apply the HDR pre-exposure again.
-        TwinKartSuperResolutionFrame srRequest{sizeof(TwinKartSuperResolutionFrame),r.commands.Get(),output,lowInputs[1],lowInputs[2],fullInputs[0],0,0,1,1,milliseconds,1,1,reset || frame!=r.lastSuperFrame+1,true,true};
+        auto srInput=neuralEnabled?output:lowInputs[0];
+        TwinKartSuperResolutionFrame srRequest{sizeof(TwinKartSuperResolutionFrame),r.commands.Get(),srInput,lowInputs[1],lowInputs[2],fullInputs[0],0,0,1,1,milliseconds,1,1,reset || frame!=r.lastSuperFrame+1,true,true};
         srResult=r.superEvaluate(&srRequest);
         Transition(r.commands.Get(),fullInputs[0],D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COMMON);
-        Transition(r.commands.Get(),output,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
-    } else Transition(r.commands.Get(),output,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COMMON);
+        if(neuralEnabled)Transition(r.commands.Get(),output,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
+    } else if(neuralEnabled)Transition(r.commands.Get(),output,D3D12_RESOURCE_STATE_UNORDERED_ACCESS,D3D12_RESOURCE_STATE_COMMON);
     unsigned result=useSr?(nrResult==1?srResult:nrResult):nrResult;
     TwinKartNeuralState nrState{sizeof(TwinKartNeuralState)};
     bool nrStateRead=r.readState(&nrState);
-    for(unsigned i=0;i<3;++i)Transition(r.commands.Get(),nrInputs[i],D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
+    if(neuralEnabled || useSr)for(unsigned i=0;i<3;++i)Transition(r.commands.Get(),nrInputs[i],D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
     bool submitted=r.Submit();
     bool returned=SUCCEEDED(r.colorBridge.ReturnTo11(useSr && submitted && result==1?target.Get():nullptr)) &&
         SUCCEEDED(r.depthBridge.ReturnTo11(nullptr)) && SUCCEEDED(r.motionBridge.ReturnTo11(nullptr)) &&
-        SUCCEEDED(r.outputBridge.ReturnTo11(!useSr && submitted && result==1?target.Get():nullptr));
+        (!neuralEnabled || SUCCEEDED(r.outputBridge.ReturnTo11(!useSr && submitted && result==1?target.Get():nullptr)));
     if(useSr) {
         bool srReturned=SUCCEEDED(r.srColorBridge.ReturnTo11(nullptr)) && SUCCEEDED(r.srDepthBridge.ReturnTo11(nullptr)) && SUCCEEDED(r.srMotionBridge.ReturnTo11(nullptr));
         returned=returned && srReturned;
     }
     if(!submitted || !returned || result!=1) {disabled=true;Event("nr_native_evaluate_failed",frame,result);return false;}
-    if(logger && (r.evaluations<3 || !(r.evaluations%120))) {
+    if(neuralEnabled && logger && (r.evaluations<3 || !(r.evaluations%120))) {
         char line[768];sprintf_s(line,"{\"event\":\"nr_pass_chain_gpu_completed\",\"frame\":%u,\"state_read\":%s,\"requested_passes\":%u,\"style\":%u,\"pass_results\":[%u,%u],\"pass_evaluations\":[%llu,%llu],\"gpu_completed\":true,\"quality_verified\":false}\r\n",
             frame,nrStateRead?"true":"false",requestedNrPasses,requestedNrStyle,nrState.passResults[0],nrState.passResults[1],nrState.passEvaluations[0],nrState.passEvaluations[1]);logger(line);
     }
-    ++r.evaluations;
+    if(neuralEnabled)++r.evaluations;
+    ++r.processedFrames;
     r.history.Commit(frame,revision,r.camera);
     r.nativeFrameObserved=CurrentNativeRenderFrame(r.nativeFrame);
     if(useSr && srResult==1) {
         ++r.superEvaluations;r.lastSuperFrame=frame;
-        if(r.superEvaluations<=3 || r.superEvaluations%120==0)Event("nr_low_resolution_output_submitted_to_sr",frame,srResult,target.Get());
+        if(r.superEvaluations<=3 || r.superEvaluations%120==0)Event(neuralEnabled?"nr_low_resolution_output_submitted_to_sr":"sr_native_output_without_nr",frame,srResult,target.Get());
     }
     ComPtr<IUnknown> identity;target.As(&identity);
     r.lastOutputIdentity=reinterpret_cast<uintptr_t>(identity.Get());r.lastOutputFrame=frame;
     if(verify && ReadPatch(context,r.device11.Get(),target.Get(),after) && logger) {
         unsigned changed=0;unsigned long long inputHash=14695981039346656037ull,outputHash=inputHash;
         for(unsigned i=0;i<1024;++i) {if(before[i]!=after[i])++changed;inputHash=(inputHash^before[i])*1099511628211ull;outputHash=(outputHash^after[i])*1099511628211ull;}
-        char text[512];sprintf_s(text,"{\"event\":\"nr_native_output_gpu_readback\",\"frame\":%u,\"pixels\":1024,\"changed_pixels\":%u,\"input_hash\":\"%016llx\",\"output_hash\":\"%016llx\",\"gpu_completed\":true,\"quality_verified\":false}\r\n",frame,changed,inputHash,outputHash);logger(text);
+        const char* event=neuralEnabled?"nr_native_output_gpu_readback":"sr_guides_without_nr_gpu_readback";
+        char text[512];sprintf_s(text,"{\"event\":\"%s\",\"frame\":%u,\"pixels\":1024,\"changed_pixels\":%u,\"input_hash\":\"%016llx\",\"output_hash\":\"%016llx\",\"gpu_completed\":true,\"quality_verified\":false}\r\n",event,frame,changed,inputHash,outputHash);logger(text);
     }
-    if(r.evaluations<=3 || !(r.evaluations%120))Event("nr_pre_hud_output_copy_submitted",frame,result,target.Get());
+    if(r.processedFrames<=3 || !(r.processedFrames%120))Event(neuralEnabled?"nr_pre_hud_output_copy_submitted":"sr_guides_pre_hud_ready_without_nr",frame,result,target.Get());
     return true;
 }
 bool ProcessQualifiedNeuralPixelPass(ID3D11DeviceContext* context,unsigned frame) {
@@ -522,7 +496,7 @@ bool ProcessNativeNeuralPixelPass(ID3D11DeviceContext* context,unsigned frame) {
     return ProcessQualifiedNeuralPixelPassUnlocked(context,frame);
 }
 bool NativeNeuralOutputMatches(ID3D11Resource* resource,unsigned frame) {
-    RuntimeUse use;return use.entered && OutputMatchesUnlocked(resource,frame);
+    RuntimeUse use;return use.entered && neuralEnabled && OutputMatchesUnlocked(resource,frame);
 }
 bool NativeSuperResolutionOutputMatches(ID3D11Resource* resource,unsigned frame) {
     RuntimeUse use;return use.entered && runtime && runtime->lastSuperFrame==frame && OutputMatchesUnlocked(resource,frame);
@@ -531,7 +505,7 @@ bool GetNativePresentationInputs(unsigned frame,NativePresentationInputs& inputs
     RuntimeUse use;if(!use.entered)return false;
     if(!runtime || disabled || runtime->owner!=GetCurrentThreadId() || !runtime->cameraValid || runtime->lastOutputFrame!=frame)return false;
     inputs.depth=runtime->depth.Get();inputs.motion=runtime->motion.Get();
-    inputs.hudless=runtime->lowResolutionNeural?runtime->colorBridge.Texture11():runtime->outputBridge.Texture11();
+    inputs.hudless=(!neuralEnabled || runtime->lowResolutionNeural)?runtime->colorBridge.Texture11():runtime->outputBridge.Texture11();
     inputs.camera=ResolvedPresentationCamera(runtime->camera,runtime->width,runtime->height);
     inputs.nativeFrame=runtime->nativeFrame;inputs.nativeFrameObserved=runtime->nativeFrameObserved;
     return inputs.depth && inputs.motion && inputs.hudless;

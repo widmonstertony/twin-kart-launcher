@@ -18,7 +18,7 @@ namespace TwinKartLauncher.Gateway
             internal string Character;
             internal string Costume;
         }
-        readonly RoomState room = new RoomState();
+        RoomState room = new RoomState();
         readonly string account;
         readonly Func<RoomState,string> startRoom;
         readonly List<AiCharacter> aiCharacters = new List<AiCharacter>();
@@ -185,16 +185,31 @@ namespace TwinKartLauncher.Gateway
             items.TryGetValue("Character",out character); items.TryGetValue("Kart",out kart); items.TryGetValue("Costume",out costume);
             if(ai && aiCharacters.Count!=0)
             {
-                var selected=aiCharacters[AiCatalogIndex("character",slot,aiCharacters.Count)];
+                var choices=aiCharacters.Where(value=>!String.Equals(value.Character,character as string,StringComparison.Ordinal)).ToList();
+                if(choices.Count==0)choices=aiCharacters;
+                var selected=choices[AiCatalogIndex("character",slot,choices.Count)];
                 character=selected.Character;costume=selected.Costume;
             }
-            if(ai && aiKarts.Count!=0)kart=aiKarts[AiCatalogIndex("kart",slot,aiKarts.Count)];
+            if(ai && aiKarts.Count!=0) {
+                var choices=aiKarts.Where(value=>!String.Equals(value,kart as string,StringComparison.Ordinal)).ToList();
+                if(choices.Count==0)choices=aiKarts;
+                kart=choices[AiCatalogIndex("kart",slot,choices.Count)];
+            }
             var setting=room.Setting;
-            string required=setting==null?null:NativeRaceOptions.EventCharacter(setting.GameMode.RaceMode,setting.GameMode.Profile,slot);
+            // Circuit event identities select skills in the native adapter;
+            // they must not overwrite the visible random room roster. Factory
+            // keeps its separate original four-racer presentation contract.
+            string required=setting==null || setting.GameMode.RaceMode!=100?null:
+                NativeRaceOptions.EventCharacter(setting.GameMode.RaceMode,setting.GameMode.Profile,slot);
             if(required!=null && aiCharacters.Count!=0) {
                 var selected=aiCharacters.FirstOrDefault(value=>value.Character==required);
                 if(selected==null)throw new ArgumentException("本客户端缺少该活动规定的角色资源。");
                 character=selected.Character;costume=selected.Costume;
+            }
+            string requiredKart=setting==null?null:NativeRaceOptions.EventKart(setting.GameMode.RaceMode,slot);
+            if(requiredKart!=null) {
+                if(aiKarts.Count!=0 && !aiKarts.Contains(requiredKart))throw new ArgumentException("本客户端缺少工厂逃脱规定的车辆资源。");
+                kart=requiredKart;
             }
             return Object("accountId",identity,"profile",avatar,"slot",slot,"isSpectator",!ai && room.ObserverMode,
                 "joinId",slot+1,"chId",character??"","kartId",kart??"","costume",costume??"",
@@ -205,7 +220,7 @@ namespace TwinKartLauncher.Gateway
             var members = new List<object> { Member(0,profile,login) };
             foreach (int slot in room.AiSlots) members.Add(Member(slot,profile,login));
             var info = Object("bossAccountId",account,"gameKey","","hideGameKey",room.HideGameKey,
-                "session",Setting(room.Setting),"maxMemberCount",8,"members",members,
+                "session",Setting(room.Setting),"maxMemberCount",room.MaximumRacers,"members",members,
                 "observerMode",room.ObserverMode,"observers",new object[0],
                 "gameOption",Object("hideKart",false,"hideCharacter",false),
                 "gameData",Object("player",Object(),"team",new object[0],"raceResult",new object[0],"adUrl",""));
@@ -220,11 +235,12 @@ namespace TwinKartLauncher.Gateway
             if(type=="PqRegisterMatch") return OpenNativeRaceSetup(request,id,profile);
             if(type=="PqPreStartTrackSel")
             {
-                // The original packet has only _type/reqId.  A successful,
-                // side-effect-free reply lets the client begin its own selected
-                // track preload before Play, instead of taking the failure path.
-                return new ProfileResult { Response=Object("_type","PrPacket","reqId",id,
-                    "result",Object("code",room.Joined?0:10001),"desc",room.Joined?"":"Join a local room first.") };
+                // The original roulette Start button requests an online track
+                // vote instead of PlayCustomGame. There are no remote voters in
+                // this owned offline room. Preserve the selected picker value
+                // and resolve it through the same checked local loading bridge.
+                // A bare success reply leaves the original UI waiting forever.
+                return StartLocalRoom(id);
             }
             bool exit=type=="PqLeaveCustomGame" || type=="PqAbortCustomGame";
             Dictionary<string,object> invalidatedRoom=null;
@@ -247,24 +263,29 @@ namespace TwinKartLauncher.Gateway
             if(type=="PqCreateCustomGame" && startRoom!=null)room.PopulateOfflineAi();
             if (start)
             {
-                string failure;
-                try { failure = startRoom == null ? "Native local loading bridge is unavailable in this session." : startRoom(room); }
-                catch(InvalidDataException) { failure="本次赛道目录与客户端不匹配，请重新启动本地会话。"; }
-                catch(IOException) { failure="本次比赛目录或请求文件不可用，请返回大厅后重试。"; }
-                catch(FormatException) { failure="本次赛道目录无效，请重新启动本地会话。"; }
-                catch(ArgumentException) { failure="本次比赛设置无效。"; }
-                reply.Response["result"] = Object("code",failure == null ? 0 : 10001);
-                reply.Response["desc"] = failure ?? "Local loading requested.";
-                return reply;
+                return StartLocalRoom(id);
             }
             if (exit)
             {
                 if(invalidatedRoom!=null)reply.Notices.Add(invalidatedRoom);
                 return reply;
             }
-            if (type == "PqCreateCustomGame") reply.Notices.Add(Object("_type","PcPartyCreateJoinCustomGame"));
+            if (type == "PqCreateCustomGame") reply.Notices.Add(Object("_type","PcPartyCreateJoinCustomGame","sessionId",room.SessionId));
             reply.Notices.Add(Snapshot(profile,login));
             return reply;
+        }
+
+        ProfileResult StartLocalRoom(int id)
+        {
+            string failure;
+            if(!room.Joined)failure="Join a local room first.";
+            else try { failure=startRoom==null?"Native local loading bridge is unavailable in this session.":startRoom(room); }
+            catch(InvalidDataException) { failure="本次赛道目录与客户端不匹配，请重新启动本地会话。"; }
+            catch(IOException) { failure="本次比赛目录或请求文件不可用，请返回大厅后重试。"; }
+            catch(FormatException) { failure="本次赛道目录无效，请重新启动本地会话。"; }
+            catch(ArgumentException) { failure="本次比赛设置无效。"; }
+            return new ProfileResult {Response=Object("_type","PrPacket","reqId",id,"result",Object("code",failure==null?0:10001),
+                "desc",failure??"Local loading requested.")};
         }
 
         ProfileResult OpenNativeRaceSetup(IDictionary<string,object> request,int id,Dictionary<string,object> profile)
@@ -293,12 +314,30 @@ namespace TwinKartLauncher.Gateway
                     if(!(rawProfile is string))throw new ArgumentException("Invalid mode profile.");
                     modeProfile=NativeRaceOptions.Profile((string)rawProfile);
                 }
-                room.PrepareQuickRoom((int)rawMode,"Roulette_A01",modeProfile);
+                int chosen=(int)rawMode;
+                if(chosen==109) {
+                    if(modeProfile.Length!=0 || startRoom==null)throw new ArgumentException("Repaired Hide entry is unavailable in this session.");
+                    // Do not replace an existing room if the gated bridge is
+                    // disabled, unavailable or already has a pending travel.
+                    var prepared=new RoomState();prepared.PrepareQuickRoom(109,"HideNSeekTestLevel");
+                    prepared.JoinPreparedHideScene();
+                    string failure=startRoom(prepared);if(failure!=null)throw new ArgumentException(failure);
+                    room=prepared;
+                    response["result"]=Object("code",0);response["mmTicket"]=room.SessionId;
+                    response["useDefaultLatencyInfo"]=true;
+                    // Original native travel opens its own loading/role UI.
+                    // No fake ordinary track definition or unrelated preview
+                    // map is supplied to the circuit custom-room picker.
+                    return reply;
+                }
+                if(NativeRaceOptions.FreeDrive(chosen,modeProfile) && startRoom==null)
+                    throw new ArgumentException("本次会话未装载自由驾驶接口。");
+                room.PrepareQuickRoom(chosen,chosen==100?"Factory_I01":chosen==108?"Flag_F01":"Roulette_A01",modeProfile);
                 response["result"]=Object("code",0);response["mmTicket"]=room.SessionId;
                 object latency;response["useDefaultLatencyInfo"]=request.TryGetValue("useDefaultLatencyInfo",out latency) && latency is bool ? latency : true;
                 // The original client follows this notice with its native join
                 // request, then renders its own map/team/AI setup and loading UI.
-                reply.Notices.Add(Object("_type","PcPartyCreateJoinCustomGame"));
+                reply.Notices.Add(Object("_type","PcPartyCreateJoinCustomGame","sessionId",room.SessionId));
             } catch(ArgumentException error) { response["desc"]=error.Message; }
               catch(FormatException error) { response["desc"]=error.Message; }
             return reply;
@@ -311,6 +350,7 @@ namespace TwinKartLauncher.Gateway
     {
         sealed class Track { internal string Id; internal int Mask,Laps; }
         readonly string control,client,reportPath;
+        readonly bool factoryEnabled,chaserEnabled,hideEnabled;
         readonly List<Track> tracks = new List<Track>();
         readonly Dictionary<string,int> selectors = new Dictionary<string,int>(StringComparer.Ordinal);
         readonly object gate = new object();
@@ -318,10 +358,13 @@ namespace TwinKartLauncher.Gateway
         string lastRandomTrack;
         static bool IsSelector(string id)
         { return id=="Roulette_A01" || id=="Random_R01" || id=="Random_R02"; }
-        internal NativeRoomLaunch(string controlPath, string reportPath, string clientSha256)
+        internal NativeRoomLaunch(string controlPath, string reportPath, string clientSha256,bool factoryEnabled = false,bool chaserEnabled = false,bool hideEnabled = false)
         {
             if(!Regex.IsMatch(clientSha256??"","^[a-f0-9]{64}$")) throw new ArgumentException("Invalid client fingerprint.");
             control=Path.GetFullPath(controlPath);client=clientSha256;this.reportPath=Path.GetFullPath(reportPath);
+            this.factoryEnabled=factoryEnabled;
+            this.chaserEnabled=chaserEnabled;
+            this.hideEnabled=hideEnabled;
         }
         void ReadTracks()
         {
@@ -356,7 +399,9 @@ namespace TwinKartLauncher.Gateway
             string path=Environment.GetEnvironmentVariable("TWIN_KART_ROOM_RACE_CONTROL");
             return String.IsNullOrEmpty(path)?null:new NativeRoomLaunch(path,
                 Environment.GetEnvironmentVariable("TWIN_KART_ROOM_TRACK_REPORT"),
-                Environment.GetEnvironmentVariable("TWIN_KART_ROOM_CLIENT_SHA256"));
+                Environment.GetEnvironmentVariable("TWIN_KART_ROOM_CLIENT_SHA256"),Environment.GetEnvironmentVariable("TWIN_KART_FACTORY_COMPAT")=="1",
+                Environment.GetEnvironmentVariable("TWIN_KART_CHASER_COMPAT")=="1" && Environment.GetEnvironmentVariable("TWIN_KART_CHASER_ARENA")=="1",
+                Environment.GetEnvironmentVariable("TWIN_KART_HIDE_COMPAT")=="1" && Environment.GetEnvironmentVariable("TWIN_KART_HIDE_REPAIRED_SCENE")=="1");
         }
         static bool Supports(Track track,int mode)
         {
@@ -370,6 +415,21 @@ namespace TwinKartLauncher.Gateway
                 if(room==null || !room.Joined || room.ObserverMode) return "请先进入驾驶员房间。";
                 if(!File.Exists(control+".ready") || File.ReadAllText(control+".ready").Trim()!=client)
                     return "本地比赛接口尚未就绪，请在大厅稍候。";
+                if(room.RaceMode==109) {
+                    if(!hideEnabled)return "本次会话未启用躲猫猫修复场地。";
+                    var hide=room.Setting;
+                    if(room.AiCount!=7 || hide.Track!="HideNSeekTestLevel" ||
+                       !String.IsNullOrEmpty(hide.GameMode.Profile) || !String.IsNullOrEmpty(hide.LevelOption) || !String.IsNullOrEmpty(hide.CustomGameOption))
+                        return "躲猫猫使用修复版测试场地、七个 AI 和原厂角色规则。";
+                    if(lastIdentity!=null && !File.Exists(control+"."+lastIdentity+".result"))return "上一场开赛请求正在处理。";
+                    string hideIdentity=Guid.NewGuid().ToString("N");
+                    string pending=control+"."+hideIdentity+".tmp";
+                    try {
+                        File.WriteAllText(pending,"TKHIDE_REPAIRED1 "+hideIdentity+"\n",new UTF8Encoding(false));
+                        if(File.Exists(control))File.Replace(pending,control,null);else File.Move(pending,control);
+                    } finally {if(File.Exists(pending))File.Delete(pending);}
+                    lastIdentity=hideIdentity;return null;
+                }
                 // Session catalog is emitted after native startup; an old
                 // baseline may legitimately lack mode/lap metadata entirely.
                 if(tracks.Count==0) {
@@ -379,12 +439,27 @@ namespace TwinKartLauncher.Gateway
                 // Repeated clicks cannot enqueue overlapping loading transitions.
                 if(lastIdentity!=null && !File.Exists(control+"."+lastIdentity+".result")) return "上一场开赛请求正在处理。";
                 int mode=room.RaceMode,ai=room.AiCount;
+                bool factory=mode==100,freeDrive=room.FreeDrive;
+                bool chaser=mode==108;
+                if(chaser && !chaserEnabled)return "本次会话未启用追逐场景适配。";
+                if(factory && !factoryEnabled)return "本次会话未装载工厂逃脱兼容接口。";
                 int size=PacketJsonCodec.LocalTeamSize(mode);
-                if(!PacketJsonCodec.LocalRaceMode(mode) || ai<1 || ai>7 ||
-                    (size>1 && (ai+1<size*2 || (ai+1)%size!=0))) return "请在房间添加 AI：双人组需 3、5 或 7 个，四人组需 7 个，个人赛需 1–7 个。";
+                if(!PacketJsonCodec.LocalRaceMode(mode) || (freeDrive?ai!=0:ai<1) || ai>7 ||
+                    (factory?ai!=3:(!chaser && size>1 && (ai+1<size*2 || (ai+1)%size!=0)))) return factory?"工厂逃脱需要三名合作 AI；三十六个机器人由原厂规则生成。":"请在房间添加 AI：双人组需 3、5 或 7 个，四人组需 7 个，个人赛需 1–7 个。";
                 var setting=room.Setting;
                 string options=NativeRaceOptions.Merge(setting.LevelOption,setting.CustomGameOption);
                 string profile=NativeRaceOptions.CanonicalProfile(mode,setting.GameMode.Profile);
+                if(freeDrive) {
+                    // The stock map picker repeats these defaults even when
+                    // the player only changes the map. Time Attack owns its
+                    // actual gameplay settings, so do not forward room options.
+                    var roomDefaults=new HashSet<string>(new[]{"speed.IgnoreFaraway=false","speed.Draft=true","speed.Collision=true"},StringComparer.OrdinalIgnoreCase);
+                    if(options.Length!=0 && !roomDefaults.SetEquals(options.Substring(1).Split('?')))return "自由驾驶使用原厂赛道设置。";
+                    options="";
+                }
+                if(chaser && (options.Length!=0 || profile.Length!=0))return "追逐使用原厂角色、感染和道具规则。";
+                if(factory && (options.Length!=0 || profile.Length!=0 || (setting.Lap.HasValue && setting.Lap!=0 && setting.Lap!=999 && setting.Lap!=5)))
+                    return "工厂逃脱使用固定五轮和原厂规则。";
                 var eligible=tracks.Where(t=>Supports(t,mode)).ToArray();
                 Track track=eligible.FirstOrDefault(t=>t.Id==setting.Track);
                 if(IsSelector(setting.Track) && eligible.Length>0) {
@@ -401,11 +476,13 @@ namespace TwinKartLauncher.Gateway
                 if(track==null) return "所选地图在本客户端缺少该模式的完整资源，请在游戏内重新选图。";
                 int laps=setting.Lap??999;
                 if(laps==999 || laps==0) laps=track.Laps>=1 && track.Laps<=9?track.Laps:3;
+                if(factory)laps=5;
                 if(laps<1 || laps>9) return "圈数需要为 1–9 或原厂默认值。";
                 string identity=Guid.NewGuid().ToString("N");
                 string text=String.Format(CultureInfo.InvariantCulture,"TKRACE1 {0} {1} {2} {3} {4}\n",identity,track.Id,mode,ai,laps);
                 if(options.Length>0 || profile.Length>0)
                     text=String.Format(CultureInfo.InvariantCulture,"TKRACE2 {0} {1} {2} {3} {4} {5} {6}\n",identity,track.Id,mode,ai,laps,profile.Length==0?"-":profile,options.Length==0?"-":options);
+                if(factory)text=String.Format(CultureInfo.InvariantCulture,"TKFACTORY1 {0} {1}\n",identity,track.Id);
                 string temporary=control+"."+identity+".pending";
                 try {
                     using(var stream=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None)) {

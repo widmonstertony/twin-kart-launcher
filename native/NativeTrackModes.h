@@ -1,8 +1,17 @@
 #pragma once
 #include <cstddef>
 #include <cstring>
+#include <cwchar>
 #include "NativeRaceModes.h"
 namespace TwinKartRace {
+// A native registry entry or playable mode mask does not turn a retained
+// developer world into a finished visual scene. Keep such maps out of the
+// ordinary race path; exact diagnostic requests have a separate contract.
+inline bool DevelopmentWorldPath(const wchar_t* path) {
+    if(!path)return false;
+    if(!_wcsnicmp(path,L"World'",6))path+=6;
+    return !_wcsnicmp(path,L"/Game/Dev/",10);
+}
 // Raw native metadata includes999 in the owned table. Preserve it exactly;
 // it is not a request for a999-lap session (race requests remain1..9).
 inline bool ValidNativeTrackLaps(int laps){return (laps>=0 && laps<=99) || laps==999;}
@@ -21,6 +30,6 @@ inline bool ReadNativeTrackModeMask(const void* record,std::size_t size,unsigned
 }
 inline bool NativeTrackSupports(unsigned mask,int mode) {
     return (mask&~31u)==0 && PlayableMode(mode) &&
-        (mask&(1u<<(FlagMode(mode)?4:SpitemMode(mode)?3:SpeedMode(mode)?2:1)))!=0;
+        (mask&(1u<<((FlagMode(mode)||ChaserMode(mode))?4:SpitemMode(mode)?3:SpeedMode(mode)?2:1)))!=0;
 }
 }

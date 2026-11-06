@@ -51,6 +51,8 @@ TwinKartCamera::ObjectIdentity auditedIdentity{};
 unsigned long long headName = 0;
 bool headWasHidden = false, headHiddenByUs = false;
 TwinKartCamera::CockpitGate cockpitGate{};
+TwinKartCamera::ArrowLook arrowLook{};
+bool arrowLookEnabled=false;
 using RaceRenderingActive=BOOL(WINAPI*)();
 RaceRenderingActive raceRenderingActive=nullptr;
 void Log(const char* event);
@@ -342,6 +344,13 @@ float NormalizeAngle(float value) {
     return value;
 }
 
+bool NativeDrivingViewActive() {
+    if(!raceRenderingActive) {
+        HMODULE bridge=GetModuleHandleW(L"TwinKartDriftRaceBridge.dll");
+        if(bridge)raceRenderingActive=reinterpret_cast<RaceRenderingActive>(GetProcAddress(bridge,"TwinKartCockpitDrivingActive"));
+    }
+    return raceRenderingActive && raceRenderingActive()!=FALSE;
+}
 bool CockpitEligible(void* component,View* view,Pose* pose) {
     if(!ReadPose(component,pose,view)) { cockpitGate.Suspend();return false; }
     Quat q=pose->rotation;
@@ -356,12 +365,29 @@ bool CockpitEligible(void* component,View* view,Pose* pose) {
         relative.x*right.x+relative.y*right.y+relative.z*right.z,
         relative.x*up.x+relative.y*up.y+relative.z*up.z,
         view->fov,NormalizeAngle(view->rotation.y-pawnYaw)};
-    if(!raceRenderingActive) {
-        HMODULE bridge=GetModuleHandleW(L"TwinKartDriftRaceBridge.dll");
-        if(bridge)raceRenderingActive=reinterpret_cast<RaceRenderingActive>(GetProcAddress(bridge,"TwinKartCockpitDrivingActive"));
-    }
-    bool nativeRace=raceRenderingActive && raceRenderingActive()!=FALSE;
+    bool nativeRace=NativeDrivingViewActive();
     return cockpitGate.Observe(sample,InterlockedCompareExchange(&enabled,0,0)!=0 && nativeRace);
+}
+bool ApplyArrowLook(void* component,const View& stock,View& view) {
+    DWORD foreground=0;GetWindowThreadProcessId(GetForegroundWindow(),&foreground);
+    View stockCopy=stock;Pose pose{};
+    bool eligible=arrowLookEnabled && foreground==GetCurrentProcessId() && NativeDrivingViewActive() && ReadPose(component,&pose,&stockCopy);
+    auto pressed=[](int key){return (GetAsyncKeyState(key)&0x8000)?1:0;};
+    int x=eligible?pressed(VK_RIGHT)-pressed(VK_LEFT):0,y=eligible?pressed(VK_UP)-pressed(VK_DOWN):0;
+    float weight=arrowLook.Update(GetTickCount64(),eligible,x,y);if(weight<=0)return false;
+    constexpr float Degrees=57.29577951308232f;
+    const auto q=pose.rotation;
+    float yaw=std::atan2(2*(q.x*q.y+q.w*q.z),1-2*(q.y*q.y+q.z*q.z));
+    float azimuth=std::atan2(static_cast<float>(arrowLook.horizontal),static_cast<float>(arrowLook.vertical));
+    Vec from{stock.location.x-pose.position.x,stock.location.y-pose.position.y,0};
+    float radius=std::fmax(100.f,std::fmin(680.f,std::sqrt(square(from.x)+square(from.y))));
+    float height=arrowLook.vertical>0?275.f:170.f;
+    Vec orbit{pose.position.x-std::cos(yaw+azimuth)*radius,pose.position.y-std::sin(yaw+azimuth)*radius,pose.position.z+height};
+    Vec aim{std::atan2(80.f-height,radius)*Degrees,(yaw+azimuth)*Degrees,0};
+    const auto blend=[weight](float base,float peek){return base+(peek-base)*weight;};
+    view.location={blend(view.location.x,orbit.x),blend(view.location.y,orbit.y),blend(view.location.z,orbit.z)};
+    view.rotation={blend(view.rotation.x,aim.x),view.rotation.y+NormalizeAngle(aim.y-view.rotation.y)*weight,blend(view.rotation.z,0)};
+    view.fov=blend(view.fov,stock.fov);return true;
 }
 
 bool ApplyView(void* component, void* output) {
@@ -407,6 +433,7 @@ bool ApplyView(void* component, void* output) {
 
 void __fastcall ViewHook(void* component, float delta, void* output) {
     originalView(component, delta, output);
+    if(!output)return;
     // Observe actual window messages on the native camera/game thread. Polling
     // remains a fallback only if this same-process hook cannot be installed.
     if(!cameraInputHook) {
@@ -414,6 +441,7 @@ void __fastcall ViewHook(void* component, float delta, void* output) {
         if(cameraInputHook){InterlockedExchange(&inputHookReady,1);Log("camera_input_hook_installed");}
     }
     InterlockedIncrement(&calls); InterlockedExchange(&lastThread, static_cast<LONG>(GetCurrentThreadId()));
+    const auto stock=*static_cast<View*>(output);
     bool modified = false;
     UpdateKartView(component);
     // Resolve the CURRENT driver before reading its head, including the very
@@ -423,12 +451,29 @@ void __fastcall ViewHook(void* component, float delta, void* output) {
         if (ApplyView(component, output)) { InterlockedIncrement(&applied); modified = true; }
         else InterlockedIncrement(&rejected);
     }
-    UpdateDriver(component, modified);
+    bool orbit=ApplyArrowLook(component,stock,*static_cast<View*>(output));
+    // The race bridge owns the Hide role/world lease and the native trace.
+    // This camera only offers the original eye position on its game thread.
+    using ClipArenaView=BOOL(WINAPI*)(void*,float*);
+    static ClipArenaView clipArenaView=nullptr;
+    if(!clipArenaView) {
+        HMODULE bridge=GetModuleHandleW(L"TwinKartDriftRaceBridge.dll");
+        if(bridge)clipArenaView=reinterpret_cast<ClipArenaView>(GetProcAddress(bridge,"TwinKartClipHideSeekerView"));
+    }
+    auto& view=*static_cast<View*>(output);
+    float eye[]{view.location.x,view.location.y,view.location.z};
+    bool clipped=clipArenaView && clipArenaView(component,eye);
+    if(clipped)view.location={eye[0],eye[1],eye[2]};
+    UpdateDriver(component, modified && !orbit);
     // Publish only a scalar; render threads never inspect native camera/pawn
     // objects. A newly available head anchor also changes the actual viewpoint.
     static bool wasModified=false;
     static void* lastComponent=nullptr;
-    if(modified!=wasModified || (modified && component!=lastComponent))InvalidateHistory();
+    static bool wasOrbit=false;
+    static bool wasClipped=false;
+    if(modified!=wasModified || orbit!=wasOrbit || clipped!=wasClipped || ((modified||orbit||clipped) && component!=lastComponent))InvalidateHistory();
+    wasClipped=clipped;
+    wasOrbit=orbit;
     wasModified=modified;lastComponent=component;
 }
 
@@ -437,6 +482,7 @@ void __fastcall ViewHook(void* component, float delta, void* output) {
 // camera/game thread as ViewHook, so restoring the cached local mesh here is
 // safe and happens before that camera calculates its frame.
 void __fastcall ThirdPersonViewHook(void* component,float delta,void* output) {
+    arrowLook.Update(0,false,0,0);
     cockpitGate.Suspend();
     RestoreDriver();
     originalThirdPersonView(component,delta,output);
@@ -470,6 +516,8 @@ DWORD WINAPI Worker(void*) {
     meshAudit = auditFlag[0] == L'1';
     GetEnvironmentVariableW(L"TWIN_KART_COCKPIT_HEAD", auditFlag, ARRAYSIZE(auditFlag));
     cockpitHead = auditFlag[0] == L'1';
+    wchar_t arrowFlag[4]{};
+    arrowLookEnabled=GetEnvironmentVariableW(L"TWIN_KART_ARROW_LOOK",arrowFlag,ARRAYSIZE(arrowFlag))==1 && arrowFlag[0]==L'1';
     ReadSettings();
     DWORD previous,thirdPrevious;
     if (!VirtualProtect(const_cast<PVOID*>(viewSlot), sizeof(void*), PAGE_READWRITE, &previous)) { Log("slot_protection_failed"); return 4; }

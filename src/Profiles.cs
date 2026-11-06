@@ -18,25 +18,28 @@ namespace TwinKartLauncher
         public static bool SpitemMode(int mode) { return mode>=105 && mode<=107; }
         public static bool InfiniteBoostMode(int mode) { return mode>=101 && mode<=103; }
         public static bool FlagMode(int mode) { return mode==104; }
+        public static bool ChaserMode(int mode) {return mode==108;}
         public static bool LabMode(int mode) { return mode>=110 && mode<=115; }
         public static bool CubeMode(int mode) { return mode==116 || mode==118; }
         public static bool SpeedMode(int mode) { return (mode>=1 && mode<=3) || InfiniteBoostMode(mode) || (mode>=113 && mode<=115); }
         public static int TeamSizeFor(int mode) {
             if(FlagMode(mode)) return 4;
+            if(ChaserMode(mode)) return 16;
             if((mode<1 || mode>6) && !SpitemMode(mode) && !InfiniteBoostMode(mode) && !LabMode(mode) && !CubeMode(mode)) return 0;
             int group=CubeMode(mode)?mode-116:LabMode(mode)?(mode-110)%3:SpitemMode(mode)?mode-105:InfiniteBoostMode(mode)?mode-101:(mode-1)%3;
             return group==0?1:group==1?2:4;
         }
         public static bool TrackSupports(int mask,int mode) {
-            return mask>=0 && mask<=31 && TeamSizeFor(mode)>0 && (mask & (1 << (FlagMode(mode)?4:SpitemMode(mode)?3:SpeedMode(mode)?2:1)))!=0;
+            return mask>=0 && mask<=31 && TeamSizeFor(mode)>0 && (mask & (1 << ((FlagMode(mode)||ChaserMode(mode))?4:SpitemMode(mode)?3:SpeedMode(mode)?2:1)))!=0;
         }
         public static bool ValidPopulation(int mode,int ai) {
             if(FlagMode(mode)) return ai==7;
+            if(ChaserMode(mode)) return ai>=1 && ai<=7;
             int size=TeamSizeFor(mode),racers=ai+1;
             return size>0 && ai>=1 && ai<=7 && (size==1 || (racers>=size*2 && racers%size==0));
         }
         public bool IsValid { get { return System.Text.RegularExpressions.Regex.IsMatch(Track??"","^[A-Za-z][A-Za-z0-9_]{0,95}$") &&
-            ValidPopulation(Mode,AiCount) && Laps>=1 && Laps<=9 && (String.IsNullOrEmpty(ModeProfile) ||
+            ValidPopulation(Mode,AiCount) && Laps>=1 && Laps<=9 && (!ChaserMode(Mode) || (Track=="Flag_F01" && String.IsNullOrEmpty(ModeProfile))) && (String.IsNullOrEmpty(ModeProfile) ||
             System.Text.RegularExpressions.Regex.IsMatch(ModeProfile,"\\A[A-Za-z][A-Za-z0-9_]{0,95}\\z")); } }
         internal void WriteControl(string path) {
             if(!IsValid) throw new ArgumentException("Invalid local race settings.");

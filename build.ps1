@@ -1,6 +1,6 @@
-param([switch]$SkipNative)
+param([switch]$SkipNative,[string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
-$buildDir = Join-Path $PSScriptRoot 'build'
+$buildDir = if($OutputDirectory) { [IO.Path]::GetFullPath($OutputDirectory) } else { Join-Path $PSScriptRoot 'build' }
 New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
 if (-not $SkipNative) {
     & (Join-Path $PSScriptRoot 'native\build-input.ps1')
@@ -21,6 +21,10 @@ $sessionSources += @('TrackCatalog.cs','TrackSupportAudit.cs') | ForEach-Object 
 $sessionSources += Join-Path $PSScriptRoot 'tools\RunSession.cs'
 & $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ "/out:$buildDir\TwinKartSession.exe" /r:System.Web.Extensions.dll $sessionSources
 if ($LASTEXITCODE -ne 0) { throw 'Original session runner compilation failed.' }
+$integrationSources=@($sessionSources | Where-Object { [IO.Path]::GetFileName($_) -ne 'RunSession.cs' })
+$integrationSources+=Join-Path $PSScriptRoot 'tools\InspectIntegration.cs'
+& $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ "/out:$buildDir\TwinKartInspectIntegration.exe" /r:System.Web.Extensions.dll $integrationSources
+if ($LASTEXITCODE -ne 0) { throw 'Combined integration inspector compilation failed.' }
 & $csc /nologo /langversion:5 /platform:x64 /target:exe /optimize+ "/out:$buildDir\TwinKartSdkCopy.exe" (Join-Path $PSScriptRoot 'tools\PrepareSdkCopy.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Original SDK copy tool compilation failed.' }
 Write-Output (Join-Path $buildDir 'TwinKartLauncher.exe')

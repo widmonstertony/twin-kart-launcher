@@ -18,6 +18,7 @@ HRESULT PresentNativePresentation(IDXGISwapChain*,UINT,UINT,unsigned){return E_N
 #include <atomic>
 #include <memory>
 #include <string>
+#include <cstring>
 #include <cstdio>
 #include "FrameGenerationD3D12.h"
 #include "SharedTextureBridge.h"
@@ -26,6 +27,7 @@ HRESULT PresentNativePresentation(IDXGISwapChain*,UINT,UINT,unsigned){return E_N
 #include "NativeDeviceIdentity.h"
 #include "NativeFrameMarkers.h"
 #include "NativeSceneRectangle.h"
+#include "NativeHudAlphaShader.h"
 using Microsoft::WRL::ComPtr;
 namespace TwinKartGraphics {
 namespace {
@@ -50,6 +52,37 @@ void Ledger(FrameGeneration& generation,unsigned frame,unsigned long long native
         frame,nativeFrame,d.live?"true":"false",d.failed?"true":"false",d.hasToken?"true":"false",d.seen,d.completed,d.tokenResult,d.simulationThread,
         d.stageIds[0],d.stageIds[1],d.stageIds[2],d.stageIds[3],d.stageIds[4],d.stageIds[5],d.stageThreads[0],d.stageThreads[1],d.stageThreads[2],d.stageThreads[3],d.stageThreads[4],d.stageThreads[5],
         d.rejected[0],d.rejected[1],d.rejected[2],d.rejected[3],d.rejected[4],d.rejected[5],d.markerResults[0],d.markerResults[1],d.markerResults[2],d.markerResults[3],d.markerResults[4],d.markerResults[5]);logger(row);
+}
+struct PresentationIntervalEvidence {
+    unsigned long long generatedFrames=0;
+    bool verified=false;
+};
+struct PresentationObservationEvidence {
+    bool queryError=false,providerStatusError=false,presentError=false,occluded=false,qualified=false;
+};
+PresentationObservationEvidence InspectPresentationObservation(const GenerationState& state,HRESULT result,bool guides,bool nativeFrame) {
+    PresentationObservationEvidence evidence;
+    evidence.queryError=state.result!=0;evidence.providerStatusError=state.status!=0;
+    evidence.presentError=FAILED(result);evidence.occluded=result==DXGI_STATUS_OCCLUDED;
+    evidence.qualified=guides && nativeFrame && !evidence.queryError && !evidence.providerStatusError && !evidence.presentError && !evidence.occluded;
+    return evidence;
+}
+PresentationIntervalEvidence VerifyPresentationInterval(unsigned calls,unsigned qualified,unsigned queryErrors,unsigned occluded,
+    unsigned nativeChanges,unsigned repeatedNative,unsigned long long providerPresented,unsigned presentErrors=0,unsigned providerStatusErrors=0) {
+    PresentationIntervalEvidence evidence;
+    // The provider counter is asynchronous, so no individual GetState result
+    // is treated as one render frame's generated count. Accept only a complete
+    // 120-Present interval with current guides, one distinct native frame per
+    // Present, no provider/query errors, no occlusion and a positive aggregate
+    // excess over the 120 native presentations. This chain requests exactly
+    // one generated frame per native frame. An aggregate outside [120,240]
+    // cannot substantiate that contract, even when caused by query latency.
+    // Reject uncertain intervals rather than interpreting excess as frames.
+    bool validCount=calls==120 && providerPresented>=calls && providerPresented<=2ull*calls;
+    evidence.verified=validCount && qualified==calls && !queryErrors && !occluded && !presentErrors && !providerStatusErrors &&
+        nativeChanges==calls && !repeatedNative && providerPresented>calls;
+    if(evidence.verified)evidence.generatedFrames=providerPresented-calls;
+    return evidence;
 }
 struct SavedCompute {
     ID3D11DeviceContext* context;ComPtr<ID3D11ComputeShader> shader;
@@ -76,6 +109,40 @@ struct SavedCompute {
 void Transition(ID3D12GraphicsCommandList* list,ID3D12Resource* resource,D3D12_RESOURCE_STATES from,D3D12_RESOURCE_STATES to) {
     D3D12_RESOURCE_BARRIER b{};b.Type=D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;b.Transition={resource,D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,from,to};list->ResourceBarrier(1,&b);
 }
+class PresentationGuideReturns {
+    ComPtr<ID3D12CommandAllocator> allocator;ComPtr<ID3D12GraphicsCommandList> commands;
+public:
+    HRESULT Initialize(ID3D12Device* device) {
+        if(!device || allocator)return E_INVALIDARG;HRESULT hr;
+        if(FAILED(hr=device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator))) ||
+           FAILED(hr=device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator.Get(),nullptr,IID_PPV_ARGS(&commands))))return hr;
+        return commands->Close();
+    }
+    // The previous frame's final queue fence must have completed before this
+    // pair is reset. It is separate from the still-in-flight copy/tag pair.
+    // Recording is CPU work; execution remains behind the provider queue Wait.
+    HRESULT Queue(ID3D12CommandQueue* queue,ID3D12Resource* const* resources,unsigned count) {
+        if(!allocator || !queue || !resources || !count || count>4)return E_INVALIDARG;
+        for(unsigned i=0;i<count;++i)if(!resources[i])return E_INVALIDARG;
+        HRESULT hr;if(FAILED(hr=allocator->Reset()) || FAILED(hr=commands->Reset(allocator.Get(),nullptr)))return hr;
+        for(unsigned i=0;i<count;++i)Transition(commands.Get(),resources[i],D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
+        if(FAILED(hr=commands->Close()))return hr;
+        ID3D12CommandList* lists[]{commands.Get()};queue->ExecuteCommandLists(1,lists);return S_OK;
+    }
+};
+template<class ProviderWait,class RestoreGuides,class Drain>
+HRESULT CompletePresentationInputs(const GenerationState& state,bool restoreGuides,ProviderWait providerWait,RestoreGuides restore,Drain drain) {
+    // A failed query cannot prove the provider has released its inputs. Do not
+    // reset resources or schedule a return to D3D11 on that unknown lifetime.
+    if(state.result)return E_FAIL;
+    HRESULT hr;
+    if(state.inputCompletionFence && state.inputCompletionValue &&
+       FAILED(hr=providerWait(state.inputCompletionFence,state.inputCompletionValue)))return hr;
+    if(restoreGuides && FAILED(hr=restore()))return hr;
+    // One final CPU fence covers the copy/tag list, provider-input wait and
+    // return-state list. Its completion permits both allocators' next reuse.
+    return drain();
+}
 struct RenderBuffers {
     SharedTextureBridge finalColor,depth,motion,hudless,alpha;
     ComPtr<ID3D11Texture2D> ui;ComPtr<ID3D11UnorderedAccessView> uiUav;ComPtr<ID3D11ComputeShader> uiShader;
@@ -86,13 +153,8 @@ struct RenderBuffers {
         D3D11_TEXTURE2D_DESC desc{};desc.Width=w;desc.Height=h;desc.MipLevels=desc.ArraySize=desc.SampleDesc.Count=1;
         desc.Format=DXGI_FORMAT_R8_UNORM;desc.BindFlags=D3D11_BIND_SHADER_RESOURCE|D3D11_BIND_UNORDERED_ACCESS;
         if(FAILED(d11->CreateTexture2D(&desc,nullptr,&ui)) || FAILED(d11->CreateUnorderedAccessView(ui.Get(),nullptr,&uiUav)))return false;
-        const char shader[]=R"(
-Texture2D<float4> FinalColor:register(t0);Texture2D<float4> SceneColor:register(t1);RWTexture2D<float> Alpha:register(u0);
-[numthreads(8,8,1)]void main(uint3 id:SV_DispatchThreadID){uint w,h;Alpha.GetDimensions(w,h);if(id.x>=w||id.y>=h)return;
-float3 difference=abs(FinalColor.Load(int3(id.xy,0)).rgb-SceneColor.Load(int3(id.xy,0)).rgb);
-Alpha[id.xy]=max(difference.r,max(difference.g,difference.b))>0.0005?1:0;})";
         ComPtr<ID3DBlob> code;
-        return SUCCEEDED(D3DCompile(shader,sizeof(shader),nullptr,nullptr,nullptr,"main","cs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&code,nullptr)) &&
+        return SUCCEEDED(D3DCompile(NativeHudAlphaShader,sizeof(NativeHudAlphaShader),nullptr,nullptr,nullptr,"main","cs_5_0",D3DCOMPILE_ENABLE_STRICTNESS,0,&code,nullptr)) &&
             SUCCEEDED(d11->CreateComputeShader(code->GetBufferPointer(),code->GetBufferSize(),nullptr,&uiShader));
     }
 };
@@ -110,6 +172,7 @@ class PresentationChain final:public IDXGISwapChain4 {
     bool indexedConsumer=false;
     ComPtr<ID3D12Device> device12;ComPtr<ID3D12CommandQueue> queue;
     ComPtr<ID3D12CommandAllocator> allocator;ComPtr<ID3D12GraphicsCommandList> commands;ComPtr<ID3D12Fence> fence;
+    PresentationGuideReturns guideReturns;
     ComPtr<IDXGISwapChain4> display;
     FrameGeneration generation;std::unique_ptr<RenderBuffers> buffers;
     DXGI_SWAP_CHAIN_DESC nativeDesc{};
@@ -118,26 +181,33 @@ class PresentationChain final:public IDXGISwapChain4 {
     bool pendingResize=false,presentationReset=true;
     // GetState reports an asynchronous count since its previous query. A
     // single value of two must not be reported as a sustained 2x multiplier.
-    unsigned intervalCalls=0,intervalQualified=0,intervalQueryErrors=0,intervalOccluded=0;
+    unsigned intervalCalls=0,intervalQualified=0,intervalQueryErrors=0,intervalOccluded=0,intervalPresentErrors=0,intervalProviderStatusErrors=0;
     unsigned intervalNativeChanges=0,intervalRepeatedNative=0;
     unsigned long long intervalPresented=0,intervalNative=0;
     LARGE_INTEGER intervalStart{};
     void RecordPresentation(const GenerationState& state,HRESULT result,bool qualified,bool haveNative,unsigned long long id) {
         LARGE_INTEGER now{},frequency{};QueryPerformanceCounter(&now);QueryPerformanceFrequency(&frequency);
         if(!intervalCalls)intervalStart=now;
-        ++intervalCalls;if(qualified)++intervalQualified;
-        if(state.result)++intervalQueryErrors;else intervalPresented+=state.lastPresented;
-        if(result==DXGI_STATUS_OCCLUDED)++intervalOccluded;
+        auto observation=InspectPresentationObservation(state,result,qualified,haveNative);
+        ++intervalCalls;if(observation.qualified)++intervalQualified;
+        if(observation.queryError)++intervalQueryErrors;else intervalPresented+=state.lastPresented;
+        if(observation.providerStatusError)++intervalProviderStatusErrors;
+        if(observation.presentError)++intervalPresentErrors;
+        if(observation.occluded)++intervalOccluded;
         if(haveNative) {
             if(intervalNativeChanges && intervalNative==id)++intervalRepeatedNative;
             else ++intervalNativeChanges;
             intervalNative=id;
         }
         if(intervalCalls<120)return;
-        if(logger){char row[1024];sprintf_s(row,"{\"event\":\"fg_presentation_interval\",\"render_frame\":%u,\"present_calls\":%u,\"qualified_calls\":%u,\"provider_presented_since_queries\":%llu,\"query_errors\":%u,\"occluded_calls\":%u,\"native_id_changes\":%u,\"repeated_native_ids\":%u,\"elapsed_ms\":%.6f,\"counter_scope\":\"since_last_provider_query\",\"generated_frames\":null,\"quality_verified\":false}\r\n",
-            frame,intervalCalls,intervalQualified,intervalPresented,intervalQueryErrors,intervalOccluded,intervalNativeChanges,intervalRepeatedNative,
-            frequency.QuadPart?1000.0*(now.QuadPart-intervalStart.QuadPart)/frequency.QuadPart:0.0);logger(row);}
-        intervalCalls=intervalQualified=intervalQueryErrors=intervalOccluded=0;
+        auto evidence=VerifyPresentationInterval(intervalCalls,intervalQualified,intervalQueryErrors,intervalOccluded,
+            intervalNativeChanges,intervalRepeatedNative,intervalPresented,intervalPresentErrors,intervalProviderStatusErrors);
+        if(logger){char row[1100];char generated[64];
+            if(evidence.verified)sprintf_s(generated,"%llu",evidence.generatedFrames);else strcpy_s(generated,"null");
+            sprintf_s(row,"{\"event\":\"fg_presentation_interval\",\"render_frame\":%u,\"present_calls\":%u,\"qualified_calls\":%u,\"provider_presented_since_queries\":%llu,\"query_errors\":%u,\"provider_status_errors\":%u,\"present_errors\":%u,\"occluded_calls\":%u,\"native_id_changes\":%u,\"repeated_native_ids\":%u,\"elapsed_ms\":%.6f,\"counter_scope\":\"since_last_provider_query\",\"generated_frames\":%s,\"generation_verified\":%s,\"quality_verified\":false}\r\n",
+            frame,intervalCalls,intervalQualified,intervalPresented,intervalQueryErrors,intervalProviderStatusErrors,intervalPresentErrors,intervalOccluded,intervalNativeChanges,intervalRepeatedNative,
+            frequency.QuadPart?1000.0*(now.QuadPart-intervalStart.QuadPart)/frequency.QuadPart:0.0,generated,evidence.verified?"true":"false");logger(row);}
+        intervalCalls=intervalQualified=intervalQueryErrors=intervalOccluded=intervalPresentErrors=intervalProviderStatusErrors=0;
         intervalNativeChanges=intervalRepeatedNative=0;intervalPresented=intervalNative=0;
     }
     bool Activity(const char* exportName) {
@@ -205,7 +275,8 @@ public:
         D3D12_COMMAND_QUEUE_DESC q{};
         if(FAILED(hr=device12->CreateCommandQueue(&q,IID_PPV_ARGS(&queue))) || FAILED(hr=device12->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&allocator))) ||
            FAILED(hr=device12->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,allocator.Get(),nullptr,IID_PPV_ARGS(&commands))) ||
-           FAILED(hr=commands->Close()) || FAILED(hr=device12->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence))))return hr;
+            FAILED(hr=commands->Close()) || FAILED(hr=guideReturns.Initialize(device12.Get())) ||
+            FAILED(hr=device12->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence))))return hr;
         completed=CreateEventW(nullptr,FALSE,FALSE,nullptr);if(!completed)return HRESULT_FROM_WIN32(GetLastError());
         DXGI_SWAP_CHAIN_DESC1 target{};target.Width=desc.BufferDesc.Width;target.Height=desc.BufferDesc.Height;target.Format=desc.BufferDesc.Format;
         target.SampleDesc.Count=1;target.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT;target.BufferCount=2;target.SwapEffect=DXGI_SWAP_EFFECT_FLIP_DISCARD;
@@ -267,6 +338,8 @@ public:
         bool haveInputs=sceneActive && GetNativePresentationInputs(frame,guides);
         bool haveMarker=CurrentNativeRenderFrame(nativeFrame);
         bool haveGuides=haveInputs && guides.nativeFrameObserved && haveMarker && nativeFrame==guides.nativeFrame;
+        bool nrOutput=NativeNeuralOutputMatches(shadow,renderFrame);
+        bool srOutput=NativeSuperResolutionOutputMatches(shadow,renderFrame);
         if(frame%120==0 && logger) {
             char row[640];sprintf_s(row,"{\"event\":\"fg_native_producer\",\"frame\":%u,\"buffer\":%u,\"logical_index\":%u,\"indexed_consumer\":%s,\"racing\":%s,\"guides\":%s,\"reconstruction_inputs\":%s,\"guide_marker_observed\":%s,\"present_marker_observed\":%s,\"native_frame\":%llu,\"guide_native_frame\":%llu}\r\n",
                 frame,producedIndex,nativeIndex,indexedConsumer?"true":"false",racing?"true":"false",haveGuides?"true":"false",haveInputs?"true":"false",guides.nativeFrameObserved?"true":"false",haveMarker?"true":"false",nativeFrame,guides.nativeFrame);logger(row);
@@ -328,17 +401,20 @@ public:
         if(indexedConsumer && SUCCEEDED(displayResult) && displayResult!=DXGI_STATUS_OCCLUDED)nativeIndex=(nativeIndex+1)%nativeDesc.BufferCount;
         auto state=generation.Presented();
         RecordPresentation(state,displayResult,haveGuides,haveMarker,nativeFrame);
-        if(frame%120==0 && logger){char row[384];sprintf_s(row,"{\"event\":\"fg_native_runtime_state\",\"frame\":%u,\"result\":%u,\"status\":%u,\"maximum_generated_frames\":%u,\"last_presented\":%u,\"total_presented\":%llu,\"quality_verified\":false}\r\n",frame,state.result,state.status,state.maximumGeneratedFrames,state.lastPresented,state.totalPresented);logger(row);}
-        if(state.inputCompletionFence && state.inputCompletionValue)queue->Wait(state.inputCompletionFence,state.inputCompletionValue);
-        HRESULT waited=Wait();if(FAILED(waited)){failed=true;return waited;}
-        if(guideStates) {
-            if(FAILED(hr=allocator->Reset()) || FAILED(hr=commands->Reset(allocator.Get(),nullptr)))return hr;
-            ID3D12Resource* tagged[]{buffers->depth.Texture12(),buffers->motion.Texture12(),buffers->hudless.Texture12(),buffers->alpha.Texture12()};
-            for(auto p:tagged)Transition(commands.Get(),p,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,D3D12_RESOURCE_STATE_COMMON);
-            if(FAILED(hr=commands->Close()))return hr;
-            ID3D12CommandList* returns[]{commands.Get()};queue->ExecuteCommandLists(1,returns);
-            if(FAILED(waited=Wait())){failed=true;return waited;}
+        if((frame%120==0 || FAILED(displayResult)) && logger) {
+            bool displayed=SUCCEEDED(displayResult) && displayResult!=DXGI_STATUS_OCCLUDED;
+            bool accepted=displayed && (srOutput || nrOutput);
+            bool combined=displayed && srOutput && nrOutput;
+            char row[700];sprintf_s(row,"{\"event\":\"native_graphics_game_acceptance\",\"frame\":%u,\"super_resolution_output\":%s,\"neural_output\":%s,\"copied_to_private_display\":true,\"display_presented\":%s,\"provider_presented_since_query\":%u,\"combined_sr_nr_acceptance\":%s,\"game_acceptance\":%s,\"quality_verified\":false}\r\n",
+                frame,srOutput?"true":"false",nrOutput?"true":"false",displayed?"true":"false",state.lastPresented,combined?"true":"false",accepted?"true":"false");logger(row);
         }
+        if(frame%120==0 && logger){char row[384];sprintf_s(row,"{\"event\":\"fg_native_runtime_state\",\"frame\":%u,\"result\":%u,\"status\":%u,\"maximum_generated_frames\":%u,\"last_presented\":%u,\"total_presented\":%llu,\"quality_verified\":false}\r\n",frame,state.result,state.status,state.maximumGeneratedFrames,state.lastPresented,state.totalPresented);logger(row);}
+        HRESULT waited=CompletePresentationInputs(state,guideStates,
+            [&](ID3D12Fence* providerFence,UINT64 value){return queue->Wait(providerFence,value);},[&](){
+            ID3D12Resource* tagged[]{buffers->depth.Texture12(),buffers->motion.Texture12(),buffers->hudless.Texture12(),buffers->alpha.Texture12()};
+            return guideReturns.Queue(queue.Get(),tagged,ARRAYSIZE(tagged));
+        },[&](){return Wait();});
+        if(FAILED(waited)){failed=true;Event("fg_native_input_completion_failed",waited);return waited;}
         HRESULT returned=buffers->finalColor.ReturnTo11(nullptr);
         // Return any acquired guides even if the runtime refused their tags.
         HRESULT depthReturned=buffers->depth.ReturnTo11(nullptr),motionReturned=buffers->motion.ReturnTo11(nullptr),

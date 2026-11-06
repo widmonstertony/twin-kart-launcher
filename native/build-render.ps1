@@ -1,4 +1,4 @@
-param([switch]$Test,[string]$StreamlineSdkRoot)
+param([switch]$Test,[string]$StreamlineSdkRoot,[string]$OutputDirectory)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -15,7 +15,7 @@ if($StreamlineSdkRoot) {
     $includeDirs += Join-Path $StreamlineSdkRoot 'include'
 }
 $libraryDirs = @((Join-Path $vcRoot 'lib\x64'),(Join-Path $sdkRoot "Lib\$sdkVersion\ucrt\x64"),(Join-Path $sdkRoot "Lib\$sdkVersion\um\x64"))
-$build = Join-Path $projectRoot 'build'
+$build = if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $projectRoot 'build'}
 New-Item -ItemType Directory -Path $build -Force | Out-Null
 $oldInclude = $env:INCLUDE; $oldLib = $env:LIB; $oldPath = $env:PATH
 try {

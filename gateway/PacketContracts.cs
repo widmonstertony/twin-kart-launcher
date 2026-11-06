@@ -8,8 +8,13 @@ namespace TwinKartLauncher.Gateway
 {
     internal static class NativeRaceOptions
     {
+        internal const string FreeDriveProfile="twin_kart_free_drive";
+        internal static bool FreeDrive(int mode,string profile) { return mode==1 && profile==FreeDriveProfile; }
         internal static bool CubeTrack(int mode,string track)
         {
+            if(mode==100)return track=="Factory_I01";
+            if(mode==108)return track=="Flag_F01";
+            if(mode==109)return track=="HideNSeekTestLevel";
             if(mode!=116 && mode!=118)return true;
             return track=="Desert_I06" || track=="Forest_I05" || track=="Ice_I05" || track=="Village_I05" || track=="World_I11";
         }
@@ -44,6 +49,7 @@ namespace TwinKartLauncher.Gateway
         {
             profile=CanonicalProfile(mode,profile);
             if(slot<0 || slot>7)return null;
+            if(mode==100)return slot<4?new[]{"Character:100000001","Character:100000002","Character:100000007","Character:100000010"}[slot]:null;
             if(mode==113 && profile=="s062_speed_solo_dao")return "Character:100000001";
             if(mode==110 && profile=="item_solo_brodi")return "Character:100000003";
             if(mode==113 && profile=="speed_solo_derek")return "Character:100000025";
@@ -54,6 +60,9 @@ namespace TwinKartLauncher.Gateway
                 return roles[slot];
             }
             return null;
+        }
+        internal static string EventKart(int mode,int slot) {
+            return mode==100 && slot>=0 && slot<4?new[]{"Kart:401000177","Kart:401000079","Kart:401000163","Kart:401000168"}[slot]:null;
         }
         internal static string CanonicalProfile(int mode,string profile)
         {
@@ -308,17 +317,20 @@ namespace TwinKartLauncher.Gateway
         // Only _type, track, gameMode and raceMode are required by this
         // independently observed subset. Optional fields are checked when
         // present; omitted values are not silently guessed.
-        public static bool LocalRaceMode(int mode) { return (mode>=1 && mode<=6) || (mode>=101 && mode<=107) || (mode>=110 && mode<=116) || mode==118; }
+        public static bool LocalRaceMode(int mode) { return mode==100 || (mode>=1 && mode<=6) || (mode>=101 && mode<=116) || mode==118; }
         public static bool LocalSpeedMode(int mode) { return (mode>=1 && mode<=3) || (mode>=101 && mode<=103) || (mode>=113 && mode<=115); }
         public static int LocalTeamSize(int mode) {
             if(!LocalRaceMode(mode))return 0;
-            if(mode==104)return 4;
+            if(mode==100 || mode==104)return 4;
+            if(mode==108 || mode==109)return 16;
             int group=mode>=116?mode-116:mode>=110?(mode-110)%3:mode>=105?mode-105:mode>=101?mode-101:(mode-1)%3;
             return group==0?1:group==1?2:4;
         }
         public static bool LocalTrackSupports(int mask,int mode) {
-            return mask>=0 && mask<=31 && LocalRaceMode(mode) &&
-                (mask&(1<<(mode==104?4:mode>=105 && mode<=107?3:LocalSpeedMode(mode)?2:1)))!=0;
+            // The repaired Hide world is an explicit separate scene contract;
+            // do not pretend it has a cooked ordinary track-mode mask.
+            return mode!=109 && mask>=0 && mask<=31 && LocalRaceMode(mode) &&
+                (mask&(1<<((mode==104 || mode==108)?4:mode>=105 && mode<=107?3:LocalSpeedMode(mode)?2:1)))!=0;
         }
         static bool TryReadRaceGame(Dictionary<string, object> source, out CsRaceGameContract race, out string error)
         {

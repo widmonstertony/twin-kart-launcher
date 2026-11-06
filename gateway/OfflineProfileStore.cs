@@ -35,20 +35,23 @@ namespace TwinKartLauncher.Gateway
     {
         readonly object gate = new object();
         readonly string path, account, rulesJson;
+        readonly string freeDriveControl;
         readonly Dictionary<string, object> defaults, parts;
         readonly TrackCatalog tracks;
         readonly NativeKartParameters physics;
         readonly OfflineRoomService rooms;
         readonly int pingPort;
         Dictionary<string, object> state;
+        Dictionary<string, object> unrankedNativeContinuation;
         public const string SharedValue = "TwinKartOriginalParametersV1";
 
         public OfflineProfileStore(string profilePath, string initialProfile, string clientDefaults,
             string unlockCatalog, string tuningRules, string trackCatalog, string physicsCatalog,
             string vehicleParts, string accountId, int localPingPort, string tuningPlan = null, string vehicleAvailability = null,
-            Func<RoomState,string> startRoom = null)
+            Func<RoomState,string> startRoom = null, string nativeRaceControl = null)
         {
             path = Path.GetFullPath(profilePath); account = accountId; pingPort = localPingPort;
+            freeDriveControl = String.IsNullOrEmpty(nativeRaceControl) ? null : Path.GetFullPath(nativeRaceControl);
             rooms = new OfflineRoomService(accountId,startRoom,unlockCatalog,vehicleParts,physicsCatalog,vehicleAvailability);
             defaults = ProfileJson.Parse(clientDefaults); parts = ProfileJson.Parse(vehicleParts);
             rulesJson = tuningRules; tracks = new TrackCatalog(trackCatalog);
@@ -59,6 +62,47 @@ namespace TwinKartLauncher.Gateway
             Commit(state);
         }
         public string Snapshot() { lock (gate) return ProfileJson.Write(state); }
+        bool PublishPracticeTicket(string gameId,string track)
+        {
+            if (freeDriveControl == null) return true;
+            string ticket = freeDriveControl + ".practice-ticket", temporary = ticket + "." + gameId + ".tmp";
+            try
+            {
+                using (var writer = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                {
+                    byte[] bytes = Encoding.ASCII.GetBytes(gameId+":"+track);
+                    writer.Write(bytes, 0, bytes.Length); writer.Flush(true);
+                }
+                if (File.Exists(ticket)) File.Replace(temporary, ticket, null);
+                else File.Move(temporary, ticket);
+                return true;
+            }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+            finally
+            {
+                try { File.Delete(temporary); }
+                catch (IOException) { }
+                catch (UnauthorizedAccessException) { }
+            }
+        }
+        bool IsUnrankedPractice(string gameId)
+        {
+            if (freeDriveControl == null || gameId == null || gameId.Length != 32) return false;
+            try
+            {
+                using (var stream = new FileStream(freeDriveControl + ".practice-active", FileMode.Open, FileAccess.Read,
+                    FileShare.ReadWrite | FileShare.Delete))
+                {
+                    if (stream.Length != 32) return false;
+                    for (int i = 0; i < 32; ++i) if (stream.ReadByte() != gameId[i]) return false;
+                    return stream.ReadByte() == -1;
+                }
+            }
+            catch (FileNotFoundException) { return false; }
+            catch (IOException problem) { throw new ArgumentException("Cannot verify the local practice state.", problem); }
+            catch (UnauthorizedAccessException problem) { throw new ArgumentException("Cannot verify the local practice state.", problem); }
+        }
         void Commit(Dictionary<string, object> next)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
@@ -148,6 +192,7 @@ namespace TwinKartLauncher.Gateway
                 var result = new ProfileResult { Response = Reply("PrPacket", id) };
                 var response = result.Response;
                 bool changed = false;
+                var continuation = unrankedNativeContinuation;
                 try
                 {
                     if (OfflineRoomService.Handles(type)) return rooms.Handle(request,id,next,ProfileJson.Object(defaults,"login"));
@@ -247,6 +292,8 @@ namespace TwinKartLauncher.Gateway
                             startingRace["upgradeInfo"] = ProfileJson.Copy(ProfileJson.Object(next,"ownKartsUpgradeInfo")[startingKart]);
                             startingRace["beginnerFlag"] = next.ContainsKey("beginnerFlag") ? next["beginnerFlag"] : 0;
                             startingRace["emblemId"] = next.ContainsKey("emblemItemIdOn") ? next["emblemItemIdOn"] : "";
+                            if (!PublishPracticeTicket(gameId,track)) throw new ArgumentException("Cannot issue the current local practice ticket.");
+                            continuation = null;
                             changed = true; break;
                         case "PqTimeAttackUpdate":
                             var record = ProfileJson.Object(request["timeAttack"]);
@@ -263,7 +310,10 @@ namespace TwinKartLauncher.Gateway
                             string signature = ResultSignature(request);
                             var replay = ReplayResult(next,completedId,signature,id);
                             if (replay != null) { result.Response = replay; return result; }
-                            var active = ProfileJson.Object(next, "activeRace");
+                            object activeRecord;
+                            bool hadActiveRace = next.TryGetValue("activeRace",out activeRecord);
+                            var active = hadActiveRace ? ProfileJson.Object(activeRecord) : unrankedNativeContinuation;
+                            if (active == null) throw new ArgumentException("No active race.");
                             if (!Object.Equals(completedId, active["gameId"])) throw new ArgumentException("Race identity mismatch.");
                             if (!Object.Equals(record["trackId"], active["trackId"])) throw new ArgumentException("Race track mismatch.");
                             response["_type"] = "PrTimeAttackUpdate";
@@ -271,7 +321,27 @@ namespace TwinKartLauncher.Gateway
                             response["timeAttack"] = ProfileJson.Copy(record);
                             response["isUpdated"] = false;
                             response["dataStoreLink"] = new Dictionary<string,object> { {"url",""},{"verb",""},{"headers",new Dictionary<string,object>()},{"body",""},{"valueIndex",new object[0]},{"metadata",""} };
-                            if ((int)request["status"] == 0 && !flagged && milliseconds > 0)
+                            object inheritedPractice, restartFlag;
+                            bool practice = (active.TryGetValue("unrankedPractice",out inheritedPractice) && Object.Equals(inheritedPractice,true)) ||
+                                IsUnrankedPractice(completedId);
+                            bool restart = request.TryGetValue("restart",out restartFlag) && restartFlag is bool && (bool)restartFlag;
+                            if (practice && restart)
+                            {
+                                // The stock restart response supplies the new gameId; it
+                                // does not follow with a new TimeAttackStart request.
+                                string restartedId = Guid.NewGuid().ToString("N");
+                                string restartedTrack = ProfileJson.Text(active,"trackId");
+                                if (!PublishPracticeTicket(restartedId,restartedTrack)) throw new ArgumentException("Cannot issue the restarted practice ticket.");
+                                active = new Dictionary<string,object>(active);
+                                active["gameId"] = restartedId;
+                                active["startTime"] = Now();
+                                active["unrankedPractice"] = true;
+                                next["activeRace"] = active;
+                                continuation = null;
+                                response["gameId"] = restartedId;
+                                changed = true; break;
+                            }
+                            if ((int)request["status"] == 0 && !flagged && milliseconds > 0 && !practice)
                             {
                                 var records = ProfileJson.Object(next, "records");
                                 string completedTrack = ProfileJson.Text(active, "trackId"); object best;
@@ -293,8 +363,17 @@ namespace TwinKartLauncher.Gateway
                                     response["isUpdated"] = true;
                                 }
                             }
-                            RememberResult(next,completedId,signature,response);
-                            next.Remove("activeRace"); changed = true; break;
+                            if (practice)
+                            {
+                                // The desktop pause menu can restart its native world
+                                // without a restart flag or a fresh Start request. Keep
+                                // only the already authenticated unranked identity in
+                                // memory; no result or active race is saved to disk.
+                                continuation = new Dictionary<string,object>(active);
+                                continuation["unrankedPractice"] = true;
+                            }
+                            else RememberResult(next,completedId,signature,response);
+                            next.Remove("activeRace"); changed = hadActiveRace; break;
                         default:
                             object external;
                             if (type != null && ProfileJson.Object(defaults, "readOnlyReplies").TryGetValue(type, out external))
@@ -302,7 +381,7 @@ namespace TwinKartLauncher.Gateway
                             else response = Reply("PrPacket", id, 10001);
                             break;
                     }
-                    if (changed) Commit(next);
+                    if (changed) { Commit(next); unrankedNativeContinuation = continuation; }
                     result.Response = response; return result;
                 }
                 catch (Exception problem)

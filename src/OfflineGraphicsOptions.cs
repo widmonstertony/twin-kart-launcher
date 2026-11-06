@@ -30,13 +30,14 @@ namespace TwinKartLauncher
             if(Double.IsNaN(Brightness) || Double.IsInfinity(Brightness) || Brightness<0.75 || Brightness>1.5)
                 throw new ArgumentException("Native brightness must be between 0.75 and 1.50.");
             if(SuperResolution && RenderPercentage>=100)throw new ArgumentException("Super resolution requires a lower native rendering percentage.");
-            // Temporal SR and frame generation have their own native guide
-            // adapters. DLSS 5 NR can therefore be disabled independently.
-            if(NeuralRendering) {
+            // The resolved-scene SR path and FG guides share our D3D12
+            // consumer, but do not require an NR feature or its private model.
+            // Keep that pinned transport available when only NR is disabled.
+            if(NeedsRenderer) {
                 Required(environment,"TWIN_KART_NEURAL_MODULE");Required(environment,"TWIN_KART_NEURAL_PROVIDER");
                 Required(environment,"TWIN_KART_NEURAL_MODULE_SHA256");
                 if(!Regex.IsMatch(environment["TWIN_KART_NEURAL_MODULE_SHA256"],"\\A[0-9a-f]{64}\\z",RegexOptions.CultureInvariant))
-                    throw new ArgumentException("Expected the SHA-256 of the independently built NR consumer.");
+                    throw new ArgumentException("Expected the SHA-256 of the independently built reconstruction consumer.");
             }
             if(FrameGeneration)Required(environment,"TWIN_KART_FG_PROVIDER");
             if(SuperResolution) {
@@ -62,13 +63,13 @@ namespace TwinKartLauncher
                 if(actual!=environment["TWIN_KART_DLSS_MODULE_SHA256"])throw new InvalidDataException("Temporal SR module differs from the private manifest.");
                 if(!Directory.Exists(environment["TWIN_KART_DLSS_PROVIDER"]))throw new DirectoryNotFoundException("External SR provider directory unavailable.");
             }
-            if(NeuralRendering) {
-                if(!File.Exists(environment["TWIN_KART_NEURAL_MODULE"]))throw new FileNotFoundException("Original NR consumer unavailable.");
+            if(NeedsRenderer) {
+                if(!File.Exists(environment["TWIN_KART_NEURAL_MODULE"]))throw new FileNotFoundException("Original reconstruction consumer unavailable.");
                 string actual;
                 using(var file=File.OpenRead(environment["TWIN_KART_NEURAL_MODULE"]))
                 using(var hash=SHA256.Create())actual=BitConverter.ToString(hash.ComputeHash(file)).Replace("-","").ToLowerInvariant();
-                if(actual!=environment["TWIN_KART_NEURAL_MODULE_SHA256"])throw new InvalidDataException("NR consumer differs from the private manifest.");
-                if(!Directory.Exists(environment["TWIN_KART_NEURAL_PROVIDER"]))throw new DirectoryNotFoundException("External NR provider directory unavailable.");
+                if(actual!=environment["TWIN_KART_NEURAL_MODULE_SHA256"])throw new InvalidDataException("Reconstruction consumer differs from the private manifest.");
+                if(!Directory.Exists(environment["TWIN_KART_NEURAL_PROVIDER"]))throw new DirectoryNotFoundException("External reconstruction provider directory unavailable.");
             }
             if(FrameGeneration)foreach(string file in new[]{"sl.interposer.dll","sl.dlss_g.dll","sl.common.dll","sl.reflex.dll","sl.pcl.dll"})
                 if(!File.Exists(Path.Combine(environment["TWIN_KART_FG_PROVIDER"],file)))throw new FileNotFoundException("External frame generation dependency unavailable: "+file);
@@ -81,7 +82,8 @@ namespace TwinKartLauncher
             environment["TWIN_KART_FRAME_GENERATION"]=FrameGeneration?"1":"0";
             environment["TWIN_KART_NR_PASSES"]=NeuralPasses.ToString(CultureInfo.InvariantCulture);
             environment["TWIN_KART_NR_STYLE"]=NeuralStyle.ToString(CultureInfo.InvariantCulture);
-            if(!NeuralRendering)environment["TWIN_KART_NEURAL_MODULE"]="";
+            environment["TWIN_KART_NEURAL_RENDERING"]=NeuralRendering?"1":"0";
+            environment["TWIN_KART_RECONSTRUCTION_ENABLED"]=NeedsRenderer?"1":"0";
             if(FrameGeneration) {
                 string logs=Path.Combine(runDirectory,"streamline-log");Directory.CreateDirectory(logs);
                 environment["TWIN_KART_FG_LOG_DIRECTORY"]=logs;

@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$StreamlineSdkRoot)
+param([Parameter(Mandatory=$true)][string]$StreamlineSdkRoot,[switch]$DesktopFixture)
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
 $vswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -17,7 +17,9 @@ try {
     $env:PATH=(Split-Path -Parent $compiler)+';'+$oldPath
     Push-Location $build
     try {
-        & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MD /Fo./ /FeProbeFrameGeneration.exe (Join-Path $projectRoot 'tools\ProbeFrameGeneration.cpp') (Join-Path $PSScriptRoot 'FrameGenerationD3D12.cpp') (Join-Path $PSScriptRoot 'NativeFrameMarkers.cpp') /link user32.lib d3d12.lib dxgi.lib wintrust.lib crypt32.lib
+        $fixtureName=if($DesktopFixture){'ProbeFrameGenerationDesktop.exe'}else{'ProbeFrameGeneration.exe'}
+        $fixtureLink=if($DesktopFixture){@('/SUBSYSTEM:WINDOWS','/ENTRY:wmainCRTStartup')}else{@()}
+        & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MD /Fo./ "/Fe$fixtureName" (Join-Path $projectRoot 'tools\ProbeFrameGeneration.cpp') (Join-Path $PSScriptRoot 'FrameGenerationD3D12.cpp') (Join-Path $PSScriptRoot 'NativeFrameMarkers.cpp') /link @fixtureLink user32.lib d3d12.lib dxgi.lib wintrust.lib crypt32.lib
         if($LASTEXITCODE -ne 0) { throw 'Original frame generation adapter build failed' }
         & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MD /Fo./ /FeProbeSharedTexture.exe (Join-Path $projectRoot 'tools\ProbeSharedTexture.cpp') (Join-Path $PSScriptRoot 'SharedTextureBridge.cpp') (Join-Path $PSScriptRoot 'FrameGenerationD3D12.cpp') (Join-Path $PSScriptRoot 'NativeFrameMarkers.cpp') /link user32.lib d3d11.lib d3d12.lib dxgi.lib wintrust.lib crypt32.lib
         if($LASTEXITCODE -ne 0) { throw 'Original D3D11/D3D12 texture bridge build failed' }

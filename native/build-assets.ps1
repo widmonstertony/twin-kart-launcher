@@ -1,3 +1,4 @@
+param([switch]$Test,[string]$OutputDirectory)
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path -Parent $PSScriptRoot
 $vswhere=Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
@@ -8,7 +9,8 @@ $sdkRoot=Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10'
 $sdkVersion=(Get-ChildItem -LiteralPath (Join-Path $sdkRoot 'Include') -Directory | Where-Object { (Test-Path -LiteralPath (Join-Path $_.FullName 'um\Windows.h')) -and (Test-Path -LiteralPath (Join-Path $sdkRoot "Lib\$($_.Name)\um\x64\bcrypt.lib")) } | Sort-Object Name -Descending | Select-Object -First 1).Name
 if(-not $sdkVersion) { throw 'Complete Windows SDK required' }
 $compiler=Join-Path $vcRoot 'bin\Hostx64\x64\cl.exe'
-$build=Join-Path $projectRoot 'build'; New-Item -ItemType Directory -Path $build -Force | Out-Null
+$build=if($OutputDirectory){[IO.Path]::GetFullPath($OutputDirectory)}else{Join-Path $projectRoot 'build'}
+New-Item -ItemType Directory -Path $build -Force | Out-Null
 $oldInclude=$env:INCLUDE; $oldLib=$env:LIB; $oldPath=$env:PATH
 try {
     $env:INCLUDE=@((Join-Path $vcRoot 'include'),(Join-Path $sdkRoot "Include\$sdkVersion\ucrt"),(Join-Path $sdkRoot "Include\$sdkVersion\shared"),(Join-Path $sdkRoot "Include\$sdkVersion\um")) -join ';'
@@ -18,6 +20,12 @@ try {
     try {
         & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /LD /FoDriftAssetInventory.obj /FeTwinKartDriftAssetInventory.dll (Join-Path $PSScriptRoot 'DriftAssetInventory.cpp') /link bcrypt.lib user32.lib
         if($LASTEXITCODE -ne 0) { throw 'Native asset inventory build failed' }
+        if($Test) {
+            & $compiler /nologo /std:c++17 /EHsc /W4 /O2 /MT /FoNativeAssetTagTests.obj /FeNativeAssetTagTests.exe (Join-Path $projectRoot 'tests\NativeAssetTagTests.cpp')
+            if($LASTEXITCODE -ne 0) { throw 'Native asset tag fixture build failed' }
+            & (Join-Path $build 'NativeAssetTagTests.exe')
+            if($LASTEXITCODE -ne 0) { throw 'Native asset tag ownership/bounds checks failed' }
+        }
     } finally { Pop-Location }
 } finally { $env:INCLUDE=$oldInclude; $env:LIB=$oldLib; $env:PATH=$oldPath }
 Get-FileHash -LiteralPath (Join-Path $build 'TwinKartDriftAssetInventory.dll') -Algorithm SHA256

@@ -9,10 +9,36 @@
 #include <atomic>
 #include <algorithm>
 #include "../native/NativeDeviceIdentity.h"
+#include "../native/NativeHudAlphaShader.h"
 using namespace TwinKartGraphics;
 namespace {
+bool guidesOnlyFixture=false;
 void Need(bool value,const char* message){if(!value)throw std::runtime_error(message);}
 void Check(HRESULT value,const char* message){Need(SUCCEEDED(value),message);}
+TwinKartNeuralState VerifyNeuralState(unsigned expected,unsigned width,unsigned height) {
+    TwinKartNeuralState chain{sizeof(TwinKartNeuralState)};
+    Need(runtime && runtime->readState(&chain) && chain.initialized,"Current reconstruction consumer state unavailable");
+    if(neuralEnabled) {
+        Need(chain.featureCreated && chain.width==width && chain.height==height &&
+            chain.requestedPasses==requestedNrPasses && chain.style==requestedNrStyle &&
+            chain.passResults[0]==1 && chain.passEvaluations[0]==expected &&
+            (requestedNrPasses==1 || (chain.passResults[1]==1 && chain.passEvaluations[1]==expected)),
+            "Independent NR passes did not run on the real low-resolution input before SR");
+    } else {
+        Need(!chain.featureCreated && !chain.privateProvider && !chain.evaluations &&
+            !chain.passEvaluations[0] && !chain.passEvaluations[1] && !GetModuleHandleW(L"nvngx_dlssnr.dll"),
+            "NR Off created/evaluated an NR feature or loaded its private model");
+    }
+    using ReadSuper=decltype(&TwinKartSuperResolutionGetState);
+    auto readSuper=reinterpret_cast<ReadSuper>(GetProcAddress(runtime->module,"TwinKartSuperResolutionGetState"));
+    TwinKartSuperResolutionState sr{sizeof(TwinKartSuperResolutionState)};
+    Need(readSuper && readSuper(&sr),"Independent SR state unavailable");
+    if(guidesOnlyFixture)Need(!sr.featureCreated && !sr.evaluations,"Guide-only path created/evaluated an SR feature");
+    else Need(sr.featureCreated && sr.evaluateResult==1 && sr.evaluations==expected &&
+        sr.inputWidth==width && sr.inputHeight==height && sr.outputWidth==runtime->width && sr.outputHeight==runtime->height,
+        "Actual independent SR consumer did not evaluate the current input/output extent");
+    return chain;
+}
 void Record(const char* line){fputs(line,stdout);fflush(stdout);}
 ComPtr<ID3DBlob> Compile(const char* source,const char* target) {
     ComPtr<ID3DBlob> code,errors;
@@ -212,20 +238,29 @@ int wmain(int argc,wchar_t** argv){try{
         // expected hash from the module that is about to be loaded.
         auto consumerPin=field(L"OriginalConsumerSHA256");
         Need(SetEnvironmentVariableW(L"TWIN_KART_NEURAL_MODULE_SHA256",consumerPin.c_str())!=FALSE,"Desktop consumer pin unavailable");
+        auto passes=GetPrivateProfileIntW(L"NativeReconstructionProbe",L"NrPasses",1,ini.c_str());
+        auto style=GetPrivateProfileIntW(L"NativeReconstructionProbe",L"NrStyle",0,ini.c_str());
+        Need(passes>=1 && passes<=2 && style<=2,"Invalid desktop NR pass/style configuration");
+        wchar_t passText[]{static_cast<wchar_t>(L'0'+passes),0},styleText[]{static_cast<wchar_t>(L'0'+style),0};
+        Need(SetEnvironmentVariableW(L"TWIN_KART_NR_PASSES",passText)!=FALSE &&
+            SetEnvironmentVariableW(L"TWIN_KART_NR_STYLE",styleText)!=FALSE,"Desktop NR configuration unavailable");
         desktopArguments.push_back(path);
         for(auto key:{L"OriginalConsumer",L"NeuralProvider",L"Cache",L"StreamlineProvider",L"Logs"})desktopArguments.push_back(field(key));
         if(GetPrivateProfileIntW(L"NativeReconstructionProbe",L"NativeMarkers",0,ini.c_str())==1)desktopArguments.push_back(L"--native-markers");
         for(auto& value:desktopArguments)desktopPointers.push_back(value.data());
         argc=static_cast<int>(desktopPointers.size());argv=desktopPointers.data();
     }
+    guidesOnlyFixture=argc==5 && !wcscmp(argv[4],L"--guides-only");
+    if(guidesOnlyFixture)argc=4;
     bool nativeFixture=argc==7 && !wcscmp(argv[6],L"--native-markers");
-    Need(argc==4 || argc==6 || nativeFixture,"Usage: ProbeNativeReconstruction original-consumer.dll external-provider-directory private-cache-directory [Streamline-directory private-log-directory [--native-markers]]");
+    Need(argc==4 || argc==6 || nativeFixture,"Usage: ProbeNativeReconstruction original-consumer.dll external-provider-directory private-cache-directory [--guides-only | Streamline-directory private-log-directory [--native-markers]]");
 #ifdef TWIN_KART_RECONSTRUCTION_FG
     PresentationProbe presentation;if(argc>=6)presentation.Load(argv[4],argv[5],nativeFixture);
 #else
     Need(argc==4,"Build with external Streamline headers for the optional focused combined fixture");
 #endif
-    SetEnvironmentVariableW(L"TWIN_KART_SUPER_RESOLUTION",L"1");
+    SetEnvironmentVariableW(L"TWIN_KART_SUPER_RESOLUTION",guidesOnlyFixture?L"0":L"1");
+    if(guidesOnlyFixture)SetEnvironmentVariableW(L"TWIN_KART_NEURAL_RENDERING",L"0");
     wchar_t expected[65]{};char moduleSha[65]{};
     DWORD hashLength=GetEnvironmentVariableW(L"TWIN_KART_NEURAL_MODULE_SHA256",expected,ARRAYSIZE(expected));
     if(hashLength==64)for(unsigned i=0;i<64;++i)moduleSha[i]=expected[i]<128?static_cast<char>(expected[i]):'!';
@@ -275,6 +310,8 @@ int wmain(int argc,wchar_t** argv){try{
     Check(device->CreateVertexShader(vertexCode->GetBufferPointer(),vertexCode->GetBufferSize(),nullptr,&vertex),"Fixture vertex shader");
     Check(device->CreatePixelShader(producerCode->GetBufferPointer(),producerCode->GetBufferSize(),nullptr,&produce),"Fixture producer shader");
     Check(device->CreatePixelShader(compositeCode->GetBufferPointer(),compositeCode->GetBufferSize(),nullptr,&compose),"Fixture composite shader");
+    auto uiCode=Compile(NativeHudAlphaShader,"cs_5_0");ComPtr<ID3D11ComputeShader> uiShader;
+    Check(device->CreateComputeShader(uiCode->GetBufferPointer(),uiCode->GetBufferSize(),nullptr,&uiShader),"Production UI alpha shader");
     float parameters[1024]{},view[2048]{};NativeRect inclusive{8,16,647,375};memcpy(parameters+80,&inclusive,16);
     parameters[96]=8;parameters[97]=16;parameters[98]=648;parameters[99]=376;
     parameters[60]=static_cast<float>(iw)/672;parameters[61]=static_cast<float>(ih)/384;parameters[62]=8.0f/672;parameters[63]=16.0f/384;
@@ -334,22 +371,80 @@ int wmain(int argc,wchar_t** argv){try{
         // The game entry must reject this first-party shader. Only the explicit
         // fixture invokes qualified processing; exact native identity is intact.
         Need(!ProcessNativeNeuralPixelPass(context.Get(),frame),"Synthetic shader incorrectly passed the native identity guard");
-        Need(ProcessQualifiedNeuralPixelPass(context.Get(),frame),"Production SR-to-NR reconstruction failed");
+        Need(ProcessQualifiedNeuralPixelPass(context.Get(),frame),"Production low-resolution NR-before-SR reconstruction failed");
         unsigned expected=argc==4 && index>=3?1:index-epochStart+1;
-        Need(runtime && runtime->inputWidth==iw && runtime->inputHeight==ih && runtime->width==outputWidth && runtime->height==outputHeight &&
-            runtime->superEvaluations==expected && runtime->evaluations==expected && NativeSuperResolutionOutputMatches(frameOutput.Get(),frame),"Both actual consumers or resized target correlation missing");
+        Need(runtime && runtime->inputWidth==(guidesOnlyFixture?0:iw) && runtime->inputHeight==(guidesOnlyFixture?0:ih) && runtime->width==outputWidth && runtime->height==outputHeight &&
+            runtime->superEvaluations==(guidesOnlyFixture?0:expected) && runtime->evaluations==(neuralEnabled?expected:0) &&
+            NativeSuperResolutionOutputMatches(frameOutput.Get(),frame)==!guidesOnlyFixture,"Actual configured consumers or resized target correlation missing");
+        Need(NativeNeuralOutputMatches(frameOutput.Get(),frame)==neuralEnabled,"NR Off output was falsely reported as an NR evaluation");
         Need(runtime->borrowedCore==(coreOwner!=nullptr),"Production adapter did not select the correct NGX core lifetime");
-        float srMotionX=ReadHalfMotion(context.Get(),device.Get(),runtime->srMotion.Get(),iw,ih);
+        Need(runtime->lowResolutionNeural==!guidesOnlyFixture,"Actual NR/SR ordering differs from the requested mode");
+        VerifyNeuralState(expected,iw,ih);
+        NativePresentationInputs exported;
+        Need(!GetNativePresentationInputs(frame+1,exported),"Presentation accepted stale guides for an unevaluated frame");
+        Need(GetNativePresentationInputs(frame,exported) && exported.hudless==runtime->colorBridge.Texture11(),
+            "Presentation did not export the current full-resolution SR output");
+        for(auto texture:{exported.depth,exported.motion,exported.hudless}) {
+            D3D11_TEXTURE2D_DESC extent{};texture->GetDesc(&extent);
+            Need(extent.Width==outputWidth && extent.Height==outputHeight,"Presentation guides retained low-resolution NR dimensions");
+        }
+        float srMotionX=guidesOnlyFixture?0:ReadHalfMotion(context.Get(),device.Get(),runtime->srMotion.Get(),iw,ih);
         float nrMotionX=ReadHalfMotion(context.Get(),device.Get(),runtime->motion.Get(),outputWidth,outputHeight);
-        Need(fabsf(srMotionX+2)<0.03f && fabsf(nrMotionX+2.0f*outputWidth/iw)<0.05f,"Moving source/object guides lost native scale or direction");
-        if(index<3 || argc==4)printf("{\"event\":\"synthetic_dense_motion_gpu_readback\",\"frame\":%u,\"source_shift_pixels\":%u,\"sr_motion_x\":%.6g,\"nr_motion_x\":%.6g,\"expected_sr_motion_x\":-2,\"moving_synthetic_inputs\":true,\"game_started\":false,\"quality_verified\":false}\n",frame,index*2,srMotionX,nrMotionX);
+        Need((guidesOnlyFixture || fabsf(srMotionX+2)<0.03f) && fabsf(nrMotionX+2.0f*outputWidth/iw)<0.05f,"Moving source/object guides lost native scale or direction");
+        if(index<3 || argc==4)printf("{\"event\":\"synthetic_dense_motion_gpu_readback\",\"frame\":%u,\"source_shift_pixels\":%u,\"sr_motion_x\":%.6g,\"nr_motion_x\":%.6g,\"expected_sr_motion_x\":%d,\"moving_synthetic_inputs\":true,\"game_started\":false,\"quality_verified\":false}\n",frame,index*2,srMotionX,nrMotionX,guidesOnlyFixture?0:-2);
         ComPtr<ID3D11PixelShader> restoredShader;ComPtr<ID3D11ShaderResourceView> restoredScene;ComPtr<ID3D11RenderTargetView> restoredTarget;
         context->PSGetShader(&restoredShader,nullptr,nullptr);context->PSGetShaderResources(0,1,&restoredScene);context->OMGetRenderTargets(1,&restoredTarget,nullptr);
         Need(restoredShader.Get()==compose.Get() && restoredScene.Get()==scene && restoredTarget.Get()==target,"Production reconstruction changed the native rendering state");
         if(readback) {
             Need(ReadPatch(context.Get(),device.Get(),frameOutput.Get(),after),"Combined GPU output readback");unsigned differences=0;unsigned long long hash=14695981039346656037ull;
             for(unsigned pixel=0;pixel<1024;++pixel){if(before[pixel]!=after[pixel])++differences;hash=(hash^after[pixel])*1099511628211ull;}
-            Need(differences>0,"No combined GPU output change observed");
+            Need(guidesOnlyFixture?differences==0:differences>0,"Reconstruction change/guide-only preservation contract failed");
+            unsigned retained[1024]{};
+            Need(ReadPatch(context.Get(),device.Get(),exported.hudless,retained) &&
+                memcmp(retained,after,sizeof(retained))==0,"Presentation HUDless pixels differ from the actual pre-UI target");
+            if(argc==4) {
+                // A late UI draw must affect the final target, never the retained
+                // pre-UI image that FG compares against it. Use a centre patch
+                // instead of touching bridge ownership or relaxing its contract.
+                ComPtr<ID3D11DeviceContext1> context1;Check(context.As(&context1),"Late synthetic UI context");
+                D3D11_RECT rectangle{static_cast<LONG>(outputWidth/2-16),static_cast<LONG>(outputHeight/2-16),
+                    static_cast<LONG>(outputWidth/2+16),static_cast<LONG>(outputHeight/2+16)};
+                const float uiColor[4]={1,0,1,1};context1->ClearView(frameWrite.Get(),uiColor,&rectangle,1);
+                unsigned ui[1024]{},retainedAfter[1024]{};
+                Need(ReadPatch(context.Get(),device.Get(),frameOutput.Get(),ui) && memcmp(ui,after,sizeof(ui))!=0,
+                    "Late synthetic UI did not change the actual final target");
+                Need(ReadPatch(context.Get(),device.Get(),exported.hudless,retainedAfter) &&
+                    memcmp(retainedAfter,retained,sizeof(retained))==0,"Late UI contaminated retained presentation HUDless pixels");
+                D3D11_TEXTURE2D_DESC maskDesc{};maskDesc.Width=outputWidth;maskDesc.Height=outputHeight;
+                maskDesc.MipLevels=maskDesc.ArraySize=maskDesc.SampleDesc.Count=1;maskDesc.Format=DXGI_FORMAT_R8_UNORM;
+                maskDesc.BindFlags=D3D11_BIND_UNORDERED_ACCESS;
+                ComPtr<ID3D11Texture2D> mask,maskRead;ComPtr<ID3D11UnorderedAccessView> maskWrite;
+                Check(device->CreateTexture2D(&maskDesc,nullptr,&mask),"Actual UI mask target");
+                Check(device->CreateUnorderedAccessView(mask.Get(),nullptr,&maskWrite),"Actual UI mask write view");
+                ComPtr<ID3D11ShaderResourceView> finalRead,hudlessRead;
+                Check(device->CreateShaderResourceView(frameOutput.Get(),nullptr,&finalRead),"Actual final UI input");
+                Check(device->CreateShaderResourceView(exported.hudless,nullptr,&hudlessRead),"Actual pre-UI input");
+                context->OMSetRenderTargets(0,nullptr,nullptr);
+                ID3D11ShaderResourceView* reads[]{finalRead.Get(),hudlessRead.Get()};auto write=maskWrite.Get();
+                context->CSSetShader(uiShader.Get(),nullptr,0);context->CSSetShaderResources(0,2,reads);
+                context->CSSetUnorderedAccessViews(0,1,&write,nullptr);context->Dispatch((outputWidth+7)/8,(outputHeight+7)/8,1);
+                ID3D11ShaderResourceView* noReads[2]{};ID3D11UnorderedAccessView* noWrite=nullptr;
+                context->CSSetShaderResources(0,2,noReads);context->CSSetUnorderedAccessViews(0,1,&noWrite,nullptr);
+                context->CSSetShader(nullptr,nullptr,0);context->OMSetRenderTargets(1,&target,nullptr);
+                maskDesc.BindFlags=0;maskDesc.Usage=D3D11_USAGE_STAGING;maskDesc.CPUAccessFlags=D3D11_CPU_ACCESS_READ;
+                Check(device->CreateTexture2D(&maskDesc,nullptr,&maskRead),"UI mask readback target");context->CopyResource(maskRead.Get(),mask.Get());
+                D3D11_MAPPED_SUBRESOURCE mapped{};Check(context->Map(maskRead.Get(),0,D3D11_MAP_READ,0,&mapped),"UI mask GPU readback");
+                unsigned marked=0,unexpected=0;
+                for(unsigned y=0;y<outputHeight;++y)for(unsigned x=0;x<outputWidth;++x) {
+                    LONG pixelX=static_cast<LONG>(x),pixelY=static_cast<LONG>(y);
+                    bool isUi=pixelX>=rectangle.left && pixelX<rectangle.right && pixelY>=rectangle.top && pixelY<rectangle.bottom;
+                    unsigned actual=static_cast<const BYTE*>(mapped.pData)[y*mapped.RowPitch+x];
+                    if(actual)++marked;if(actual!=(isUi?255u:0u))++unexpected;
+                }
+                context->Unmap(maskRead.Get(),0);Need(marked==1024 && unexpected==0,"Production UI alpha misclassified final/pre-UI pixels");
+                printf("{\"event\":\"synthetic_low_nr_full_sr_hud_isolation\",\"frame\":%u,\"nr_input\":[%u,%u],\"nr_passes\":%u,\"presentation_output\":[%u,%u],\"matched_pre_ui_pixels\":1024,\"late_ui_isolated\":true,\"stale_frame_rejected\":true,\"production_ui_mask_checked_pixels\":%u,\"ui_pixels\":%u,\"ui_mask_mismatches\":%u,\"game_started\":false,\"quality_verified\":false}\n",
+                    frame,iw,ih,neuralEnabled?requestedNrPasses:0,outputWidth,outputHeight,outputWidth*outputHeight,marked,unexpected);
+            }
             if(index<3){changed[index]=differences;hashes[index]=hash;}
             else printf("{\"event\":\"synthetic_owned_resize_sr_nr_readback\",\"input\":[%u,%u],\"output\":[%u,%u],\"changed_pixels\":%u,\"pixels\":1024,\"game_started\":false,\"window_created\":false}\n",iw,ih,outputWidth,outputHeight,differences);
         }
@@ -377,6 +472,8 @@ int wmain(int argc,wchar_t** argv){try{
             puts("{\"event\":\"synthetic_foreign_owner_resize_deferred\",\"owned_runtime_preserved\":true,\"disabled\":false,\"game_started\":false,\"window_created\":false}");
         }
         FinishNativeNeuralFrame(frame);
+        NativePresentationInputs ended;
+        Need(!GetNativePresentationInputs(frame,ended),"Finished frame retained presentation input eligibility");
     }
     Need(hashes[0]!=hashes[1] && hashes[1]!=hashes[2],"Moving source produced stale SR/NR GPU output");
     unsigned handoffEvaluations=0;
@@ -390,7 +487,7 @@ int wmain(int argc,wchar_t** argv){try{
         using GetState=decltype(&TwinKartNeuralGetState);
         auto getState=reinterpret_cast<GetState>(GetProcAddress(runtime->module,"TwinKartNeuralGetState"));
         TwinKartNeuralState state{sizeof(TwinKartNeuralState)};
-        Need(getState && getState(&state) && state.initialized && state.featureCreated && state.evaluations==1,
+        Need(getState && getState(&state) && state.initialized && state.featureCreated==neuralEnabled && state.evaluations==(neuralEnabled?1u:0u),
             "Rejected retirement changed the real consumer state");
         ComPtr<ID3D11DeviceContext> deferred;Check(device->CreateDeferredContext(0,&deferred),"Wrong-context handoff fixture");
         Need(!RetireNativeNeuralForRenderThread(deferred.Get()) && runtime==preserved,"Deferred context stole immediate reconstruction ownership");
@@ -399,7 +496,15 @@ int wmain(int argc,wchar_t** argv){try{
             std::thread contender([&]{accepted=RetireNativeNeuralForRenderThread(context.Get());});contender.join();
             Need(!accepted && runtime==preserved,"Explicit handoff raced live CPU resource use");
         }
-        Check(runtime->outputBridge.CopyTo12(output.Get()),"Acquire bridge for in-flight retirement rejection");
+        // NR now precedes SR: its output bridge has input dimensions, unlike
+        // the final target. Keep strict CopyTo12 extent validation intact.
+        ID3D11Texture2D* nrInput=runtime->lowResolutionNeural?runtime->srColor.Get():output.Get();
+        D3D11_TEXTURE2D_DESC nrExtent{};nrInput->GetDesc(&nrExtent);
+        Need(nrExtent.Width==(runtime->lowResolutionNeural?iw:ow) && nrExtent.Height==(runtime->lowResolutionNeural?ih:oh),
+            "In-flight retirement fixture selected the wrong NR resource extent");
+        if(runtime->lowResolutionNeural)
+            Need(runtime->outputBridge.CopyTo12(output.Get())==E_INVALIDARG,"Low-resolution NR bridge accepted a full-resolution source");
+        Check(runtime->outputBridge.CopyTo12(nrInput),"Acquire bridge for in-flight retirement rejection");
         HRESULT bridgeRetired=S_OK;
         std::thread premature([&]{bridgeRetired=runtime->outputBridge.DrainForRetirement(originalOwner,context.Get());});premature.join();
         Need(FAILED(bridgeRetired),"Foreign retirement consumed a bridge still owned by D3D12");
@@ -417,17 +522,14 @@ int wmain(int argc,wchar_t** argv){try{
             unsigned before[1024]{},after[1024]{};Need(ReadPatch(context.Get(),device.Get(),output.Get(),before),"New-owner baseline readback");
             Need(!ProcessNativeNeuralPixelPass(context.Get(),frame),"New-owner fixture shader escaped original identity guard");
             Need(ProcessQualifiedNeuralPixelPass(context.Get(),frame) && runtime && runtime->owner==GetCurrentThreadId() &&
-                 runtime->evaluations==1 && runtime->superEvaluations==1 && NativeSuperResolutionOutputMatches(output.Get(),frame),
+                 runtime->evaluations==(neuralEnabled?1u:0u) && runtime->superEvaluations==(guidesOnlyFixture?0u:1u) &&
+                 NativeSuperResolutionOutputMatches(output.Get(),frame)==!guidesOnlyFixture,
                  "New owner failed to rebuild actual SR/NR consumers and temporal history");
-            TwinKartNeuralState chain{sizeof(TwinKartNeuralState)};
-            Need(runtime->readState(&chain) && chain.requestedPasses==requestedNrPasses && chain.style==requestedNrStyle &&
-                chain.passResults[0]==1 && chain.passEvaluations[0]==1 &&
-                (requestedNrPasses==1 || (chain.passResults[1]==1 && chain.passEvaluations[1]==1)),
-                "Configured independent NR passes did not evaluate after owner reconstruction");
+            VerifyNeuralState(1,iw,ih);
             Need(ReadPatch(context.Get(),device.Get(),output.Get(),after),"New-owner actual GPU output readback");unsigned changed=0;
             for(unsigned n=0;n<1024;++n)if(before[n]!=after[n])++changed;
-            Need(changed>0,"Rebuilt owner produced no observed GPU output");++handoffEvaluations;
-            printf("{\"event\":\"synthetic_new_owner_sr_nr_readback\",\"owner\":%lu,\"frame\":%u,\"pixels\":1024,\"changed_pixels\":%u,\"sr_evaluations\":1,\"nr_evaluations\":1,\"game_started\":false,\"window_created\":false}\n",GetCurrentThreadId(),frame,changed);
+            Need(guidesOnlyFixture?changed==0:changed>0,"Rebuilt owner violated output change/preservation contract");++handoffEvaluations;
+            printf("{\"event\":\"synthetic_new_owner_sr_nr_readback\",\"owner\":%lu,\"frame\":%u,\"pixels\":1024,\"changed_pixels\":%u,\"sr_evaluations\":%u,\"nr_evaluations\":%u,\"game_started\":false,\"window_created\":false}\n",GetCurrentThreadId(),frame,changed,guidesOnlyFixture?0u:1u,neuralEnabled?1u:0u);
             FinishNativeNeuralFrame(frame);
         };
         std::exception_ptr workerFailure;DWORD workerOwner=0;
@@ -446,11 +548,11 @@ int wmain(int argc,wchar_t** argv){try{
 #ifdef TWIN_KART_RECONSTRUCTION_FG
     if(presentation.enabled) {
         printf("{\"event\":\"synthetic_production_sr_nr_fg_complete\",\"rendered\":%u,\"actually_presented\":%llu,\"frames_reporting_generation\":%u,\"sr_evaluations\":%u,\"nr_evaluations\":%u,\"shared_core_rebuilds\":%u,\"production_native_marker_path\":%s,\"synthetic_inputs\":true,\"synthetic_frame_markers\":true,\"game_started\":false,\"quality_verified\":false}\n",
-            presentation.rendered,presentation.presented,presentation.generated,frameCount,frameCount,sharedCoreRebuilds,nativeFixture?"true":"false");
+            presentation.rendered,presentation.presented,presentation.generated,frameCount,neuralEnabled?frameCount:0,sharedCoreRebuilds,nativeFixture?"true":"false");
         Need(presentation.generated>0 && presentation.presented>presentation.rendered,"Combined path did not actually report generated frames");
     }
 #endif
     Need(RetireNativeNeuralForDeviceShutdown(context.Get()),"Completed production pre-presentation-shutdown retirement failed");context->ClearState();
     if(argc==4)printf("{\"event\":\"synthetic_production_sr_nr_complete\",\"input\":[640,360],\"output\":[1280,720],\"sr_evaluations\":%u,\"nr_evaluations\":%u,\"same_owner_resize_rebuilds\":2,\"explicit_owner_handoff_rebuilds\":%u,\"foreign_owner_callback_rejected_without_disabling\":true,\"gpu_readback_pixels_per_frame\":1024,\"initial_changed_pixels\":[%u,%u,%u],\"initial_output_hashes\":[\"%016llx\",\"%016llx\",\"%016llx\"],\"independent_color_depth_origins\":true,\"padded_allocations\":true,\"native_shader_guard_preserved\":true,\"source_pixels_resized\":false,\"frame_generation_tested\":false,\"window_created\":false,\"game_started\":false,\"synthetic_inputs\":true,\"quality_verified\":false}\n",
-        frameCount+handoffEvaluations,frameCount+handoffEvaluations,handoffEvaluations,changed[0],changed[1],changed[2],hashes[0],hashes[1],hashes[2]);return 0;
+        guidesOnlyFixture?0:frameCount+handoffEvaluations,neuralEnabled?frameCount+handoffEvaluations:0,handoffEvaluations,changed[0],changed[1],changed[2],hashes[0],hashes[1],hashes[2]);return 0;
 }catch(const std::exception& e){fprintf(stdout,"%s\n",e.what());fflush(stdout);return 1;}}

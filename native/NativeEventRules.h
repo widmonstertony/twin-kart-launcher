@@ -3,6 +3,13 @@
 namespace TwinKartRace {
 enum class EventRoster { Ordinary,Dao,Brodi,MisoTiera,HitRun,Derek,MayorZipi,TanyaSpirit,RandomSkill };
 struct EventRules {const char* profile;int mode;const char* options;EventRoster roster;};
+// These existing native families were previously available only through the
+// custom-room mode picker. Include each native solo/duo/squad identity in the
+// lobby as well, without inventing new rule profiles or unsupported enum117.
+inline const int* LocalLobbyModes(size_t& count) {
+    static const int modes[]={101,102,103,104,105,106,107,110,111,112,113,114,115,116,118};
+    count=sizeof(modes)/sizeof(modes[0]);return modes;
+}
 // Independently described compatibility rules from the original published
 // events. These are gameplay values for FGameSettingOptions, not copied
 // proprietary rule implementations or external launcher source.

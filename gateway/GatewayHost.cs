@@ -22,7 +22,10 @@ namespace TwinKartLauncher.Gateway
                 settings.Validate();
                 if (localAccount) settings.ValidateLocalAccount();
                 bool offlineEvents=offline && Environment.GetEnvironmentVariable("TWIN_KART_EVENT_MODES")=="1";
-                var catalog = localAccount && !string.IsNullOrEmpty(settings.DynamicDataPath) ? DynamicDataCatalog.Load(settings.DynamicDataPath,offlineEvents) : null;
+                var catalog = localAccount && !string.IsNullOrEmpty(settings.DynamicDataPath) ? DynamicDataCatalog.Load(settings.DynamicDataPath,offlineEvents,
+                    Environment.GetEnvironmentVariable("TWIN_KART_CHASER_COMPAT")=="1" && Environment.GetEnvironmentVariable("TWIN_KART_CHASER_ARENA")=="1",
+                    Environment.GetEnvironmentVariable("TWIN_KART_HIDE_COMPAT")=="1" && Environment.GetEnvironmentVariable("TWIN_KART_HIDE_REPAIRED_SCENE")=="1",
+                    Environment.GetEnvironmentVariable("TWIN_KART_FACTORY_COMPAT")=="1") : null;
                 using (var ping = offline ? new LocalPingServer() : null)
                 {
                 OfflineProfileStore profile = null;
@@ -42,7 +45,8 @@ namespace TwinKartLauncher.Gateway
                         settings.LocalAccountId, ping.Port,
                         String.IsNullOrEmpty(settings.TuningPlanPath) ? null : ProfileJson.Read(settings.TuningPlanPath),
                         String.IsNullOrEmpty(settings.VehicleAvailabilityPath) ? null : ProfileJson.Read(settings.VehicleAvailabilityPath),
-                        roomLaunch==null?(Func<RoomState,string>)null:roomLaunch.Start);
+                        roomLaunch==null?(Func<RoomState,string>)null:roomLaunch.Start,
+                        Environment.GetEnvironmentVariable("TWIN_KART_ROOM_RACE_CONTROL"));
                 }
                 Func<Func<string, GatewayReply>> factory = () => {
                     Func<string, GatewayReply> handler = localAccount ?

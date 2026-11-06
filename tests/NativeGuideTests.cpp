@@ -10,6 +10,7 @@
 #include <fstream>
 #include <vector>
 #include <algorithm>
+#include <limits>
 #include "../native/NativeGuideShader.h"
 #include "../native/NativeVelocity.h"
 #include "../native/NativeGuideSnapshot.h"
@@ -228,6 +229,64 @@ int main(int argc,char** argv){try{
     auto previous=captured.Get();
     Need(!TwinKartGraphics::SnapshotNativeGuides(context.Get(),parameterBuffer.Get(),buffer.Get(),192,160,160,144,layout,captured) && captured.Get()==previous,
         "Invalid viewport accepted or previous immutable snapshot replaced");
+    // Camera consumers read the CPU bytes associated with this exact immutable
+    // snapshot, not the native buffer which can already contain another view.
+    view[536]=view[537]=128;
+    const float projection[16]={1,0,0,0,0,1,0,0,0,0,0,1,0,0,10,0};
+    const float identity[16]={1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1};
+    memcpy(view+144,projection,sizeof(projection));memcpy(view+32,projection,sizeof(projection));
+    memcpy(view+316,projection,sizeof(projection));memcpy(view+504,identity,sizeof(identity));
+    view[138]=0;view[139]=1;view[142]=10;view[143]=0;
+    view[520]=view[522]=0.001f;view[521]=view[523]=-0.002f;
+    for(unsigned r=0;r<4;++r) {
+        view[32+r*4]+=view[32+r*4+3]*view[520];view[33+r*4]+=view[32+r*4+3]*view[521];
+        view[316+r*4]+=view[316+r*4+3]*view[522];view[317+r*4]+=view[316+r*4+3]*view[523];
+    }
+    context->UpdateSubresource(buffer.Get(),0,nullptr,view,0,0);
+    Need(TwinKartGraphics::SnapshotNativeGuides(context.Get(),parameterBuffer.Get(),buffer.Get(),192,160,160,144,layout,captured),
+        "Valid camera snapshot failed");
+    float cpuView[2048]{};UINT cpuBytes=sizeof(cpuView);
+    Need(SUCCEEDED(captured->GetPrivateData(TwinKartGraphics::NativeGuideSnapshotViewId,&cpuBytes,cpuView)) && cpuBytes==sizeof(cpuView) &&
+        !memcmp(cpuView,view,sizeof(view)),"CPU snapshot differs from the exact captured GPU buffer bytes");
+    TwinKartGraphics::CameraFrame camera{};float jitter[2]{};
+    Need(TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),41,41,128,128,jitter,&camera,true) && camera.reset &&
+        fabsf(jitter[0]+0.064f)<0.00001f && fabsf(jitter[1]+0.128f)<0.00001f &&
+        camera.jitterX==jitter[0] && camera.jitterY==jitter[1],"CPU snapshot lost native camera, jitter or history reset");
+    Need(TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),41,41,128,128,nullptr,&camera,false) && !camera.reset,
+        "Continuous snapshot forced a camera history reset");
+    view[536]=256;view[144]=std::numeric_limits<float>::quiet_NaN();context->UpdateSubresource(buffer.Get(),0,nullptr,view,0,0);
+    Need(TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),41,41,128,128,nullptr,&camera,false),
+        "CPU snapshot followed a later native View mutation");
+    Need(!TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),41,42,128,128) &&
+        !TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),0,41,128,128) &&
+        !TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),0,0,128,128) &&
+        !TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),41,41,256,128),
+        "Stale, zero or wrong-size snapshot accepted");
+    ComPtr<ID3D11DeviceContext> deferred;
+    Need(SUCCEEDED(device->CreateDeferredContext(0,&deferred)) &&
+        !TwinKartGraphics::ReadNativeGuideSnapshotView(deferred.Get(),captured.Get(),41,41,128,128),"Deferred snapshot context accepted");
+    D3D11_BUFFER_DESC immutableDesc{};captured->GetDesc(&immutableDesc);D3D11_SUBRESOURCE_DATA cameraData{cpuView,0,0};
+    ComPtr<ID3D11Buffer> unrelated,mutableView;
+    Need(SUCCEEDED(device->CreateBuffer(&immutableDesc,&cameraData,&unrelated)) &&
+        !TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),unrelated.Get(),41,41,128,128),"Uncaptured immutable buffer accepted");
+    immutableDesc.Usage=D3D11_USAGE_DEFAULT;
+    Need(SUCCEEDED(device->CreateBuffer(&immutableDesc,&cameraData,&mutableView)) &&
+        SUCCEEDED(mutableView->SetPrivateData(TwinKartGraphics::NativeGuideSnapshotViewId,sizeof(cpuView),cpuView)) &&
+        !TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),mutableView.Get(),41,41,128,128),"Mutable View accepted with copied metadata");
+    auto retained=captured;captured.Reset();
+    Need(!TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),41,41,128,128) &&
+        !TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),retained.Get(),0,41,128,128) &&
+        TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),retained.Get(),41,41,128,128,nullptr,&camera,false),
+        "Snapshot reset retained validity or invalidated another owning reference's CPU bytes");
+    memcpy(view,cpuView,sizeof(view));view[316]+=1;context->UpdateSubresource(buffer.Get(),0,nullptr,view,0,0);
+    Need(TwinKartGraphics::SnapshotNativeGuides(context.Get(),parameterBuffer.Get(),buffer.Get(),192,160,160,144,layout,captured) &&
+        !TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),42,42,128,128,nullptr,&camera,false),
+        "Inconsistent current/previous native transforms accepted");
+    memcpy(view,cpuView,sizeof(view));view[144]=std::numeric_limits<float>::quiet_NaN();context->UpdateSubresource(buffer.Get(),0,nullptr,view,0,0);
+    Need(TwinKartGraphics::SnapshotNativeGuides(context.Get(),parameterBuffer.Get(),buffer.Get(),192,160,160,144,layout,captured) &&
+        !TwinKartGraphics::ReadNativeGuideSnapshotView(context.Get(),captured.Get(),43,43,128,128,nullptr,&camera,false),
+        "Nonfinite captured camera accepted");
+    puts("PASS immutable View CPU metadata: exact bytes, native source mutation, same-frame/dimension/context gates, missing/mutable/reset rejection and camera matrix/history-reset preservation; no duplicate GPU staging read.");
     if(argc==3 || argc==5) {
         auto read=[](const char* path,void* bytes,size_t count){std::ifstream file(path,std::ios::binary);file.read(static_cast<char*>(bytes),count);return file.gcount()==static_cast<std::streamsize>(count) && file.peek()==std::char_traits<char>::eof();};
         Need(read(argv[1],parameters,sizeof(parameters)) && read(argv[2],view,sizeof(view)),"Expected exact private native constant captures");

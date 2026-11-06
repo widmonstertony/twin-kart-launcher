@@ -49,9 +49,22 @@ static class OfflineGraphicsOptionsTests
         Need(Object.ReferenceEquals(source,p.RouteEngineSettings(source)),"Disabled SR policy rewrote engine bytes");
         environment["TWIN_KART_FG_PROVIDER"]="external";p.SuperResolution=true;p.FrameGeneration=true;p.NeuralRendering=false;p.NeuralStyle=0;
         p.Validate(environment);p.ApplyEnvironment(environment,Path.GetTempPath());
-        Need(environment["TWIN_KART_SUPER_RESOLUTION"]=="1" && environment["TWIN_KART_FRAME_GENERATION"]=="1" && environment["TWIN_KART_NEURAL_MODULE"]=="","NR Off did not preserve the independent SR and FG paths.");
+        Need(environment["TWIN_KART_SUPER_RESOLUTION"]=="1" && environment["TWIN_KART_FRAME_GENERATION"]=="1" &&
+            environment["TWIN_KART_NEURAL_MODULE"]=="external-original.dll" && environment["TWIN_KART_NEURAL_RENDERING"]=="0",
+            "NR Off removed the shared SR/FG consumer or retained an enabled NR feature.");
+        p.ApplyEnvironment(environment,Path.GetTempPath());
+        Need(environment["TWIN_KART_NEURAL_MODULE"]=="external-original.dll","Repeated NR Off routing destroyed the pinned reconstruction dependency.");
+        p.NeuralRendering=true;p.ApplyEnvironment(environment,Path.GetTempPath());
+        Need(environment["TWIN_KART_NEURAL_RENDERING"]=="1" && environment["TWIN_KART_NEURAL_MODULE"]=="external-original.dll",
+            "NR On could not restore feature selection after NR Off.");
+        p.NeuralRendering=false;
         p.SuperResolution=false;p.FrameGeneration=false;p.ApplyEnvironment(environment,Path.GetTempPath());
         Need(environment["TWIN_KART_SUPER_RESOLUTION"]=="0" && environment["TWIN_KART_FRAME_GENERATION"]=="0","Independent SR/FG switch did not disable both paths.");
+        Need(environment["TWIN_KART_RECONSTRUCTION_ENABLED"]=="0" && environment["TWIN_KART_NEURAL_RENDERING"]=="0" &&
+            environment["TWIN_KART_NEURAL_MODULE"]=="external-original.dll","All Off enabled the pipeline or discarded its reusable pinned dependency.");
+        p.SuperResolution=true;p.ApplyEnvironment(environment,Path.GetTempPath());
+        Need(environment["TWIN_KART_RECONSTRUCTION_ENABLED"]=="1" && environment["TWIN_KART_NEURAL_RENDERING"]=="0",
+            "SR could not be enabled after All Off without enabling NR.");
         string scratch=Path.Combine(Path.GetTempPath(),"TwinKartGraphicsPreflight-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(scratch);
         try {
             string module=Path.Combine(scratch,"original-fixture.bin");File.WriteAllText(module,"original fixture, never loaded");
@@ -68,6 +81,13 @@ static class OfflineGraphicsOptionsTests
             files["TWIN_KART_NEURAL_MODULE_SHA256"]=new String('x',64);Reject(()=>nrOnly.Validate(files));
             using(var file=File.OpenRead(module))using(var hash=System.Security.Cryptography.SHA256.Create())files["TWIN_KART_NEURAL_MODULE_SHA256"]=BitConverter.ToString(hash.ComputeHash(file)).Replace("-","").ToLowerInvariant();
             nrOnly.ValidateFiles(files);
+            var srOnly=new OfflineGraphicsOptions {SuperResolution=true};
+            files["TWIN_KART_DLSS_MODULE_SHA256"]=files["TWIN_KART_NEURAL_MODULE_SHA256"];
+            srOnly.ValidateFiles(files);
+            string consumerPin=files["TWIN_KART_NEURAL_MODULE_SHA256"];
+            files["TWIN_KART_NEURAL_MODULE_SHA256"]=new String('0',64);Reject(()=>srOnly.ValidateFiles(files));
+            files["TWIN_KART_NEURAL_MODULE_SHA256"]=consumerPin;
+            files.Remove("TWIN_KART_NEURAL_MODULE");Reject(()=>srOnly.Validate(files));
         } finally {Directory.Delete(scratch,true);}
         Console.WriteLine("PASS offline graphics routing: NR Default/Natural/Movie/Off is independent from paired SR/FG, with double NR pass, brightness and dependency rejection. No game started.");return 0;
     }catch(Exception e){Console.Error.WriteLine(e.Message);return 1;}}

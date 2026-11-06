@@ -5,6 +5,21 @@ namespace TwinKartCamera {
 struct Settings {
     int active, forward, height, pitch, fov, headAnchor, eyeForward, eyeHeight;
 };
+struct ArrowLook {
+    unsigned long long releasedAt=0;
+    int horizontal=0,vertical=0;
+    float Update(unsigned long long now,bool eligible,int x,int y) {
+        if(!eligible){releasedAt=0;horizontal=vertical=0;return 0;}
+        if(x || y){horizontal=x;vertical=y;releasedAt=0;return 1;}
+        if(!horizontal && !vertical)return 0;
+        if(!releasedAt)releasedAt=now;
+        auto elapsed=now-releasedAt;
+        if(elapsed<650)return 1;
+        if(elapsed>=1000){horizontal=vertical=0;return 0;}
+        float t=static_cast<float>(elapsed-650)/350.f;
+        return 1-t*t*(3-2*t);
+    }
+};
 inline Settings VehicleSettings(Settings value,bool tallFront) {
     // The observed Rudolph front blocks the default eye line. Keep its
     // original hands/handle and use the measured rearward, raised cockpit

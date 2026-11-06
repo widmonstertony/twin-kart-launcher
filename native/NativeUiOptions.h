@@ -51,7 +51,7 @@ inline bool NormalizeUiOptions(const Request& request,Request& result) {
     };
     auto mappings=speed?racing:item;size_t count=speed?4:3;
     // Flag has its own settings contract; do not apply item defaults to it.
-    if(FlagMode(request.mode))return true;
+    if(FlagMode(request.mode) || ChaserMode(request.mode))return true;
     for(size_t i=0;i<count;++i) {
         char value[97]{};bool enabled=false;
         if(!UiOption(request.custom,mappings[i].ui,value))continue;

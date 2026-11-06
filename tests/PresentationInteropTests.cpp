@@ -3,7 +3,97 @@
 #include <stdexcept>
 using namespace TwinKartGraphics;
 void Need(bool value,const char* message){if(!value)throw std::runtime_error(message);}
+void CheckPresentationInputCompletion(){
+    GenerationState state{};state.inputCompletionFence=reinterpret_cast<ID3D12Fence*>(1);state.inputCompletionValue=7;
+    unsigned waits=0,restores=0,drains=0;
+    HRESULT result=CompletePresentationInputs(state,true,[&](ID3D12Fence*,UINT64){++waits;return DXGI_ERROR_DEVICE_REMOVED;},
+        [&](){++restores;return S_OK;},[&](){++drains;return S_OK;});
+    Need(result==DXGI_ERROR_DEVICE_REMOVED && waits==1 && !restores && !drains,"Failed provider fence wait allowed guide/resource reuse");
+    waits=restores=drains=0;state.result=1;
+    result=CompletePresentationInputs(state,true,[&](ID3D12Fence*,UINT64){++waits;return S_OK;},
+        [&](){++restores;return S_OK;},[&](){++drains;return S_OK;});
+    Need(FAILED(result) && !waits && !restores && !drains,"Failed provider query released unknown-lifetime inputs");
+    state.result=0;
+    result=CompletePresentationInputs(state,true,[&](ID3D12Fence*,UINT64){++waits;return S_OK;},
+        [&](){++restores;return E_FAIL;},[&](){++drains;return S_OK;});
+    Need(FAILED(result) && waits==1 && restores==1 && !drains,"Failed guide return submission accepted");
+    waits=restores=drains=0;
+    result=CompletePresentationInputs(state,false,[&](ID3D12Fence*,UINT64){++waits;return S_OK;},
+        [&](){++restores;return S_OK;},[&](){++drains;return E_ABORT;});
+    Need(result==E_ABORT && waits==1 && !restores && drains==1,"Native-only presentation omitted or repeated final drain");
+
+    // Real WARP queue ordering: return-state commands may be recorded before
+    // provider completion, but their queue execution and final fence stay
+    // blocked behind that completion. The producer allocator/list stays owned
+    // and is not reset to record the returns.
+    ComPtr<IDXGIFactory4> factory;ComPtr<IDXGIAdapter> adapter;ComPtr<ID3D12Device> device;
+    Need(SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) && SUCCEEDED(factory->EnumWarpAdapter(IID_PPV_ARGS(&adapter))) &&
+        SUCCEEDED(D3D12CreateDevice(adapter.Get(),D3D_FEATURE_LEVEL_12_0,IID_PPV_ARGS(&device))),"D3D12 WARP return-order fixture");
+    ComPtr<ID3D12CommandQueue> queue;D3D12_COMMAND_QUEUE_DESC queueDesc{};
+    Need(SUCCEEDED(device->CreateCommandQueue(&queueDesc,IID_PPV_ARGS(&queue))),"Return-order queue");
+    ComPtr<ID3D12CommandAllocator> producerAllocator;ComPtr<ID3D12GraphicsCommandList> producer;
+    Need(SUCCEEDED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,IID_PPV_ARGS(&producerAllocator))) &&
+        SUCCEEDED(device->CreateCommandList(0,D3D12_COMMAND_LIST_TYPE_DIRECT,producerAllocator.Get(),nullptr,IID_PPV_ARGS(&producer))),"Independent producer commands");
+    D3D12_HEAP_PROPERTIES heap{};heap.Type=D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC desc{};desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;desc.Width=16;desc.Height=16;
+    desc.DepthOrArraySize=1;desc.MipLevels=1;desc.SampleDesc.Count=1;desc.Format=DXGI_FORMAT_R32_FLOAT;
+    ComPtr<ID3D12Resource> guide;
+    Need(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&guide))),"Return-order guide");
+    PresentationGuideReturns returns;Need(SUCCEEDED(returns.Initialize(device.Get())),"Independent return allocator/list");
+    ComPtr<ID3D12Fence> providerFence,completed;
+    Need(SUCCEEDED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&providerFence))) &&
+        SUCCEEDED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&completed))),"Return-order fences");
+    state={};state.inputCompletionFence=providerFence.Get();
+    for(UINT64 frame=1;frame<=2;++frame){
+        if(frame>1)Need(SUCCEEDED(producerAllocator->Reset()) && SUCCEEDED(producer->Reset(producerAllocator.Get(),nullptr)),"Producer reuse after completed final fence");
+        Transition(producer.Get(),guide.Get(),D3D12_RESOURCE_STATE_COMMON,D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        Need(SUCCEEDED(producer->Close()),"Producer close");ID3D12CommandList* submit[]{producer.Get()};queue->ExecuteCommandLists(1,submit);
+        state.inputCompletionValue=frame;waits=restores=drains=0;
+        result=CompletePresentationInputs(state,true,[&](ID3D12Fence* fence,UINT64 value){++waits;return queue->Wait(fence,value);},[&](){
+            ++restores;ID3D12Resource* resources[]{guide.Get()};return returns.Queue(queue.Get(),resources,1);
+        },[&](){++drains;return queue->Signal(completed.Get(),frame);});
+        Need(SUCCEEDED(result) && waits==1 && restores==1 && drains==1,"Return sequence did not queue exactly one final completion");
+        Need(completed->GetCompletedValue()==frame-1,"Return commands passed the unresolved provider input fence");
+        Need(SUCCEEDED(providerFence->Signal(frame)),"Release simulated provider inputs");
+        HANDLE event=CreateEventW(nullptr,FALSE,FALSE,nullptr);Need(event!=nullptr,"Return-order event");
+        HRESULT armed=completed->SetEventOnCompletion(frame,event);DWORD finished=SUCCEEDED(armed)?WaitForSingleObject(event,10000):WAIT_FAILED;
+        CloseHandle(event);Need(SUCCEEDED(armed) && finished==WAIT_OBJECT_0,"Final queue fence did not cover guide return commands");
+    }
+}
 int main(){HWND window=nullptr;try{
+    CheckPresentationInputCompletion();
+    auto generated=VerifyPresentationInterval(120,120,0,0,120,0,240);
+    Need(generated.verified && generated.generatedFrames==120,"Sustained 2x provider presentations were not verified");
+    auto partial=VerifyPresentationInterval(120,120,0,0,120,0,121);
+    Need(partial.verified && partial.generatedFrames==1,"Valid partial generation interval rejected");
+    GenerationState observation{};
+    Need(InspectPresentationObservation(observation,S_OK,true,true).qualified,"Valid presentation observation rejected");
+    auto failedPresent=InspectPresentationObservation(observation,DXGI_ERROR_DEVICE_REMOVED,true,true);
+    Need(failedPresent.presentError && !failedPresent.qualified,"Failed native Present counted as qualified");
+    observation.status=1;
+    auto badStatus=InspectPresentationObservation(observation,S_OK,true,true);
+    Need(badStatus.providerStatusError && !badStatus.qualified,"Provider failure status counted as qualified");
+    observation.status=0;observation.result=1;
+    Need(!InspectPresentationObservation(observation,S_OK,true,true).qualified,"Failed provider query counted as qualified");
+    observation.result=0;
+    auto occluded=InspectPresentationObservation(observation,DXGI_STATUS_OCCLUDED,true,true);
+    Need(occluded.occluded && !occluded.qualified,"Occluded native Present counted as qualified");
+    Need(!InspectPresentationObservation(observation,S_OK,false,true).qualified &&
+        !InspectPresentationObservation(observation,S_OK,true,false).qualified,"Missing current-frame evidence counted as qualified");
+    Need(!VerifyPresentationInterval(120,120,0,0,120,0,240,1,0).verified,"Failed Present interval reported generated frames");
+    Need(!VerifyPresentationInterval(120,120,0,0,120,0,240,0,1).verified,"Nonzero provider status interval reported generated frames");
+    Need(!VerifyPresentationInterval(119,119,0,0,119,0,238).verified,"Incomplete interval accepted");
+    Need(!VerifyPresentationInterval(121,121,0,0,121,0,242).verified,"Oversized interval accepted");
+    Need(!VerifyPresentationInterval(0,0,0,0,0,0,0).verified,"Empty interval accepted");
+    Need(!VerifyPresentationInterval(120,120,0,0,120,0,119).verified,"Provider count below native count accepted");
+    auto impossible=VerifyPresentationInterval(120,120,0,0,120,0,241);
+    Need(!impossible.verified && !impossible.generatedFrames,"Out-of-contract provider count interpreted as generated frames");
+    Need(!VerifyPresentationInterval(120,120,0,0,120,0,~0ull).verified,"Overflow-sized provider count accepted");
+    Need(!VerifyPresentationInterval(120,119,0,0,120,0,240).verified,"Unqualified presentation interval accepted");
+    Need(!VerifyPresentationInterval(120,120,1,0,120,0,240).verified,"Provider query error accepted");
+    Need(!VerifyPresentationInterval(120,120,0,1,120,0,240).verified,"Occluded presentation accepted");
+    Need(!VerifyPresentationInterval(120,120,0,0,119,1,240).verified,"Repeated native frame accepted");
+    Need(!VerifyPresentationInterval(120,120,0,0,120,0,120).verified,"Native-only interval reported generated frames");
     WNDCLASSW wc{};wc.lpfnWndProc=DefWindowProcW;wc.hInstance=GetModuleHandleW(nullptr);wc.lpszClassName=L"TwinKartPresentationInteropFixture";
     Need(RegisterClassW(&wc)!=0,"Fixture class");
     window=CreateWindowExW(0,wc.lpszClassName,L"",WS_POPUP,0,0,256,128,nullptr,nullptr,wc.hInstance,nullptr);
@@ -86,5 +176,5 @@ int main(){HWND window=nullptr;try{
     Need(SUCCEEDED(owned->GetDesc1(&described)) && described.BufferCount==2 && described.Flags==desc.Flags,"Flip resize descriptor");
     flipBuffers[1].Reset();owned.Reset();display.Reset();original.Reset();
     context->ClearState();DestroyWindow(window);window=nullptr;UnregisterClassW(wc.lpszClassName,wc.hInstance);
-    puts("PASS hidden WARP native presentation boundary: COM identity, D3D11 device/buffer routing, private display isolation, descriptor contract, held-resource resize rejection. No game or NVIDIA FG runtime started.");return 0;
+    puts("PASS hidden WARP native presentation boundary: failed provider-wait/query rejection, D3D12 provider-fence return ordering and allocator reuse, COM identity, D3D11 device/buffer routing, private display isolation, descriptor contract, held-resource resize rejection. No game or NVIDIA FG runtime started.");return 0;
 }catch(const std::exception& e){if(window)DestroyWindow(window);fprintf(stderr,"%s\n",e.what());return 1;}}

@@ -1,5 +1,17 @@
 # Twin Kart Launcher
 
+## Track free drive (development build)
+
+From the lobby, open **All Modes → Mode Lab → Free Drive**. In the room, use **S** to pick a track and **R** to start. Drive with **W/A/S/D** and choose **Esc → End (X)** to return to track selection. You can also press **F8** during an ordinary Time Attack run to switch that attempt to practice. A restart within a Free Drive session opened from the lobby remains unranked.
+
+Lobby track selection, automatic practice activation, restart, reverse, and continued driving after two laps were checked in-game. The previous build still opened the original result panel at the third-lap finish. This source revision guards the original result callback; continued driving past the native finish still needs an in-game check.
+
+## PC gameplay fixes (source preview)
+
+- In Chaser, **W + 2** activates the player's second-slot boost. The original effect and inventory callbacks, infection result and return to the lobby were observed in-game.
+- The repaired HideNSeek mode completed both rounds, showed results and returned to the lobby. The arena containment and AI boundary recovery fixes were checked in-game.
+- Factory Run completed five rounds, converted the player into a robot and reached the original podium before returning to the lobby. A player victory still needs verification. Classic's original My Room and tracks with missing resources remain incomplete.
+
 ## Subsequent source checkpoint: event compatibility (unreleased)
 
 - Add 12 independently described event rules with exact native profile/class bindings, role assignments, bounded room-option conversion and event-menu data. The menu remains opt-in through `TWIN_KART_EVENT_MODES=1`; menu interaction is not accepted yet.

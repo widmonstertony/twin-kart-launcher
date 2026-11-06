@@ -18,6 +18,7 @@ inline const wchar_t* ModeKey(int mode) {
     case 4:return L"ItemSolo";case 5:return L"ItemDuo";case 6:return L"ItemSquad";
     case 101:return L"InfinityBoosterSolo";case 102:return L"InfinityBoosterDuo";case 103:return L"InfinityBoosterSquad";
     case 104:return L"FlagSquad";case 105:return L"SpitemSolo";case 106:return L"SpitemDuo";case 107:return L"SpitemSquad";
+    case 108:return L"Chaser";
     case 110:return L"ItemLabSolo";case 111:return L"ItemLabDuo";case 112:return L"ItemLabSquad";
     case 113:return L"SpeedLabSolo";case 114:return L"SpeedLabDuo";case 115:return L"SpeedLabSquad";
     case 116:return L"cubecubeitem_solo";case 118:return L"cubecubeitem_squad";default:return nullptr;
@@ -32,8 +33,9 @@ inline void CanonicalModeProfile(Request& request) {
 }
 inline bool ValidModeDefinition(const Request& request,const ModeDefinition& definition) {
     if(!Valid(request) || !definition.asset || definition.kind<0 || definition.kind>2 ||
-       definition.teamSize!=TeamSize(request.mode) || definition.teamCount!=8/definition.teamSize ||
+       definition.teamSize!=TeamSize(request.mode) || definition.teamCount!=(ChaserMode(request.mode)?1:8/definition.teamSize) ||
        wcsnlen_s(definition.travelName,64)>=64 || wcscmp(definition.travelName,ModeName(request.mode)))return false;
+    if(ChaserMode(request.mode))return definition.kind==2 && !wcscmp(definition.gameClass,L"/Script/KartDrift.ChaserGameMode");
     constexpr wchar_t prefix[]=L"/Script/KartDrift.";
     size_t n=wcsnlen_s(definition.gameClass,192),start=ARRAYSIZE(prefix)-1;
     if(n<=start+8 || n>=192 || wmemcmp(definition.gameClass,prefix,start) || wcscmp(definition.gameClass+n-8,L"GameMode"))return false;
@@ -59,7 +61,8 @@ inline bool ResolveModeBinding(const Request& request,const ModeMapEntry* entrie
 inline bool ModeOptions(const Request& input,const ModeDefinition& definition,wchar_t* output,size_t capacity) {
     Request normalized;if(!NormalizeUiOptions(input,normalized))return false;const auto& request=normalized;
     if(!ValidModeDefinition(request,definition) || !output)return false;
-    int written=FlagMode(request.mode)?
+    int written=ChaserMode(request.mode)?
+        _snwprintf_s(output,capacity,_TRUNCATE,L"game=%s?gamemode=Chaser?team=1?teamsize=16?players=1?observers=0?ais=%d",definition.gameClass,request.ai):FlagMode(request.mode)?
         _snwprintf_s(output,capacity,_TRUNCATE,L"game=%s?gamemode=%s?team=2?teamsize=4?players=1?observers=0?ais=7",definition.gameClass,definition.travelName):
         _snwprintf_s(output,capacity,_TRUNCATE,L"game=%s?gamemode=%s?team=%d?teamsize=%d?players=1?observers=0?ais=%d?lap=%d",definition.gameClass,definition.travelName,TeamCount(request.mode,request.ai+1),definition.teamSize,request.ai,request.laps);
     if(written<=0 || static_cast<size_t>(written)>=capacity)return false;
