@@ -10,7 +10,7 @@ Lobby track selection, automatic practice activation, restart, reverse, and cont
 
 - In Chaser, **W + 2** activates the player's second-slot boost. The original effect and inventory callbacks, infection result and return to the lobby were observed in-game.
 - The repaired HideNSeek mode completed both rounds, showed results and returned to the lobby. The arena containment and AI boundary recovery fixes were checked in-game.
-- Factory Run completed five rounds, converted the player into a robot and reached the original podium before returning to the lobby. A player victory still needs verification. Classic's original My Room and tracks with missing resources remain incomplete.
+- Factory Run completed five rounds, converted the player into a robot and reached the original podium before returning to the lobby. This update guards failed result-widget loads and records the native local-player victory separately. An in-game player victory still needs verification. Classic's original My Room and tracks with missing resources remain incomplete.
 
 ## Subsequent source checkpoint: event compatibility (unreleased)
 

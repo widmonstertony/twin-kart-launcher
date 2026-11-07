@@ -4690,15 +4690,24 @@ void ObserveChaserOutcomeRoster(BYTE* world) {
     __try {ObserveChaserOutcomeRosterImpl(world);}
     __except(EXCEPTION_EXECUTE_HANDLER){RuntimeEvent("native_chaser_result_roster_observation_rejected",-1,0);}
 }
-void __fastcall ShowOriginalChaserResultWidget(void* widget,unsigned char visibility) {
+void __fastcall ShowOriginalObjectiveResultWidget(void* widget,unsigned char visibility) {
     // This exact native rule can request a stripped cooked widget class. Its
     // normal factory then returns null. Keep the original rules, winner and
     // result progression; do not dereference that failed optional UI result.
+    BYTE* world=nullptr;
+    bool factory=false;
+    __try {
+        world=OwnedRaceWorld();
+        factory=world && TwinKartLocalRace::factoryCompatEnabled &&
+            TwinKartLocalRace::factoryWorld.Matches(world,*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0),
+                *reinterpret_cast<int*>(image+0x69c28c4));
+    } __except(EXCEPTION_EXECUTE_HANDLER) {world=nullptr;}
     if(!widget){
-        RuntimeEvent("native_chaser_result_widget_missing",-1,0);
+        if(factory) {RuntimeEvent("native_factory_result_widget_missing",-1,0);return;}
         __try {
-            auto world=OwnedRaceWorld();unsigned long long phase=0;
+            unsigned long long phase=0;
             if(!world || !OwnedChaserWorld(world) || !ChaserPhase(world,phase))return;
+            RuntimeEvent("native_chaser_result_widget_missing",-1,0);
             ObserveChaserOutcomeRoster(world);
             auto post=*reinterpret_cast<unsigned long long*>(image+0x68b9e60),podium=*reinterpret_cast<unsigned long long*>(image+0x68b9e70);
             if(!((post && phase==post) || (podium && phase==podium)))return;
@@ -4715,7 +4724,10 @@ void __fastcall ShowOriginalChaserResultWidget(void* widget,unsigned char visibi
     using Show=void(__fastcall*)(void*,unsigned char);
     auto table=*reinterpret_cast<void***>(widget);
     reinterpret_cast<Show>(table[0x280/8])(widget,visibility);
-    RuntimeEvent("native_chaser_original_result_widget_shown",-1,1);
+    if(factory) {
+        RuntimeEvent("native_factory_original_result_widget_shown",-1,1);
+        if(TwinKartLocalRace::FactoryHumanWon(world))RuntimeEvent("native_factory_player_win_result_widget_shown",0,1);
+    } else if(world && OwnedChaserWorld(world))RuntimeEvent("native_chaser_original_result_widget_shown",-1,1);
 }
 int __fastcall ChaserRoleAuthorityNetMode(void* world) {
     return TwinKartObjective::ResolveChaserRoleAuthority(world,chaserModeDefinitionEnabled,
@@ -5061,7 +5073,13 @@ bool InstallChaserModeDefinition() {
     if(!chaserModeLookupPatch.Entry(image+0x169a930,prefix,sizeof(prefix),reinterpret_cast<void*>(OnModeDefinitionLookup),
         reinterpret_cast<void**>(&originalModeLookup)))return false;
     if(!chaser) {
-        if(hideLobbyEnabled && !InstallPrototypeMenuSelection()) {chaserModeLookupPatch.Restore();originalModeLookup=nullptr;return false;}
+        // Factory uses the same native result-display site as Chaser, even
+        // when Chaser is disabled. A failed widget load must not crash it.
+        if((TwinKartLocalRace::factoryCompatEnabled &&
+            !chaserResultVisibilityPatch.WidgetVisibilityCall(image+0x188b524,reinterpret_cast<void*>(ShowOriginalObjectiveResultWidget))) ||
+           (hideLobbyEnabled && !InstallPrototypeMenuSelection())) {
+            chaserResultVisibilityPatch.Restore();chaserModeLookupPatch.Restore();originalModeLookup=nullptr;return false;
+        }
         chaserModeLookupInstalled=true;return true;
     }
     if(!chaserSelectRolesPatch.Entry(image+0x18bfa10,selectPrefix,sizeof(selectPrefix),reinterpret_cast<void*>(OnChaserSelectRoles),
@@ -5096,7 +5114,8 @@ bool InstallChaserModeDefinition() {
         chaserSelectRolesPatch.Restore();chaserModeLookupPatch.Restore();
         originalModeLookup=nullptr;chaserSelectRoles=nullptr;chaserCanTransit=nullptr;return false;
     }
-    if(arena && !chaserResultVisibilityPatch.WidgetVisibilityCall(image+0x188b524,reinterpret_cast<void*>(ShowOriginalChaserResultWidget))) {
+    if((arena || TwinKartLocalRace::factoryCompatEnabled) &&
+       !chaserResultVisibilityPatch.WidgetVisibilityCall(image+0x188b524,reinterpret_cast<void*>(ShowOriginalObjectiveResultWidget))) {
         chaserMissingConfigPatch.Restore();chaserLoadingReadyPatch.Restore();chaserRoleEventsPatch.Restore();
         chaserRoleAuthorityPatch.Restore();chaserSelectRolesPatch.Restore();chaserModeLookupPatch.Restore();
         originalModeLookup=nullptr;chaserSelectRoles=nullptr;chaserCanTransit=nullptr;return false;

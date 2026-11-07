@@ -9,7 +9,7 @@
   },
   {
     "file": "CHANGELOG.md",
-    "sha256": "bdec26ed9d0332301f37d8ff27123afe9e402084ec77226274d31ad93f0572b1"
+    "sha256": "766edec9ffb756a98f53c0571f7942c19fe4e2bbef9cff35a43131b89caa7869"
   },
   {
     "file": "gateway/build-gateway.ps1",
@@ -213,7 +213,7 @@
   },
   {
     "file": "native/DriftRaceBridge.cpp",
-    "sha256": "571b3b664fd6e6e9f141307a4c2573dd43081556fb7ec96652fafba164affcae"
+    "sha256": "e67cffec4bd9490baad2a9f864cb259bb1681a38c240d1af534a668e032c24e9"
   },
   {
     "file": "native/DriftRenderProbe.cpp",
@@ -269,7 +269,7 @@
   },
   {
     "file": "native/LocalRaceRuntime.h",
-    "sha256": "3693b650fca144e6218251fddb29528ddd128b29350f526c99d4f935f0ab6a00"
+    "sha256": "d397134f09c1b24aec99a016e0b6ef7f1b6dc6907e4daecb67b0462f59bd20e1"
   },
   {
     "file": "native/LocalRaceWorld.h",
@@ -553,11 +553,11 @@
   },
   {
     "file": "README.en.md",
-    "sha256": "9386b84bb93f34c3e300df95d0753af40b00a9a5bc1618eb756d2d6514283c07"
+    "sha256": "0310e7e7477305c5c23cc825eab017e5284d8676d1f7ff2aed527126e614e63e"
   },
   {
     "file": "README.md",
-    "sha256": "3f012bb262d0680c3b69d77d3f5f0f8d68a7c36d7a371e0afcd3d975df915c98"
+    "sha256": "d14d93c13037bba51cae1b1a062867a681aebcae39cf9af8d5f03446cde19fc9"
   },
   {
     "file": "SOURCE_PROVENANCE.md",
@@ -721,7 +721,7 @@
   },
   {
     "file": "tests/LocalAiLifecycleTests.cpp",
-    "sha256": "b814bbc48d8580e89d04f5b9e06bd463df4068dde597129eb60c3727a1155d2e"
+    "sha256": "429f85dae440717d23597a00a86841df7bf42a62a67e579bf82baf9d682d5e5d"
   },
   {
     "file": "tests/LocalRaceProfileTests.cs",

@@ -74,6 +74,11 @@ inline wchar_t factoryAndroidKart[97]{};
 inline bool factoryStartRequested=false;
 inline unsigned factoryCooperativeMask=0;
 inline unsigned long long factoryLastPhase=~0ull;
+inline TwinKartCamera::ObjectIdentity factoryHumanWinWorld{};
+using FactoryWinReport=void(__fastcall*)(void*,void*);
+inline FactoryWinReport factoryWinReport=nullptr;
+inline TwinKartNative::OwnedCodePatch factoryWinReportPatch;
+inline void __fastcall OnFactoryWinReport(void*,void*);
 inline TwinKartNative::OwnedCodePatch factoryConstructionPatches[3];
 inline BeginRule factoryManagerBegin=nullptr;
 inline TwinKartNative::OwnedCodePatch factoryManagerPatch;
@@ -357,6 +362,16 @@ inline bool InstallFactoryCompatibility() {
     if(!factoryOverlapPatch.Entry(image+0x1525350,factoryOverlapPrefix,sizeof(factoryOverlapPrefix),
         reinterpret_cast<void*>(OnFactoryCanOverlapCube),reinterpret_cast<void**>(&factoryCanOverlapCube))) {
         factoryOverlapPatch.Restore();factoryItemUsePatch.Restore();factoryIntroPatch.Restore();factoryIntroSequencePatch.Restore();factoryPodiumPatch.Restore();factoryManagerPatch.Restore();
+        for(auto& patch:factoryConstructionPatches)patch.Restore();return false;
+    }
+    // The native winner rule calls this exact UI handler with the original
+    // winning pawn. Observe the local recipient; leave all native scoring,
+    // report, podium and progression calls in charge.
+    const BYTE winReportPrefix[]={0x40,0x53,0x55,0x56,0x48,0x83,0xec,0x40,0x48,0x8b,0x81,0x88,0x00,0x00,0x00};
+    if(!factoryWinReportPatch.Entry(image+0x196cef0,winReportPrefix,sizeof(winReportPrefix),
+        reinterpret_cast<void*>(OnFactoryWinReport),reinterpret_cast<void**>(&factoryWinReport))) {
+        factoryOverlapPatch.Restore();factoryItemUsePatch.Restore();factoryIntroPatch.Restore();factoryIntroSequencePatch.Restore();
+        factoryPodiumPatch.Restore();factoryManagerPatch.Restore();
         for(auto& patch:factoryConstructionPatches)patch.Restore();return false;
     }
     factoryCompatEnabled=true;Emit("native_factory_registration_adapter_installed",-1,1);return true;
@@ -2234,6 +2249,48 @@ inline bool IsFactoryHumanPawn(BYTE* pawn) {
         Live(controller) && *reinterpret_cast<BYTE**>(controller)==image+0x50fa2c0 &&
         Live(*reinterpret_cast<BYTE**>(controller+0x298)) && *reinterpret_cast<void**>(controller+0x250)==pawn;
 }
+inline bool FactoryHumanWon(BYTE* world) {
+    if(!factoryCompatEnabled || GetCurrentThreadId()!=owner || !world || factoryHumanWinWorld.object!=world)return false;
+    auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
+    const int count=*reinterpret_cast<int*>(image+0x69c28c4);
+    return factoryWorld.Matches(world,chunks,count) && TwinKartCamera::Live(factoryHumanWinWorld,chunks,count);
+}
+inline BYTE* FactoryHumanWinReportWorld(BYTE* rule,BYTE* pawn) {
+    if(!factoryCompatEnabled || GetCurrentThreadId()!=owner || !Live(rule) || !IsFactoryHumanPawn(pawn))return nullptr;
+    using Type=void*(__fastcall*)();
+    if(*reinterpret_cast<void**>(rule+0x10)!=reinterpret_cast<Type>(image+0x24334b0)())return nullptr;
+    auto phase=*reinterpret_cast<BYTE**>(rule+0x28);
+    if(!InFactoryComponentWorld(phase) ||
+       *reinterpret_cast<void**>(phase+0x10)!=reinterpret_cast<Type>(image+0x2431330)())return nullptr;
+    auto world=World(phase),state=*reinterpret_cast<BYTE**>(phase+0xa0);
+    if(!world || *reinterpret_cast<BYTE**>(world+0x120)!=state || !FactoryActorWorld(state) ||
+       *reinterpret_cast<void**>(state+0x10)!=reinterpret_cast<Type>(image+0x2432080)() ||
+       reinterpret_cast<BYTE*(__fastcall*)(void*)>((*reinterpret_cast<void***>(pawn))[0x160/8])(pawn)!=world)return nullptr;
+    auto pawnState=FlagFind(pawn,0x23afeb0);
+    return pawnState && *reinterpret_cast<int*>(pawnState+0x16c)==1?world:nullptr;
+}
+inline void __fastcall OnFactoryWinReport(void* raw,void* actor) {
+    auto rule=static_cast<BYTE*>(raw),pawn=static_cast<BYTE*>(actor);
+    BYTE* world=nullptr;
+    __try {
+        world=FactoryHumanWinReportWorld(rule,pawn);
+        TwinKartCamera::ObjectIdentity identity{};
+        if(world && !FactoryHumanWon(world) && CaptureFlagObject(world,identity)) {
+            factoryHumanWinWorld=identity;
+            Emit("native_factory_player_win_decided",0,1);
+            auto progress=FlagFind(pawn,0x23cc170);
+            if(progress && InFactoryComponentWorld(progress)) {
+                const auto rank=*reinterpret_cast<int*>(progress+0x204);
+                if(rank>=1 && rank<=TwinKartFactory::PopulationCount)Emit("native_factory_player_win_finish_rank",0,rank);
+            }
+        }
+    } __except(EXCEPTION_EXECUTE_HANDLER) {world=nullptr;}
+    factoryWinReport(raw,actor);
+    __try {
+        if(world && FactoryHumanWon(world) && Live(rule) && Live(*reinterpret_cast<BYTE**>(rule+0x88)))
+            Emit("native_factory_player_win_popup_created",0,1);
+    } __except(EXCEPTION_EXECUTE_HANDLER) {}
+}
 inline BYTE* FindFactoryHumanPawn(BYTE* phase,ULONGLONG now) {
     auto chunks=*reinterpret_cast<TwinKartCamera::ObjectSlot***>(image+0x69c28b0);
     const int count=*reinterpret_cast<int*>(image+0x69c28c4);
@@ -2818,7 +2875,7 @@ inline bool Install(BYTE* base,Event callback) {
 inline void Arm(int mode) {
     raceWorld.Reset();armedMode=mode;armed=TwinKartRace::PlayableMode(mode);
     objectiveWorld.Reset();
-    factoryWorld.Reset();factoryPopulation.Reset();factorySpawnSlot=-1;
+    factoryWorld.Reset();factoryHumanWinWorld={};factoryPopulation.Reset();factorySpawnSlot=-1;
     factoryRosterReady=false;factoryAndroidKart[0]=0;
     factoryStartRequested=false;factoryCooperativeMask=0;factoryLastPhase=~0ull;factoryItemUseObserved=0;chaserItemUseObserved=0;
     nativeCharacterRules=false;flagSkillsEnabled=false;flagSkillTickObserved=false;

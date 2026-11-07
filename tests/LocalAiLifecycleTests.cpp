@@ -131,6 +131,18 @@ void __fastcall FactoryIntroSequenceFixture(void*,void*,void*){++factoryIntroSeq
 void __fastcall FactorySetHidden(void* raw,bool hidden){++factoryUnhideCalls;auto actor=static_cast<BYTE*>(raw);actor[0x58]=hidden?(actor[0x58]|0x20):(actor[0x58]&~0x20);}
 void* __fastcall FactorySequenceType(){return factorySequenceType;}
 unsigned factoryPodiumCalls=0;void* factoryPodiumArguments[4]{};
+unsigned factoryWinForwards=0,factoryPlayerWins=0,factoryWinPopups=0;
+BYTE *factoryWinRuleType=nullptr,*factoryWinPopup=nullptr,*factoryForwardedWinner=nullptr;
+void* __fastcall FactoryWinRuleType(){return factoryWinRuleType;}
+void ObserveFactoryWin(const char* name,int slot,int value) {
+    if(slot!=0 || value!=1)return;
+    if(!strcmp(name,"native_factory_player_win_decided"))++factoryPlayerWins;
+    if(!strcmp(name,"native_factory_player_win_popup_created"))++factoryWinPopups;
+}
+void __fastcall FactoryWinReportFixture(void* raw,void* actor) {
+    ++factoryWinForwards;factoryForwardedWinner=static_cast<BYTE*>(actor);
+    *reinterpret_cast<void**>(static_cast<BYTE*>(raw)+0x88)=factoryWinPopup;
+}
 void __fastcall FactoryPodiumFixture(void* component,void* sequence,const void* environment,void* widget) {
     ++factoryPodiumCalls;factoryPodiumArguments[0]=component;factoryPodiumArguments[1]=sequence;
     factoryPodiumArguments[2]=const_cast<void*>(environment);factoryPodiumArguments[3]=widget;
@@ -1250,6 +1262,27 @@ int main(){try{
         auto state=Object(0x400,stateType,pawn,world);*reinterpret_cast<int*>(state+0x168)=i;components[pawn].state=state;
         pawn[0x58]|=0x20;pawns.push_back(pawn);
     }
+    factoryWinRuleType=Object(0x40);factoryWinPopup=Object(0x40);
+    Stub(0x24334b0,reinterpret_cast<void*>(FactoryWinRuleType));
+    auto winRule=Object(0x98,factoryWinRuleType);*reinterpret_cast<void**>(winRule+0x28)=phase;
+    auto local=pawns[0];auto localState=components[local].state;
+    auto controller=Object(0x300);*reinterpret_cast<void**>(controller)=fixtureImage+0x50fa2c0;
+    *reinterpret_cast<void**>(local+0x258)=controller;
+    *reinterpret_cast<void**>(controller+0x250)=local;
+    *reinterpret_cast<void**>(controller+0x298)=Object(0x40);
+    localState[0x338]=1;*reinterpret_cast<int*>(localState+0x16c)=2;
+    auto beforeWinEvent=R::event;R::event=ObserveFactoryWin;R::factoryWinReport=FactoryWinReportFixture;
+    R::OnFactoryWinReport(winRule,pawns[1]);R::OnFactoryWinReport(winRule,local);
+    Need(factoryWinForwards==2 && !R::FactoryHumanWon(world) && !factoryPlayerWins,"Factory treated an AI or retired player as the winner");
+    *reinterpret_cast<int*>(localState+0x16c)=1;
+    worlds[phase]=otherWorld;R::OnFactoryWinReport(winRule,local);worlds[phase]=world;
+    Need(factoryWinForwards==3 && !factoryPlayerWins,"Factory accepted a foreign win report");
+    factoryWinPopup=nullptr;R::OnFactoryWinReport(winRule,local);
+    Need(factoryWinForwards==4 && factoryForwardedWinner==local && factoryPlayerWins==1 && !factoryWinPopups &&
+        R::FactoryHumanWon(world) && !R::FactoryHumanWon(otherWorld),"Factory lost the real win when the popup was unavailable");
+    factoryWinPopup=Object(0x40);R::OnFactoryWinReport(winRule,local);
+    Need(factoryWinForwards==5 && factoryPlayerWins==1 && factoryWinPopups==1,"Factory duplicated the win or missed the native popup");
+    R::factoryHumanWinWorld={};R::event=beforeWinEvent;
     R::factoryIntroBegin=FactoryIntroFixture;R::factoryIntroSequence=FactoryIntroSequenceFixture;
     R::OnFactoryIntroBegin(factoryIntroRule);
     Need(factoryIntroCalls==1 && !factoryIntroSequenceCalls && factoryUnhideCalls==4 && !R::factoryIntroScope,

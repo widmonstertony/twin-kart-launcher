@@ -1,6 +1,11 @@
 # Changelog / 更新记录
 
-## Unreleased — PC gameplay fixes / PC 玩法修订
+## v0.2.0-alpha.3 — 2026-11-07
+
+- Guard the original Factory Run result widget even in Factory-only sessions. Record the local player's native victory separately from an AI result, podium or popup. Compiled and checked offline; a player win still needs in-game acceptance. / 工厂逃脱单独启用时也保护原厂结算窗口，区分玩家原厂胜利、AI 结果、领奖台与弹窗。编译和离线检查通过，待玩家获胜实测。
+- Include the Free Drive, Chaser, and HideNSeek changes listed below. Continued Free Drive past the original finish is still pending live confirmation. / 一并发布下述自由驾驶、追逐和躲猫猫修订；超过原定终点继续驾驶仍待实测。
+
+### PC gameplay fixes / PC 玩法修订
 
 - Add lobby Free Drive track selection, keep restarts unranked, and restore native reverse. Guard the Time Attack result callback for the current practice world; the native final lap still needs a live check. / 增加大厅自由驾驶选图，保留重开不计成绩，接通原厂倒车。为当前练习局增加原厂结算保护，待实测原定终点。
 - Connect the human player's Chaser second slot to the original boost handler; two actual casts succeeded and the match reached its infection result. / 接通追逐玩家第二槽，实测两次原厂加速，并完成感染结算。
